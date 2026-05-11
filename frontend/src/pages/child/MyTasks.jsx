@@ -1,0 +1,173 @@
+import { useState, useEffect } from 'react';
+import { useLanguage } from '../../contexts/LanguageContext';
+import { useToast } from '../../contexts/ToastContext';
+import api from '../../services/api';
+
+export default function MyTasks() {
+  const { t } = useLanguage();
+  const toast = useToast();
+  const [occurrences, setOccurrences] = useState([]);
+  const [filter, setFilter] = useState('pending');
+  const [showModal, setShowModal] = useState(false);
+  const [form, setForm] = useState({ title: '', description: '', type: 'routine', due_time: '' });
+
+  const fetchTasks = async () => {
+    try {
+      const params = {};
+      if (filter) params.status = filter;
+      const { data } = await api.get('/tasks/occurrences', { params });
+      setOccurrences(data);
+    } catch (e) { console.error(e); }
+  };
+
+  useEffect(() => { fetchTasks(); }, [filter]);
+
+  const handleComplete = async (id) => {
+    try {
+      const res = await api.put(`/tasks/occurrences/${id}/complete`);
+      toast.success(res.data.status === 'waiting_approval' ? 'Tarefa enviada para aprovação! 📤' : 'Tarefa concluída! ✅');
+      fetchTasks();
+    } catch (err) {
+      toast.error(err.response?.data?.error || t('error_occurred'));
+    }
+  };
+
+  const handleHealthReminder = async (id, intake) => {
+    try {
+      await api.put(`/tasks/occurrences/${id}/complete`, { health_intake: intake });
+      toast.success(intake === 'taken' ? 'Registado como tomado.' : 'Registado como não tomado.');
+      fetchTasks();
+    } catch (err) {
+      toast.error(err.response?.data?.error || t('error_occurred'));
+    }
+  };
+
+  const handleCreate = async (e) => {
+    e.preventDefault();
+    try {
+      // Child creates a personal one-time task
+      await api.post('/tasks', { ...form, frequency: 'once', requires_approval: true });
+      toast.success('Sugestão de tarefa enviada! 📋');
+      setShowModal(false);
+      setForm({ title: '', description: '', type: 'routine', due_time: '' });
+      fetchTasks();
+    } catch (err) { toast.error(err.response?.data?.error || t('error_occurred')); }
+  };
+
+  const statusEmoji = { pending: '⏳', in_progress: '🏃', waiting_approval: '📤', approved: '✅', rejected: '❌', delayed: '⚠️', expired: '👻' };
+  const statusColor = { pending: 'warning', in_progress: 'info', waiting_approval: 'info', approved: 'success', rejected: 'danger', delayed: 'danger', expired: 'ghost' };
+  const statusLabel = { pending: 'Pendente', in_progress: 'Fazendo', waiting_approval: 'Aguardando Pais', approved: 'Aprovada', rejected: 'Reprovada', delayed: 'Atrasada', expired: 'Expirada' };
+
+  return (
+    <div className="animate-fade-in">
+      <div className="flex-between mb-24">
+        <h1 className="page-title">✅ {t('my_tasks')}</h1>
+        <button className="btn btn-primary" onClick={() => setShowModal(true)}>+ Sugerir Tarefa</button>
+      </div>
+
+      <div className="flex gap-8 mb-24" style={{ flexWrap: 'wrap' }}>
+        {['', 'pending', 'waiting_approval', 'approved', 'rejected', 'delayed'].map(s => (
+          <button key={s} className={`btn btn-sm ${filter === s ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setFilter(s)}>
+            {s ? statusLabel[s] : t('all')}
+          </button>
+        ))}
+      </div>
+
+      <div className="grid grid-2">
+        {occurrences.length === 0 ? (
+          <div className="card empty-state" style={{ gridColumn: '1/-1' }}>
+            <div className="empty-icon">🎉</div>
+            <h3>{t('no_tasks')}</h3>
+            <p style={{color:'var(--text-light)', fontSize:'0.9rem'}}>Tudo limpo por aqui!</p>
+          </div>
+        ) : occurrences.map(occ => (
+          <div key={occ.id} className="card task-card" style={{ 
+            borderLeft: `5px solid ${occ.status === 'approved' ? 'var(--success)' : occ.status === 'rejected' || occ.status === 'delayed' ? 'var(--danger)' : 'var(--primary)'}`,
+            position: 'relative'
+          }}>
+            <div className="flex-between mb-8">
+              <h3 style={{ fontWeight: 700, fontSize: '1.1rem' }}>{statusEmoji[occ.status]} {occ.title}</h3>
+              <div style={{ textAlign: 'right' }}>
+                {Number(occ.is_health_reminder) !== 1 && (
+                  <>
+                    <span style={{ fontWeight: 800, color: 'var(--primary)', fontSize: '1.2rem', display: 'block' }}>⭐ {occ.points}</span>
+                    {occ.coins > 0 && <span style={{ fontWeight: 700, color: '#E67E22', fontSize: '1rem' }}>🪙 {occ.coins}</span>}
+                  </>
+                )}
+                {Number(occ.is_health_reminder) === 1 && <span className="badge badge-ghost" style={{ fontSize: '0.75rem' }}>Saúde</span>}
+              </div>
+            </div>
+            
+            {occ.description && <p style={{ fontSize: '0.9rem', color: 'var(--text-light)', marginBottom: 12 }}>{occ.description}</p>}
+            
+            <div className="flex gap-12 mb-12" style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+              {occ.due_time && <span>⏰ Limite: <strong>{occ.due_time}</strong></span>}
+              {occ.is_recurring ? <span className="badge badge-info">🔄 {occ.frequency}</span> : <span className="badge badge-ghost">Única</span>}
+            </div>
+
+            <div className="flex-between mt-12" style={{borderTop:'1px solid var(--border)', paddingTop: 12}}>
+              <div className="flex gap-8">
+                <span className="badge badge-primary">{t(occ.type)}</span>
+                <span className={`badge badge-${statusColor[occ.status]}`}>{statusLabel[occ.status]}</span>
+              </div>
+              {['pending', 'in_progress', 'delayed'].includes(occ.status) && Number(occ.is_health_reminder) === 1 && (
+                <div className="flex gap-8" style={{ flexWrap: 'wrap' }}>
+                  <button type="button" className="btn btn-primary btn-sm" onClick={() => handleHealthReminder(occ.id, 'taken')}>
+                    Tomado
+                  </button>
+                  <button type="button" className="btn btn-secondary btn-sm" onClick={() => handleHealthReminder(occ.id, 'skipped')}>
+                    Não tomado
+                  </button>
+                </div>
+              )}
+              {['pending', 'in_progress', 'delayed'].includes(occ.status) && Number(occ.is_health_reminder) !== 1 && (
+                <button className="btn btn-secondary" onClick={() => handleComplete(occ.id)} style={{boxShadow:'0 4px 12px var(--secondary-light)40'}}>
+                  ✅ Concluir
+                </button>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {showModal && (
+        <div className="modal-overlay" onClick={() => setShowModal(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2 className="modal-title">📋 Sugerir Tarefa</h2>
+              <button className="modal-close" onClick={() => setShowModal(false)}>✕</button>
+            </div>
+            <form onSubmit={handleCreate}>
+              <div className="form-group">
+                <label className="form-label">O que você vai fazer? *</label>
+                <input className="form-input" value={form.title} onChange={e => setForm(p => ({ ...p, title: e.target.value }))} placeholder="Ex: Lavar meu prato" required />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Detalhes (opcional)</label>
+                <textarea className="form-textarea" value={form.description} onChange={e => setForm(p => ({ ...p, description: e.target.value }))} />
+              </div>
+              <div className="grid grid-2">
+                <div className="form-group">
+                  <label className="form-label">Tipo</label>
+                  <select className="form-select" value={form.type} onChange={e => setForm(p => ({ ...p, type: e.target.value }))}>
+                    <option value="school">📚 Escolar</option>
+                    <option value="home">🏠 Doméstica</option>
+                    <option value="routine">⏰ Rotina</option>
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Horário (opcional)</label>
+                  <input className="form-input" type="time" value={form.due_time} onChange={e => setForm(p => ({ ...p, due_time: e.target.value }))} />
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="btn btn-ghost" onClick={() => setShowModal(false)}>Cancelar</button>
+                <button type="submit" className="btn btn-primary">Enviar Sugestão</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

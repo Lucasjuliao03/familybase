@@ -1,0 +1,60 @@
+{
+  "name": "FamilyBase",
+  "short_name": "FamilyBase",
+  "description": "Sua plataforma familiar inteligente — tarefas, mesada, saúde e muito mais.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f0f1a",
+  "theme_color": "#6C5CE7",
+  "orientation": "portrait-primary",
+  "categories": ["productivity", "lifestyle"],
+  "lang": "pt-BR",
+  "icons": [
+    {
+      "src": "/icons/manifest-icon-192.maskable.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/manifest-icon-192.maskable.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icons/manifest-icon-512.maskable.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/manifest-icon-512.maskable.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icons/apple-icon-180.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Lista de Compras",
+      "short_name": "Compras",
+      "description": "Acesse a lista de compras da família",
+      "url": "/parent/shopping",
+      "icons": [{ "src": "/icons/manifest-icon-192.maskable.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Tarefas",
+      "short_name": "Tarefas",
+      "description": "Gerenciar tarefas",
+      "url": "/parent/tasks",
+      "icons": [{ "src": "/icons/manifest-icon-192.maskable.png", "sizes": "192x192" }]
+    }
+  ]
+}
