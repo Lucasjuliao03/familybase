@@ -27,7 +27,7 @@ async function childRow(db, userId) {
   return await db.prepare('SELECT * FROM children WHERE user_id=?').get(userId);
 }
 
-function userSeesNotice(db, user, notice) {
+async function userSeesNotice(db, user, notice) {
   if (notice.family_id !== user.familyId) return false;
   if (['archived', 'cancelled'].includes(notice.status)) return false;
 
@@ -42,7 +42,7 @@ function userSeesNotice(db, user, notice) {
     case 'child': {
       const ids = parseJson(notice.target_child_ids);
       if (user.role !== 'child') return false;
-      const c = childRow(db, user.id);
+      const c = await childRow(db, user.id);
       return c && ids.includes(c.id);
     }
     case 'relative': {
@@ -54,7 +54,7 @@ function userSeesNotice(db, user, notice) {
       const cids = parseJson(notice.target_child_ids);
       if (uids.includes(user.id)) return true;
       if (user.role === 'child') {
-        const c = childRow(db, user.id);
+        const c = await childRow(db, user.id);
         return c && cids.includes(c.id);
       }
       return false;
@@ -89,14 +89,15 @@ async function notifyTargets(db, familyId, notice, actorUserId) {
       break;
     }
     case 'parents': {
-      await db.prepare('SELECT id FROM users WHERE family_id=? AND role=?').all(familyId, 'parent').forEach((u) => addUser(u.id));
+      const parents = await db.prepare('SELECT id FROM users WHERE family_id=? AND role=?').all(familyId, 'parent');
+      parents.forEach((u) => addUser(u.id));
       break;
     }
     case 'child': {
-      parseJson(notice.target_child_ids).forEachasync ((cid) => {
+      for (const cid of parseJson(notice.target_child_ids)) {
         const r = await db.prepare('SELECT user_id FROM children WHERE id=?').get(cid);
         if (r?.user_id) addUser(r.user_id);
-      });
+      }
       break;
     }
     case 'relative': {
@@ -105,10 +106,10 @@ async function notifyTargets(db, familyId, notice, actorUserId) {
     }
     case 'selected': {
       parseJson(notice.target_user_ids).forEach((uid) => addUser(uid));
-      parseJson(notice.target_child_ids).forEachasync ((cid) => {
+      for (const cid of parseJson(notice.target_child_ids)) {
         const r = await db.prepare('SELECT user_id FROM children WHERE id=?').get(cid);
         if (r?.user_id) addUser(r.user_id);
-      });
+      }
       break;
     }
     default:
@@ -142,18 +143,23 @@ router.get('/notices', async (req, res) => {
       WHERE n.family_id=? ORDER BY n.is_pinned DESC, n.due_datetime ASC, n.created_at DESC
     `).all(fid);
 
-    rows = rows.filter((n) => userSeesNotice(db, req.user, n));
+    const filteredRows = [];
+    for (const n of rows) {
+      if (await userSeesNotice(db, req.user, n)) filteredRows.push(n);
+    }
+    rows = filteredRows;
+
     if (status) rows = rows.filter((n) => n.status === status);
     if (type) rows = rows.filter((n) => n.type === type);
     if (priority) rows = rows.filter((n) => n.priority === priority);
 
-    const withReads = rows.mapasync ((n) => {
+    const withReads = await Promise.all(rows.map(async (n) => {
       const reads = await db.prepare(`
         SELECT nr.*, u.name FROM notice_reads nr JOIN users u ON u.id=nr.user_id WHERE nr.notice_id=?
       `).all(n.id);
       const myRead = await db.prepare('SELECT * FROM notice_reads WHERE notice_id=? AND user_id=?').get(n.id, req.user.id);
       return { ...n, reads, myRead };
-    });
+    }));
 
     res.json(withReads);
   } catch (err) {
@@ -171,9 +177,9 @@ router.get('/notices/:id', async (req, res) => {
       LEFT JOIN users u ON u.id=n.created_by
       WHERE n.id=? AND n.family_id=?
     `).get(req.params.id, req.user.familyId);
-    if (!n || !userSeesNotice(db, req.user, n)) return res.status(404).json({ error: 'Não encontrado' });
+    if (!n || !(await userSeesNotice(db, req.user, n))) return res.status(404).json({ error: 'Não encontrado' });
     const reads = await db.prepare(`SELECT nr.*, u.name FROM notice_reads nr JOIN users u ON u.id=nr.user_id WHERE nr.notice_id=?`).all(n.id);
-    const myRead = db.prepare('SELECT * FROM notice_reads WHERE notice_id=? AND user_id=?').get(n.id, req.user.id);
+    const myRead = await db.prepare('SELECT * FROM notice_reads WHERE notice_id=? AND user_id=?').get(n.id, req.user.id);
     res.json({ ...n, reads, myRead });
   } catch (err) { res.status(500).json({ error: 'Erro' }); }
 });
@@ -237,7 +243,7 @@ router.put('/notices/:id', parentOnly, async (req, res) => {
         start_datetime=COALESCE(?,start_datetime), due_datetime=COALESCE(?,due_datetime), notice_time=COALESCE(?,notice_time),
         is_recurring=COALESCE(?,is_recurring), recurrence_rule=COALESCE(?,recurrence_rule),
         is_pinned=COALESCE(?,is_pinned), requires_read_confirmation=COALESCE(?,requires_read_confirmation),
-        status=COALESCE(?,status), updated_at=datetime('now')
+        status=COALESCE(?,status), updated_at=CURRENT_TIMESTAMP
       WHERE id=?
     `).run(
       u.title, u.description, u.type, u.priority, u.target_type,
@@ -259,7 +265,7 @@ router.post('/notices/:id/read', async (req, res) => {
   try {
     const db = req.db;
     const notice = await db.prepare('SELECT * FROM family_notices WHERE id=? AND family_id=?').get(req.params.id, req.user.familyId);
-    if (!notice || !userSeesNotice(db, req.user, notice)) return res.status(404).json({ error: 'Não encontrado' });
+    if (!notice || !(await userSeesNotice(db, req.user, notice))) return res.status(404).json({ error: 'Não encontrado' });
 
     const now = new Date().toISOString();
     const existing = await db.prepare('SELECT * FROM notice_reads WHERE notice_id=? AND user_id=?').get(notice.id, req.user.id);
@@ -276,7 +282,7 @@ router.post('/notices/:id/confirm', async (req, res) => {
   try {
     const db = req.db;
     const notice = await db.prepare('SELECT * FROM family_notices WHERE id=? AND family_id=?').get(req.params.id, req.user.familyId);
-    if (!notice || !userSeesNotice(db, req.user, notice)) return res.status(404).json({ error: 'Não encontrado' });
+    if (!notice || !(await userSeesNotice(db, req.user, notice))) return res.status(404).json({ error: 'Não encontrado' });
     if (!notice.requires_read_confirmation) return res.status(400).json({ error: 'Confirmação não exigida' });
     const now = new Date().toISOString();
     let row = await db.prepare('SELECT * FROM notice_reads WHERE notice_id=? AND user_id=?').get(notice.id, req.user.id);
@@ -293,17 +299,17 @@ router.post('/notices/:id/complete', async (req, res) => {
   try {
     const db = req.db;
     const notice = await db.prepare('SELECT * FROM family_notices WHERE id=? AND family_id=?').get(req.params.id, req.user.familyId);
-    if (!notice || !userSeesNotice(db, req.user, notice)) return res.status(404).json({ error: 'Não encontrado' });
+    if (!notice || !(await userSeesNotice(db, req.user, notice))) return res.status(404).json({ error: 'Não encontrado' });
 
     if (notice.type === 'quick_task' && req.user.role === 'child') {
-      const c = childRow(db, req.user.id);
+      const c = await childRow(db, req.user.id);
       const targets = parseJson(notice.target_child_ids);
       if (!c || !targets.includes(c.id)) return res.status(403).json({ error: 'Acesso negado' });
     } else if (!isGestor(req) && notice.created_by !== req.user.id) {
       return res.status(403).json({ error: 'Sem permissão' });
     }
 
-    await db.prepare(`UPDATE family_notices SET status='completed', completed_at=datetime('now'), updated_at=datetime('now') WHERE id=?`).run(req.params.id);
+    await db.prepare(`UPDATE family_notices SET status='completed', completed_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP WHERE id=?`).run(req.params.id);
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: 'Erro' }); }
 });
@@ -313,7 +319,7 @@ router.post('/notices/:id/archive', gestorOnly, async (req, res) => {
     const db = req.db;
     const n = await db.prepare('SELECT * FROM family_notices WHERE id=? AND family_id=?').get(req.params.id, req.user.familyId);
     if (!n) return res.status(404).json({ error: 'Não encontrado' });
-    await db.prepare(`UPDATE family_notices SET status='archived', updated_at=datetime('now') WHERE id=?`).run(req.params.id);
+    await db.prepare(`UPDATE family_notices SET status='archived', updated_at=CURRENT_TIMESTAMP WHERE id=?`).run(req.params.id);
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: 'Erro' }); }
 });
@@ -323,7 +329,7 @@ router.delete('/notices/:id', gestorOnly, async (req, res) => {
     const db = req.db;
     const n = await db.prepare('SELECT * FROM family_notices WHERE id=? AND family_id=?').get(req.params.id, req.user.familyId);
     if (!n) return res.status(404).json({ error: 'Não encontrado' });
-    db.prepare('DELETE FROM notice_reads WHERE notice_id=?').run(req.params.id);
+    await db.prepare('DELETE FROM notice_reads WHERE notice_id=?').run(req.params.id);
     await db.prepare('DELETE FROM family_notices WHERE id=?').run(req.params.id);
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: 'Erro' }); }

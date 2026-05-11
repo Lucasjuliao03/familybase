@@ -8,6 +8,7 @@ const path = require('path');
 const authMiddleware = require('../../middleware/auth');
 const { ensureFamilyModules } = require('../../lib/familyModuleService');
 const { getMap } = require('../../middleware/familyModule');
+const { sendJsonForDbError } = require('../../lib/dbErrors');
 
 function buildTokenPayload(user) {
   let accessProfile = user.access_profile;
@@ -23,7 +24,7 @@ function buildTokenPayload(user) {
     role: user.role,
     familyId: user.family_id,
     accessProfile,
-    mustChangePassword: user.must_change_password === 1,
+    mustChangePassword: !!user.must_change_password,
   };
 }
 
@@ -81,9 +82,27 @@ router.post('/register', async (req, res) => {
     await db.prepare('INSERT INTO families (id, name, language) VALUES (?, ?, ?)').run(
       familyId, familyName || `Família ${name.split(' ')[0]}`, language || 'pt'
     );
-    ensureFamilyModules(db, familyId, 'free');
+    await ensureFamilyModules(db, familyId, 'free');
 
-    const userId = uuidv4();
+    const { supabase } = require('../../database/supabaseClient');
+    let userId = uuidv4();
+
+    // Criar no Supabase Auth se disponível
+    if (supabase && process.env.SUPABASE_URL) {
+      const { data: sData, error: sError } = await supabase.auth.admin.createUser({
+        email,
+        password,
+        email_confirm: true,
+        user_metadata: { name }
+      });
+      if (sError) {
+        console.warn('⚠️ Erro ao criar no Supabase Auth (usando UUID gerado):', sError.message);
+      } else if (sData.user) {
+        userId = sData.user.id;
+        console.log(`✅ Supabase Auth user created: ${userId}`);
+      }
+    }
+
     const hashedPassword = bcrypt.hashSync(password, 10);
     await db.prepare('INSERT INTO users (id, name, email, password, role, family_id, avatar_preset) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
       userId, name, email, hashedPassword, 'parent', familyId, 'parent_male'
@@ -100,7 +119,7 @@ router.post('/register', async (req, res) => {
       uuidv4(), 'Bem-vindo ao FamilyBase!', 'Sua família foi criada. Comece adicionando seus filhos!', 'info', '🎉', userId, familyId
     );
 
-    const modules = getMap(db, familyId);
+    const modules = await getMap(db, familyId);
 
     res.status(201).json({
       token,
@@ -112,7 +131,9 @@ router.post('/register', async (req, res) => {
       mustChangePassword: false,
       modules,
     });
-  } catch (err) { console.error(err); res.status(500).json({ error: 'Erro ao registrar' }); }
+  } catch (err) {
+    return sendJsonForDbError(res, err, { defaultMsg: 'Erro ao registrar' });
+  }
 });
 
 // POST /api/auth/login
@@ -120,25 +141,45 @@ router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
     const db = req.db;
+    const { supabase } = require('../../database/supabaseClient');
+
+    // 1. Tentar login via Supabase Auth se configurado
+    let authSuccess = false;
+    let authId = null;
+
+    if (supabase && process.env.SUPABASE_URL) {
+      const { data: sData, error: sError } = await supabase.auth.signInWithPassword({ email, password });
+      if (!sError && sData.user) {
+        authSuccess = true;
+        authId = sData.user.id;
+        console.log(`✅ Supabase Auth success for ${email}`);
+      }
+    }
+
+    // 2. Buscar usuário no banco local (perfil)
     const user = await db.prepare('SELECT * FROM users WHERE LOWER(email) = LOWER(?)').get(email);
     if (!user) {
-      console.log(`❌ Login failed: User not found for ${email}`);
+      console.log(`❌ Login failed: User profile not found for ${email}`);
       return res.status(401).json({ error: 'Email ou senha incorretos' });
     }
-    
-    if (!bcrypt.compareSync(password, user.password)) {
-      console.log(`❌ Login failed: Password mismatch for ${email}`);
-      // Log failed login
-      try {
-        await db.prepare("INSERT INTO audit_logs (id, user_id, role, module, action, description) VALUES (?,?,?,?,?,?)").run(uuidv4(), user.id, user.role, 'auth', 'login_failed', `Failed login attempt for ${email}`);
-      } catch(e) {}
-      return res.status(401).json({ error: 'Email ou senha incorretos' });
+
+    // 3. Se não autenticou via Supabase, tentar fallback local (bcrypt)
+    if (!authSuccess) {
+      if (!user.password || !bcrypt.compareSync(password, user.password)) {
+        console.log(`❌ Login failed: Password mismatch for ${email}`);
+        try {
+          await db.prepare("INSERT INTO audit_logs (id, user_id, role, module, action, description) VALUES (?,?,?,?,?,?)").run(uuidv4(), user.id, user.role, 'auth', 'login_failed', `Failed login attempt for ${email}`);
+        } catch (e) {}
+        return res.status(401).json({ error: 'Email ou senha incorretos' });
+      }
+      console.log(`ℹ️ Fallback local login success for ${email}`);
     }
+
     if (user.status === 'blocked') return res.status(403).json({ error: 'Conta bloqueada. Entre em contato com o suporte.' });
     if (user.status === 'inactive') return res.status(403).json({ error: 'Conta inativa.' });
 
     // Update last login
-    await db.prepare("UPDATE users SET last_login_at=datetime('now') WHERE id=?").run(user.id);
+    await db.prepare("UPDATE users SET last_login_at=CURRENT_TIMESTAMP WHERE id=?").run(user.id);
 
     const fullUser = await db.prepare('SELECT * FROM users WHERE id = ?').get(user.id);
     const token = jwt.sign(
@@ -164,7 +205,7 @@ router.post('/login', async (req, res) => {
     const mcp = !!fullUser.must_change_password;
     let modules = {};
     if (user.family_id) {
-      modules = getMap(db, user.family_id);
+      modules = await getMap(db, user.family_id);
     }
     res.json({
       token,
@@ -178,7 +219,9 @@ router.post('/login', async (req, res) => {
       mustChangePassword: mcp,
       modules,
     });
-  } catch (err) { console.error(err); res.status(500).json({ error: 'Erro ao fazer login' }); }
+  } catch (err) {
+    return sendJsonForDbError(res, err, { defaultMsg: 'Erro ao fazer login' });
+  }
 });
 
 // GET /api/auth/me
@@ -193,7 +236,7 @@ router.get('/me', authMiddleware, async (req, res) => {
     const tp = buildTokenPayload(user);
     let modules = {};
     if (user.family_id) {
-      modules = getMap(db, user.family_id);
+      modules = await getMap(db, user.family_id);
     }
     res.json({
       user: {
@@ -207,16 +250,18 @@ router.get('/me', authMiddleware, async (req, res) => {
         phone: user.phone,
         status: user.status,
         access_profile: tp.accessProfile,
-        must_change_password: user.must_change_password === 1,
+        must_change_password: !!user.must_change_password,
         emoji: user.emoji,
         display_color: user.display_color,
       },
       family,
       childProfile,
-      mustChangePassword: user.must_change_password === 1,
+      mustChangePassword: !!user.must_change_password,
       modules,
     });
-  } catch (err) { res.status(500).json({ error: 'Erro' }); }
+  } catch (err) {
+    return sendJsonForDbError(res, err, { defaultMsg: 'Erro' });
+  }
 });
 
 // PUT /api/auth/password
@@ -226,9 +271,11 @@ router.put('/password', authMiddleware, async (req, res) => {
     const db = req.db;
     const user = await db.prepare('SELECT password FROM users WHERE id = ?').get(req.user.id);
     if (!bcrypt.compareSync(currentPassword, user.password)) return res.status(400).json({ error: 'Senha atual incorreta' });
-    await db.prepare("UPDATE users SET password = ?, must_change_password = 0, updated_at = datetime('now') WHERE id = ?").run(bcrypt.hashSync(newPassword, 10), req.user.id);
+    await db.prepare("UPDATE users SET password = ?, must_change_password = FALSE, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(bcrypt.hashSync(newPassword, 10), req.user.id);
     res.json({ message: 'Senha alterada com sucesso' });
-  } catch (err) { res.status(500).json({ error: 'Erro' }); }
+  } catch (err) {
+    return sendJsonForDbError(res, err, { defaultMsg: 'Erro' });
+  }
 });
 
 // PUT /api/auth/password/first-access — obrigatório quando must_change_password=1 (sem senha atual)
@@ -239,9 +286,9 @@ router.put('/password/first-access', authMiddleware, async (req, res) => {
     const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
     if (!user.must_change_password) return res.status(400).json({ error: 'Não é necessário alterar a senha agora' });
     if (!newPassword || String(newPassword).length < 4) return res.status(400).json({ error: 'Senha muito curta' });
-    await db.prepare('UPDATE users SET password = ?, must_change_password = 0, updated_at = datetime(\'now\') WHERE id = ?')
+    await db.prepare("UPDATE users SET password = ?, must_change_password = FALSE, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
       .run(bcrypt.hashSync(newPassword, 10), req.user.id);
-    const updated = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+    const updated = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
     const token = jwt.sign(
       buildTokenPayload(updated),
       process.env.JWT_SECRET,
@@ -265,7 +312,9 @@ router.put('/password/first-access', authMiddleware, async (req, res) => {
         display_color: updated.display_color,
       },
     });
-  } catch (err) { console.error(err); res.status(500).json({ error: 'Erro' }); }
+  } catch (err) {
+    return sendJsonForDbError(res, err, { defaultMsg: 'Erro' });
+  }
 });
 
 // PUT /api/auth/avatar — upload de foto OU selecionar preset
@@ -275,20 +324,22 @@ router.put('/avatar', authMiddleware, upload.single('avatar'), async (req, res) 
     if (req.file) {
       // Upload de foto real
       const avatarUrl = `/uploads/avatars/${req.file.filename}`;
-      await db.prepare("UPDATE users SET avatar_url = ?, avatar_preset = NULL, updated_at = datetime('now') WHERE id = ?").run(avatarUrl, req.user.id);
-      await db.prepare("UPDATE children SET avatar_url = ?, avatar_preset = NULL, updated_at = datetime('now') WHERE user_id = ?").run(avatarUrl, req.user.id);
+      await db.prepare("UPDATE users SET avatar_url = ?, avatar_preset = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(avatarUrl, req.user.id);
+      await db.prepare("UPDATE children SET avatar_url = ?, avatar_preset = NULL, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?").run(avatarUrl, req.user.id);
       res.json({ avatar_url: avatarUrl, avatar_preset: null });
     } else if (req.body.avatar_preset) {
       // Avatar predefinido do banco
       const preset = PRESET_AVATARS.find(a => a.id === req.body.avatar_preset);
       if (!preset) return res.status(400).json({ error: 'Avatar inválido' });
-      await db.prepare("UPDATE users SET avatar_preset = ?, avatar_url = NULL, updated_at = datetime('now') WHERE id = ?").run(req.body.avatar_preset, req.user.id);
-      await db.prepare("UPDATE children SET avatar_preset = ?, avatar_url = NULL, updated_at = datetime('now') WHERE user_id = ?").run(req.body.avatar_preset, req.user.id);
+      await db.prepare("UPDATE users SET avatar_preset = ?, avatar_url = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(req.body.avatar_preset, req.user.id);
+      await db.prepare("UPDATE children SET avatar_preset = ?, avatar_url = NULL, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?").run(req.body.avatar_preset, req.user.id);
       res.json({ avatar_url: null, avatar_preset: req.body.avatar_preset });
     } else {
       res.status(400).json({ error: 'Envie uma foto ou selecione um avatar' });
     }
-  } catch (err) { console.error(err); res.status(500).json({ error: 'Erro ao atualizar avatar' }); }
+  } catch (err) {
+    return sendJsonForDbError(res, err, { defaultMsg: 'Erro ao atualizar avatar' });
+  }
 });
 
 // PUT /api/auth/avatar/child/:childId — pais atualizam avatar dos filhos
@@ -300,17 +351,19 @@ router.put('/avatar/child/:childId', authMiddleware, upload.single('avatar'), as
 
     if (req.file) {
       const avatarUrl = `/uploads/avatars/${req.file.filename}`;
-      await db.prepare("UPDATE children SET avatar_url=?, avatar_preset=NULL, updated_at=datetime('now') WHERE id=?").run(avatarUrl, req.params.childId);
-      if (child.user_id) await db.prepare("UPDATE users SET avatar_url=?, avatar_preset=NULL, updated_at=datetime('now') WHERE id=?").run(avatarUrl, child.user_id);
+      await db.prepare("UPDATE children SET avatar_url=?, avatar_preset=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=?").run(avatarUrl, req.params.childId);
+      if (child.user_id) await db.prepare("UPDATE users SET avatar_url=?, avatar_preset=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=?").run(avatarUrl, child.user_id);
       res.json({ avatar_url: avatarUrl, avatar_preset: null });
     } else if (req.body.avatar_preset) {
-      await db.prepare("UPDATE children SET avatar_preset=?, avatar_url=NULL, updated_at=datetime('now') WHERE id=?").run(req.body.avatar_preset, req.params.childId);
-      if (child.user_id) await db.prepare("UPDATE users SET avatar_preset=?, avatar_url=NULL, updated_at=datetime('now') WHERE id=?").run(req.body.avatar_preset, child.user_id);
+      await db.prepare("UPDATE children SET avatar_preset=?, avatar_url=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=?").run(req.body.avatar_preset, req.params.childId);
+      if (child.user_id) await db.prepare("UPDATE users SET avatar_preset=?, avatar_url=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=?").run(req.body.avatar_preset, child.user_id);
       res.json({ avatar_url: null, avatar_preset: req.body.avatar_preset });
     } else {
       res.status(400).json({ error: 'Envie uma foto ou selecione um avatar' });
     }
-  } catch (err) { console.error(err); res.status(500).json({ error: 'Erro' }); }
+  } catch (err) {
+    return sendJsonForDbError(res, err, { defaultMsg: 'Erro' });
+  }
 });
 
 // DELETE /api/auth/avatar/child/:childId/photo — remove só a foto (mantém preset)
@@ -325,10 +378,12 @@ router.delete('/avatar/child/:childId/photo', authMiddleware, async (req, res) =
     } else if (req.user.role !== 'parent' && req.user.role !== 'relative' && req.user.role !== 'master') {
       return res.status(403).json({ error: 'Acesso negado' });
     }
-    db.prepare("UPDATE children SET avatar_url=NULL, updated_at=datetime('now') WHERE id=?").run(req.params.childId);
-    if (child.user_id) await db.prepare("UPDATE users SET avatar_url=NULL, updated_at=datetime('now') WHERE id=?").run(child.user_id);
+    await db.prepare("UPDATE children SET avatar_url=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=?").run(req.params.childId);
+    if (child.user_id) await db.prepare("UPDATE users SET avatar_url=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=?").run(child.user_id);
     res.json({ avatar_url: null, avatar_preset: child.avatar_preset });
-  } catch (err) { console.error(err); res.status(500).json({ error: 'Erro' }); }
+  } catch (err) {
+    return sendJsonForDbError(res, err, { defaultMsg: 'Erro' });
+  }
 });
 
 module.exports = router;

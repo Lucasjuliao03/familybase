@@ -5,11 +5,15 @@ const authMiddleware = require('../../middleware/auth');
 const { v4: uuidv4 } = require('uuid');
 
 // Configure VAPID
-webpush.setVapidDetails(
-  process.env.VAPID_SUBJECT || 'mailto:admin@familybase.app',
-  process.env.VAPID_PUBLIC_KEY,
-  process.env.VAPID_PRIVATE_KEY
-);
+if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
+  webpush.setVapidDetails(
+    process.env.VAPID_SUBJECT || 'mailto:admin@familybase.app',
+    process.env.VAPID_PUBLIC_KEY,
+    process.env.VAPID_PRIVATE_KEY
+  );
+} else {
+  console.warn('⚠️ Push notifications disabled: VAPID_PUBLIC_KEY or VAPID_PRIVATE_KEY missing in .env');
+}
 
 router.use(authMiddleware);
 

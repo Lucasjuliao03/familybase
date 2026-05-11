@@ -23,7 +23,7 @@ router.get('/', async (req, res) => {
     if (req.user.role === 'child') {
       const child = await db.prepare('SELECT id FROM children WHERE user_id=?').get(req.user.id);
       if (child) {
-        q += ' AND (ce.child_id IS NULL OR ce.child_id=?) AND ce.visible_to_child=1';
+        q += ' AND (ce.child_id IS NULL OR ce.child_id=?) AND ce.visible_to_child=TRUE';
         p.push(child.id);
       }
     } else if (child_id) {
@@ -46,7 +46,7 @@ router.get('/', async (req, res) => {
                oc.child_id, t.assignee_user_id
         FROM task_occurrences oc
         JOIN tasks t ON t.id = oc.task_id
-        WHERE oc.family_id = ? AND COALESCE(t.is_health_reminder, 0) = 1 AND COALESCE(t.visible_on_calendar, 0) = 1
+        WHERE oc.family_id = ? AND COALESCE(t.is_health_reminder, FALSE) = TRUE AND COALESCE(t.visible_on_calendar, FALSE) = TRUE
         AND substr(oc.occurrence_date, 1, 7) = ?
       `;
       const occP = [req.user.familyId, monthStr];
@@ -88,7 +88,7 @@ router.get('/', async (req, res) => {
           child_id: row.child_id,
           family_id: req.user.familyId,
           created_by: null,
-          visible_to_child: 1,
+          visible_to_child: true,
           visibility: 'family',
           child_name: null,
           child_color: null,
@@ -109,14 +109,14 @@ router.post('/', async (req, res) => {
     const id = uuidv4();
 
     let targetChildId = child_id || null;
-    let isVisibleToChild = visible_to_child !== undefined ? (visible_to_child ? 1 : 0) : 1;
+    let isVisibleToChild = visible_to_child !== undefined ? !!visible_to_child : true;
 
     if (req.user.role === 'child') {
       // Filhos só criam eventos para si mesmos
-      const child = db.prepare('SELECT id FROM children WHERE user_id=?').get(req.user.id);
+      const child = await db.prepare('SELECT id FROM children WHERE user_id=?').get(req.user.id);
       if (!child) return res.status(400).json({ error: 'Perfil não encontrado' });
       targetChildId = child.id;
-      isVisibleToChild = 1; // sempre visível para o filho
+      isVisibleToChild = true; // sempre visível para o filho
     }
 
     let eventColor = color || null;
@@ -155,10 +155,10 @@ router.put('/:id', async (req, res) => {
       const child = await db.prepare('SELECT id FROM children WHERE user_id=?').get(req.user.id);
       if (!child || child.id !== event.child_id) return res.status(403).json({ error: 'Sem permissão' });
     }
-    const vis = visible_to_child !== undefined ? (visible_to_child ? 1 : 0) : event.visible_to_child;
+    const vis = visible_to_child !== undefined ? !!visible_to_child : event.visible_to_child;
     await db.prepare("UPDATE calendar_events SET title=COALESCE(?,title),description=COALESCE(?,description),date=COALESCE(?,date),time=COALESCE(?,time),end_date=COALESCE(?,end_date),type=COALESCE(?,type),color=COALESCE(?,color),child_id=COALESCE(?,child_id),visible_to_child=? WHERE id=? AND family_id=?")
       .run(title, description, date, time, end_date, type, color, child_id, vis, req.params.id, req.user.familyId);
-    res.json(db.prepare(`SELECT ce.*, c.name as child_name, c.color as child_color, cu.display_color as creator_color
+    res.json(await db.prepare(`SELECT ce.*, c.name as child_name, c.color as child_color, cu.display_color as creator_color
       FROM calendar_events ce
       LEFT JOIN children c ON ce.child_id=c.id
       LEFT JOIN users cu ON ce.created_by = cu.id
@@ -176,7 +176,7 @@ router.delete('/:id', async (req, res) => {
       const child = await db.prepare('SELECT id FROM children WHERE user_id=?').get(req.user.id);
       if (!child || child.id !== event.child_id) return res.status(403).json({ error: 'Sem permissão' });
     }
-    db.prepare('DELETE FROM calendar_events WHERE id=?').run(req.params.id);
+    await db.prepare('DELETE FROM calendar_events WHERE id=?').run(req.params.id);
     res.json({ message: 'Removido' });
   } catch (err) { res.status(500).json({ error: 'Erro' }); }
 });

@@ -17,7 +17,7 @@ router.get('/profile/:childId', async (req, res) => {
     const medals = await db.prepare(`SELECT m.*,em.earned_at FROM earned_medals em JOIN medals m ON em.medal_id=m.id WHERE em.child_id=? ORDER BY em.earned_at DESC`).all(req.params.childId);
     const allMedals = await db.prepare(`
       SELECT * FROM medals WHERE (family_id IS NULL OR family_id=?)
-      AND (family_id IS NULL OR is_active IS NULL OR is_active = 1)
+      AND (family_id IS NULL OR is_active IS NULL OR is_active = TRUE)
       ORDER BY COALESCE(medal_group, category), requirement_value
     `).all(req.user.familyId);
     const recentHistory = await db.prepare('SELECT * FROM history WHERE child_id=? ORDER BY created_at DESC LIMIT 20').all(req.params.childId);
@@ -57,7 +57,7 @@ router.post('/medals', gestorOnly, async (req, res) => {
     } = req.body;
     const id = uuidv4();
     const cat = category && ['tasks', 'grades', 'streak', 'special', 'allowance'].includes(category) ? category : 'special';
-    const active = is_active === 0 || is_active === false ? 0 : 1;
+    const active = is_active !== undefined ? !!is_active : true;
     await req.db.prepare(`
       INSERT INTO medals (
         id,name,name_en,description,description_en,icon,category,requirement_type,requirement_value,family_id,
@@ -120,7 +120,7 @@ router.put('/medals/:id', gestorOnly, async (req, res) => {
       extra_points != null ? Number(extra_points) : null,
       rule_description ?? null,
       medal_group ?? null,
-      is_active !== undefined ? (is_active === 0 || is_active === false ? 0 : 1) : null,
+      is_active !== undefined ? !!is_active : null,
       req.params.id,
       req.user.familyId,
     );

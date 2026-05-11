@@ -106,7 +106,7 @@ router.put('/', authMiddleware, gestorOnly, async (req, res) => {
         primary_color = COALESCE(?, primary_color),
         secondary_color = COALESCE(?, secondary_color),
         status = COALESCE(?, status),
-        updated_at = datetime('now')
+        updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `).run(
       name ?? null,
@@ -134,7 +134,7 @@ router.put('/logo', authMiddleware, parentOnly, uploadLogo.single('logo'), async
     const db = req.db;
     if (!req.file) return res.status(400).json({ error: 'Envie uma imagem' });
     const logoUrl = `/uploads/family-logos/${req.file.filename}`;
-    await db.prepare('UPDATE families SET logo_url = ?, updated_at = datetime(\'now\') WHERE id = ?').run(logoUrl, req.user.familyId);
+    await db.prepare('UPDATE families SET logo_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(logoUrl, req.user.familyId);
     res.json({ logo_url: logoUrl });
   } catch (err) {
     console.error(err);
@@ -145,7 +145,7 @@ router.put('/logo', authMiddleware, parentOnly, uploadLogo.single('logo'), async
 // DELETE /api/families/logo
 router.delete('/logo', authMiddleware, parentOnly, async (req, res) => {
   try {
-    await req.db.prepare('UPDATE families SET logo_url = NULL, updated_at = datetime(\'now\') WHERE id = ?').run(req.user.familyId);
+    await req.db.prepare('UPDATE families SET logo_url = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(req.user.familyId);
     res.json({ logo_url: null });
   } catch (err) {
     res.status(500).json({ error: 'Erro ao remover logo' });
@@ -166,13 +166,13 @@ router.post('/members', authMiddleware, gestorOnly, async (req, res) => {
     const ap = access_profile === 'auxiliar' ? 'auxiliar' : 'gestor';
     const userId = uuidv4();
     const hashed = bcrypt.hashSync(password || '123456', 10);
-    const mustFlag = must_change_password ? 1 : 0;
+    const mustFlag = !!must_change_password;
 
     let dc;
     try {
       dc = display_color
-        ? assertValidUserDisplayColor(db, req.user.familyId, display_color, userId)
-        : pickFirstAvailableUserColor(db, req.user.familyId, userId);
+        ? await assertValidUserDisplayColor(db, req.user.familyId, display_color, userId)
+        : await pickFirstAvailableUserColor(db, req.user.familyId, userId);
     } catch (e) {
       return res.status(400).json({ error: e.message || 'Cor inválida' });
     }
@@ -218,7 +218,7 @@ router.post('/children', authMiddleware, gestorOnly, async (req, res) => {
 
       childUserId = uuidv4();
       const hashed = bcrypt.hashSync(password, 10);
-      const mustFlag = must_change_password ? 1 : 0;
+      const mustFlag = !!must_change_password;
       await db.prepare(`
         INSERT INTO users (id, name, email, password, role, family_id, avatar_preset, must_change_password)
         VALUES (?, ?, ?, ?, 'child', ?, ?, ?)
@@ -270,7 +270,7 @@ router.put('/children/:id', authMiddleware, gestorOnly, async (req, res) => {
         nickname = COALESCE(?, nickname),
         emoji = COALESCE(?, emoji),
         notes = COALESCE(?, notes),
-        updated_at = datetime('now')
+        updated_at = CURRENT_TIMESTAMP
       WHERE id = ? AND family_id = ?
     `).run(
       name ?? null,
@@ -287,10 +287,10 @@ router.put('/children/:id', authMiddleware, gestorOnly, async (req, res) => {
     if (child.user_id && email) {
       const ex = await db.prepare('SELECT id FROM users WHERE email = ? AND id != ?').get(email, child.user_id);
       if (ex) return res.status(400).json({ error: 'Email já cadastrado' });
-      await db.prepare('UPDATE users SET email = ?, name = COALESCE(?, name), updated_at = datetime(\'now\') WHERE id = ?')
+      await db.prepare('UPDATE users SET email = ?, name = COALESCE(?, name), updated_at = CURRENT_TIMESTAMP WHERE id = ?')
         .run(email, name ?? null, child.user_id);
     } else if (child.user_id && name) {
-      db.prepare('UPDATE users SET name = ?, updated_at = datetime(\'now\') WHERE id = ?').run(name, child.user_id);
+      await db.prepare('UPDATE users SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(name, child.user_id);
     }
 
     const updated = await db.prepare('SELECT * FROM children WHERE id = ?').get(req.params.id);
@@ -306,8 +306,8 @@ router.delete('/children/:id', authMiddleware, gestorOnly, async (req, res) => {
     const db = req.db;
     const child = await db.prepare('SELECT * FROM children WHERE id = ? AND family_id = ?').get(req.params.id, req.user.familyId);
     if (!child) return res.status(404).json({ error: 'Filho não encontrado' });
-    await db.prepare("UPDATE children SET status='inactive', updated_at=datetime('now') WHERE id=?").run(req.params.id);
-    if (child.user_id) await db.prepare("UPDATE users SET status='inactive', updated_at=datetime('now') WHERE id=?").run(child.user_id);
+    await db.prepare("UPDATE children SET status='inactive', updated_at=CURRENT_TIMESTAMP WHERE id=?").run(req.params.id);
+    if (child.user_id) await db.prepare("UPDATE users SET status='inactive', updated_at=CURRENT_TIMESTAMP WHERE id=?").run(child.user_id);
     res.json({ message: 'Filho desativado com sucesso' });
   } catch (err) {
     res.status(500).json({ error: 'Erro ao remover filho' });
@@ -352,7 +352,7 @@ router.put('/members/:id', authMiddleware, gestorOnly, async (req, res) => {
     let displayColorParam = undefined;
     if (Object.prototype.hasOwnProperty.call(req.body, 'display_color')) {
       try {
-        displayColorParam = assertValidUserDisplayColor(db, req.user.familyId, display_color, req.params.id);
+        displayColorParam = await assertValidUserDisplayColor(db, req.user.familyId, display_color, req.params.id);
       } catch (e) {
         return res.status(400).json({ error: e.message || 'Cor inválida' });
       }
@@ -368,7 +368,7 @@ router.put('/members/:id', authMiddleware, gestorOnly, async (req, res) => {
         emoji = COALESCE(?, emoji),
         display_color = COALESCE(?, display_color),
         access_profile = COALESCE(?, access_profile),
-        updated_at = datetime('now')
+        updated_at = CURRENT_TIMESTAMP
       WHERE id = ? AND family_id = ?
     `).run(
       name ?? null,
@@ -388,7 +388,7 @@ router.put('/members/:id', authMiddleware, gestorOnly, async (req, res) => {
         .run(relationship, req.params.id, req.user.familyId);
     }
 
-    const row = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
+    const row = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
     res.json(row);
   } catch (err) {
     console.error(err);
@@ -404,11 +404,11 @@ router.put('/members/:id/avatar', authMiddleware, canUpdateFamilyMemberAvatar, u
 
     if (req.file) {
       const avatarUrl = `/uploads/avatars/${req.file.filename}`;
-      await db.prepare('UPDATE users SET avatar_url = ?, avatar_preset = NULL, updated_at = datetime(\'now\') WHERE id = ?').run(avatarUrl, req.params.id);
+      await db.prepare('UPDATE users SET avatar_url = ?, avatar_preset = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(avatarUrl, req.params.id);
       return res.json({ avatar_url: avatarUrl, avatar_preset: null });
     }
     if (req.body.avatar_preset) {
-      await db.prepare('UPDATE users SET avatar_preset = ?, avatar_url = NULL, updated_at = datetime(\'now\') WHERE id = ?')
+      await db.prepare('UPDATE users SET avatar_preset = ?, avatar_url = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
         .run(req.body.avatar_preset, req.params.id);
       return res.json({ avatar_url: null, avatar_preset: req.body.avatar_preset });
     }
@@ -422,9 +422,9 @@ router.put('/members/:id/avatar', authMiddleware, canUpdateFamilyMemberAvatar, u
 router.delete('/members/:id/avatar', authMiddleware, canUpdateFamilyMemberAvatar, async (req, res) => {
   try {
     const db = req.db;
-    const member = db.prepare('SELECT * FROM users WHERE id = ? AND family_id = ?').get(req.params.id, req.user.familyId);
+    const member = await db.prepare('SELECT * FROM users WHERE id = ? AND family_id = ?').get(req.params.id, req.user.familyId);
     if (!member || member.role === 'child') return res.status(404).json({ error: 'Membro não encontrado' });
-    await db.prepare('UPDATE users SET avatar_url = NULL, updated_at = datetime(\'now\') WHERE id = ?').run(req.params.id);
+    await db.prepare('UPDATE users SET avatar_url = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(req.params.id);
     res.json({ avatar_url: null, avatar_preset: member.avatar_preset });
   } catch (err) {
     res.status(500).json({ error: 'Erro' });
@@ -437,8 +437,8 @@ router.put('/members/:id/password', authMiddleware, gestorOnly, async (req, res)
     if (!password || password.length < 4) return res.status(400).json({ error: 'Senha muito curta' });
     const db = req.db;
     const hashed = bcrypt.hashSync(password, 10);
-    const must = must_change_password ? 1 : 0;
-    await db.prepare('UPDATE users SET password = ?, must_change_password = ?, updated_at = datetime(\'now\') WHERE id = ? AND family_id = ?')
+    const must = !!must_change_password;
+    await db.prepare('UPDATE users SET password = ?, must_change_password = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND family_id = ?')
       .run(hashed, must, req.params.id, req.user.familyId);
     res.json({ success: true });
   } catch (err) {
@@ -451,11 +451,11 @@ router.put('/children/:id/password', authMiddleware, gestorOnly, async (req, res
     const { password, must_change_password } = req.body;
     if (!password || password.length < 4) return res.status(400).json({ error: 'Senha muito curta' });
     const db = req.db;
-    const child = db.prepare('SELECT * FROM children WHERE id = ? AND family_id = ?').get(req.params.id, req.user.familyId);
+    const child = await db.prepare('SELECT * FROM children WHERE id = ? AND family_id = ?').get(req.params.id, req.user.familyId);
     if (!child || !child.user_id) return res.status(400).json({ error: 'Filho sem conta de login' });
     const hashed = bcrypt.hashSync(password, 10);
-    const must = must_change_password ? 1 : 0;
-    await db.prepare('UPDATE users SET password = ?, must_change_password = ?, updated_at = datetime(\'now\') WHERE id = ?')
+    const must = !!must_change_password;
+    await db.prepare('UPDATE users SET password = ?, must_change_password = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
       .run(hashed, must, child.user_id);
     res.json({ success: true });
   } catch (err) {
@@ -466,7 +466,7 @@ router.put('/children/:id/password', authMiddleware, gestorOnly, async (req, res
 router.get('/members', authMiddleware, gestorOnly, async (req, res) => {
   try {
     const db = req.db;
-    const members = db.prepare(`
+    const members = await db.prepare(`
       SELECT u.id, u.name, u.email, u.role, u.status, u.phone, u.avatar_url, u.avatar_preset,
              u.last_login_at, u.access_profile, u.emoji, u.display_color, u.must_change_password,
              fm.relationship
@@ -500,8 +500,8 @@ router.post('/relatives', authMiddleware, gestorOnly, async (req, res) => {
     let dcRel;
     try {
       dcRel = display_color
-        ? assertValidUserDisplayColor(db, req.user.familyId, display_color, userId)
-        : pickFirstAvailableUserColor(db, req.user.familyId, userId);
+        ? await assertValidUserDisplayColor(db, req.user.familyId, display_color, userId)
+        : await pickFirstAvailableUserColor(db, req.user.familyId, userId);
     } catch (e) {
       return res.status(400).json({ error: e.message || 'Cor inválida' });
     }
@@ -522,22 +522,29 @@ router.post('/relatives', authMiddleware, gestorOnly, async (req, res) => {
       emoji || null,
       dcRel,
     );
-    await db.prepare('INSERT OR IGNORE INTO family_members (id, family_id, user_id, relationship) VALUES (?,?,?,?)').run(
+    await db.prepare(`
+      INSERT INTO family_members (id, family_id, user_id, relationship)
+      SELECT ?, ?, ?, ?
+      WHERE NOT EXISTS (SELECT 1 FROM family_members WHERE family_id = ? AND user_id = ?)
+    `).run(
       uuidv4(),
       req.user.familyId,
       userId,
       relationship || 'other',
+      req.user.familyId,
+      userId,
     );
 
     if (linked_child_ids && linked_child_ids.length > 0) {
       for (const cid of linked_child_ids) {
         try {
-          await db.prepare('INSERT OR IGNORE INTO relative_children (id, relative_user_id, child_id, family_id) VALUES (?,?,?,?)').run(
-            uuidv4(),
-            userId,
-            cid,
-            req.user.familyId,
-          );
+          await db.prepare(`
+            INSERT INTO relative_children (id, relative_user_id, child_id, family_id)
+            SELECT ?, ?, ?, ?
+            WHERE NOT EXISTS (
+              SELECT 1 FROM relative_children WHERE relative_user_id = ? AND child_id = ? AND family_id = ?
+            )
+          `).run(uuidv4(), userId, cid, req.user.familyId, userId, cid, req.user.familyId);
         } catch (e) { /* ignore */ }
       }
     }
@@ -568,7 +575,7 @@ router.put('/relatives/:id', authMiddleware, gestorOnly, async (req, res) => {
     let displayColorRel = undefined;
     if (Object.prototype.hasOwnProperty.call(req.body, 'display_color')) {
       try {
-        displayColorRel = assertValidUserDisplayColor(db, req.user.familyId, display_color, req.params.id);
+        displayColorRel = await assertValidUserDisplayColor(db, req.user.familyId, display_color, req.params.id);
       } catch (e) {
         return res.status(400).json({ error: e.message || 'Cor inválida' });
       }
@@ -583,7 +590,7 @@ router.put('/relatives/:id', authMiddleware, gestorOnly, async (req, res) => {
         display_color = COALESCE(?, display_color),
         status = COALESCE(?, status),
         access_profile = COALESCE(?, access_profile),
-        updated_at = datetime('now')
+        updated_at = CURRENT_TIMESTAMP
       WHERE id = ? AND family_id = ?
     `).run(
       name ?? null,
@@ -603,19 +610,21 @@ router.put('/relatives/:id', authMiddleware, gestorOnly, async (req, res) => {
     }
 
     if (Array.isArray(linked_child_ids)) {
-      db.prepare('DELETE FROM relative_children WHERE relative_user_id = ? AND family_id = ?').run(req.params.id, req.user.familyId);
+      await db.prepare('DELETE FROM relative_children WHERE relative_user_id = ? AND family_id = ?').run(req.params.id, req.user.familyId);
       for (const cid of linked_child_ids) {
-        await db.prepare('INSERT OR IGNORE INTO relative_children (id, relative_user_id, child_id, family_id) VALUES (?,?,?,?)').run(
-          uuidv4(),
-          req.params.id,
-          cid,
-          req.user.familyId,
-        );
+        await db.prepare(`
+          INSERT INTO relative_children (id, relative_user_id, child_id, family_id)
+          SELECT ?, ?, ?, ?
+          WHERE NOT EXISTS (
+            SELECT 1 FROM relative_children WHERE relative_user_id = ? AND child_id = ? AND family_id = ?
+          )
+        `).run(uuidv4(), req.params.id, cid, req.user.familyId, req.params.id, cid, req.user.familyId);
       }
     }
 
     const row = await db.prepare(`
-      SELECT u.*, fm.relationship, GROUP_CONCAT(rc.child_id) as linked_child_ids
+      SELECT u.*, MAX(fm.relationship) AS relationship,
+        STRING_AGG(rc.child_id::text, ',' ORDER BY rc.child_id) AS linked_child_ids
       FROM users u
       JOIN family_members fm ON fm.user_id=u.id AND fm.family_id=?
       LEFT JOIN relative_children rc ON rc.relative_user_id=u.id
@@ -633,8 +642,8 @@ router.get('/relatives', authMiddleware, gestorOnly, async (req, res) => {
   try {
     const db = req.db;
     const relatives = await db.prepare(`
-      SELECT u.*, fm.relationship,
-        GROUP_CONCAT(rc.child_id) as linked_child_ids
+      SELECT u.*, MAX(fm.relationship) AS relationship,
+        STRING_AGG(rc.child_id::text, ',' ORDER BY rc.child_id) AS linked_child_ids
       FROM users u
       JOIN family_members fm ON fm.user_id=u.id AND fm.family_id=?
       LEFT JOIN relative_children rc ON rc.relative_user_id=u.id
@@ -652,7 +661,7 @@ router.put('/children/:id/status', authMiddleware, gestorOnly, async (req, res) 
   try {
     const { status } = req.body;
     const db = req.db;
-    await db.prepare('UPDATE children SET status=?, updated_at=datetime(\'now\') WHERE id=? AND family_id=?').run(status, req.params.id, req.user.familyId);
+    await db.prepare('UPDATE children SET status=?, updated_at=CURRENT_TIMESTAMP WHERE id=? AND family_id=?').run(status, req.params.id, req.user.familyId);
     const child = await db.prepare('SELECT * FROM children WHERE id = ?').get(req.params.id);
     if (child && child.user_id) {
       const ustat = status === 'active' ? 'active' : 'inactive';
@@ -668,9 +677,9 @@ router.put('/children/:id/status', authMiddleware, gestorOnly, async (req, res) 
 router.get('/modules', authMiddleware, gestorOnly, async (req, res) => {
   try {
     const db = req.db;
-    const family = db.prepare('SELECT id, plan FROM families WHERE id = ?').get(req.user.familyId);
+    const family = await db.prepare('SELECT id, plan FROM families WHERE id = ?').get(req.user.familyId);
     if (!family) return res.status(404).json({ error: 'Família não encontrada' });
-    ensureFamilyModules(db, family.id, family.plan);
+    await ensureFamilyModules(db, family.id, family.plan);
     const rows = await db.prepare(`
       SELECT fm.module_key, fm.is_enabled, fm.enabled_at, fm.disabled_at,
              sm.sort_order, sm.is_premium, sm.default_enabled
@@ -685,10 +694,10 @@ router.get('/modules', authMiddleware, gestorOnly, async (req, res) => {
       planAllowsPremium: planOk,
       modules: rows.map((r) => ({
         module_key: r.module_key,
-        is_enabled: r.is_enabled === 1,
-        is_premium: r.is_premium === 1,
-        default_enabled: r.default_enabled === 1,
-        can_enable: planOk || r.is_premium !== 1,
+        is_enabled: !!r.is_enabled,
+        is_premium: !!r.is_premium,
+        default_enabled: !!r.default_enabled,
+        can_enable: planOk || !r.is_premium,
         enabled_at: r.enabled_at,
         disabled_at: r.disabled_at,
       })),
@@ -705,11 +714,11 @@ router.put('/modules', authMiddleware, gestorOnly, async (req, res) => {
     const { modules: updates } = req.body;
     if (!updates || typeof updates !== 'object') return res.status(400).json({ error: 'Payload inválido' });
     const db = req.db;
-    const family = db.prepare('SELECT id, plan FROM families WHERE id = ?').get(req.user.familyId);
+    const family = await db.prepare('SELECT id, plan FROM families WHERE id = ?').get(req.user.familyId);
     if (!family) return res.status(404).json({ error: 'Família não encontrada' });
-    ensureFamilyModules(db, family.id, family.plan);
-    setFamilyModules(db, family.id, updates, req.user.id, family.plan);
-    res.json({ success: true, modules: getMap(db, req.user.familyId) });
+    await ensureFamilyModules(db, family.id, family.plan);
+    await setFamilyModules(db, family.id, updates, req.user.id, family.plan);
+    res.json({ success: true, modules: await getMap(db, req.user.familyId) });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erro ao atualizar módulos' });

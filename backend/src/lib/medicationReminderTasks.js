@@ -18,32 +18,32 @@ function parseTimes(medRow) {
 }
 
 /** First child id for FK quando o paciente é adulto — null se não houver filho na família */
-function carrierChildId(db, familyId) {
-  const r = db.prepare('SELECT id FROM children WHERE family_id=? ORDER BY created_at ASC LIMIT 1').get(familyId);
+async function carrierChildId(db, familyId) {
+  const r = await db.prepare('SELECT id FROM children WHERE family_id=? ORDER BY created_at ASC LIMIT 1').get(familyId);
   return r?.id ?? null;
 }
 
 /** Remove tasks criadas por este medicamento */
-function removeMedicationTasks(db, medicationId) {
-  const tasks = db.prepare('SELECT id FROM tasks WHERE source_medication_id=?').all(medicationId);
+async function removeMedicationTasks(db, medicationId) {
+  const tasks = await db.prepare('SELECT id FROM tasks WHERE source_medication_id=?').all(medicationId);
   for (const t of tasks) {
-    db.prepare('DELETE FROM task_occurrences WHERE task_id=?').run(t.id);
-    db.prepare('DELETE FROM task_allowance_rules WHERE task_id=?').run(t.id);
-    db.prepare('DELETE FROM tasks WHERE id=?').run(t.id);
+    await db.prepare('DELETE FROM task_occurrences WHERE task_id=?').run(t.id);
+    await db.prepare('DELETE FROM task_allowance_rules WHERE task_id=?').run(t.id);
+    await db.prepare('DELETE FROM tasks WHERE id=?').run(t.id);
   }
 }
 
 /**
  * Cria uma tarefa diária por horário (+ ocorrências futuras já existentes no cron geram só hoje pelo generator).
  */
-function syncMedicationReminderTasks(db, medicationId) {
-  const med = db.prepare(`
+async function syncMedicationReminderTasks(db, medicationId) {
+  const med = await db.prepare(`
     SELECT m.*, fam.id as fam_chk FROM medications m JOIN families fam ON fam.id=m.family_id
     WHERE m.id=?
   `).get(medicationId);
   if (!med) return;
 
-  removeMedicationTasks(db, medicationId);
+  await removeMedicationTasks(db, medicationId);
 
   if (med.status !== 'active') return;
 
@@ -61,7 +61,7 @@ function syncMedicationReminderTasks(db, medicationId) {
 
   let taskChildFk = med.child_id;
   if (patientUserId) {
-    const carrier = carrierChildId(db, med.family_id);
+    const carrier = await carrierChildId(db, med.family_id);
     if (!carrier) {
       console.warn('medication reminders: sem filho cadastrado na família para suportar tarefas (FK); ignorado', medicationId);
       return;
@@ -69,7 +69,7 @@ function syncMedicationReminderTasks(db, medicationId) {
     taskChildFk = carrier;
   }
 
-  const tasksMod = isEnabled(db, med.family_id, 'tasks');
+  const tasksMod = await isEnabled(db, med.family_id, 'tasks');
   if (!tasksMod) return;
 
   for (const time of times) {
@@ -77,7 +77,7 @@ function syncMedicationReminderTasks(db, medicationId) {
     const title = `Tomar ${med.name} às ${time}`;
     const description = `[Saúde] Lembrete de medicamento. Marque tomado ou não tomado ao concluir.`;
 
-    db.prepare(`
+    await db.prepare(`
       INSERT INTO tasks (
         id, title, description, type, category, points, coins, frequency,
         recurrence_days, start_date, end_date, due_time, deadline, is_recurring, status,
@@ -89,17 +89,17 @@ function syncMedicationReminderTasks(db, medicationId) {
     `).run(
       taskId, title, description, 'routine', 'medicina',
       0, 0, 'daily',
-      null, start, end, time, null, 1, 'active',
+      null, start, end, time, null, true, 'active',
       'high', taskChildFk, med.family_id, med.created_by,
-      0, 0, isEnabled(db, med.family_id, 'calendar') ? 1 : 0, 0,
-      assigneeUserId, medicationId, 1,
+      false, false, !!(await isEnabled(db, med.family_id, 'calendar')), false,
+      assigneeUserId, medicationId, true,
     );
 
     /** Ocorrências para hoje até fim da recorrência o cron vai gerar próximos dias — gerar já hoje */
     try {
       if (today >= start && today <= end) {
         const dueDatetime = `${today}T${time}:00`;
-        db.prepare(`
+        await db.prepare(`
           INSERT OR IGNORE INTO task_occurrences
           (id, task_id, family_id, child_id, assignee_user_id, occurrence_date, due_datetime, status)
           VALUES (?,?,?,?,?,?,?,'pending')
@@ -113,7 +113,7 @@ function syncMedicationReminderTasks(db, medicationId) {
   /** Disparar geração caso cron não rode */
   try {
     const { generateTaskOccurrences } = require('../cron/taskGenerator');
-    generateTaskOccurrences(db);
+    await generateTaskOccurrences(db);
   } catch { /* ignore */ }
 }
 

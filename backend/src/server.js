@@ -19,6 +19,21 @@ fs.mkdirSync(dataPath, { recursive: true });
 const { initDatabase } = require('./database/init');
 const db = initDatabase();
 
+async function logDatabaseReachable() {
+  try {
+    await db.prepare('SELECT 1 AS ok').get();
+    console.log('✅ Base de dados: ligação verificada');
+  } catch (e) {
+    console.warn('⚠️  Base de dados inacessível:', e.code || e.message);
+    const url = process.env.DATABASE_URL || '';
+    const host = url.match(/@([^/?:]+)/);
+    if (host) console.warn('   Host em DATABASE_URL:', host[1]);
+    console.warn('   No Supabase: Project Settings → Database → Connection string (URI).');
+    console.warn('   O ref do projeto (ex.: abcdefghijklmnop) tem de ser o correto; senão o DNS falha (ENOTFOUND).');
+  }
+}
+logDatabaseReachable();
+
 async function seedMasterUser() {
   const masterEmail = process.env.MASTER_EMAIL;
   const masterPassword = process.env.MASTER_PASSWORD;
@@ -45,6 +60,8 @@ async function seedMasterUser() {
 }
 
 seedMasterUser();
+const { seedSystemModules } = require('./lib/familyModuleService');
+seedSystemModules(db).then(() => console.log('✅ System modules seeded')).catch(e => console.error('Failed to seed modules:', e.message));
 
 // Start cron jobs for recurring tasks
 const { startCronJobs } = require('./cron/taskGenerator');

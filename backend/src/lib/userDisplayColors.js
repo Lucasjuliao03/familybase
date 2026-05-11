@@ -26,15 +26,15 @@ function isInPalette(hex) {
   return USER_DISPLAY_COLOR_PALETTE.some((c) => normalizeHex(c) === n);
 }
 
-function familyThemeColors(db, familyId) {
-  const fam = db.prepare('SELECT primary_color, secondary_color FROM families WHERE id=?').get(familyId);
+async function familyThemeColors(db, familyId) {
+  const fam = await db.prepare('SELECT primary_color, secondary_color FROM families WHERE id=?').get(familyId);
   const primary = normalizeHex(fam?.primary_color || '');
   const secondary = normalizeHex(fam?.secondary_color || '');
   return { primary, secondary };
 }
 
-function colorConflictsWithFamily(hex, familyId, db) {
-  const { primary, secondary } = familyThemeColors(db, familyId);
+async function colorConflictsWithFamily(hex, familyId, db) {
+  const { primary, secondary } = await familyThemeColors(db, familyId);
   const n = normalizeHex(hex);
   if (!n) return true;
   if (primary && n === primary) return true;
@@ -42,10 +42,10 @@ function colorConflictsWithFamily(hex, familyId, db) {
   return false;
 }
 
-function isUserColorTaken(db, familyId, hex, excludeUserId) {
+async function isUserColorTaken(db, familyId, hex, excludeUserId) {
   const n = normalizeHex(hex);
   if (!n) return false;
-  const row = db.prepare(`
+  const row = await db.prepare(`
     SELECT id FROM users
     WHERE family_id = ?
       AND role IN ('parent', 'relative', 'master')
@@ -59,26 +59,26 @@ function isUserColorTaken(db, familyId, hex, excludeUserId) {
 }
 
 /** Valida e normaliza cor de utilizador; lança Error com mensagem em PT */
-function assertValidUserDisplayColor(db, familyId, hex, excludeUserId) {
+async function assertValidUserDisplayColor(db, familyId, hex, excludeUserId) {
   const n = normalizeHex(hex);
   if (!n) throw new Error('Selecione uma cor');
   if (!isInPalette(hex)) throw new Error('Cor inválida: use uma das cores da paleta');
-  if (colorConflictsWithFamily(n, familyId, db)) {
+  if (await colorConflictsWithFamily(n, familyId, db)) {
     throw new Error('Esta cor está reservada à identidade da família (cores principal ou secundária). Escolha outra.');
   }
-  if (isUserColorTaken(db, familyId, n, excludeUserId)) {
+  if (await isUserColorTaken(db, familyId, n, excludeUserId)) {
     throw new Error('Outro utilizador já usa esta cor. Cada responsável deve ter uma cor diferente.');
   }
   return n;
 }
 
-function pickFirstAvailableUserColor(db, familyId, excludeUserId) {
-  const { primary, secondary } = familyThemeColors(db, familyId);
+async function pickFirstAvailableUserColor(db, familyId, excludeUserId) {
+  const { primary, secondary } = await familyThemeColors(db, familyId);
   for (const c of USER_DISPLAY_COLOR_PALETTE) {
     const n = normalizeHex(c);
     if (primary && n === primary) continue;
     if (secondary && n === secondary) continue;
-    if (isUserColorTaken(db, familyId, n, excludeUserId)) continue;
+    if (await isUserColorTaken(db, familyId, n, excludeUserId)) continue;
     return n;
   }
   return normalizeHex(USER_DISPLAY_COLOR_PALETTE[0]);

@@ -112,7 +112,7 @@ export default function FamilyAdministration() {
     return () => { cancelled = true; };
   }, [tab, toast, t]);
 
-  const parentsList = useMemo(() => members.filter((m) => m.role === 'parent'), [members]);
+  const parentsList = useMemo(() => (Array.isArray(members) ? members : []).filter((m) => m.role === 'parent'), [members]);
 
   const accessProfile = user?.access_profile ?? user?.accessProfile ?? 'gestor';
   const isGestorUser = user?.role === 'parent' && accessProfile === 'gestor';

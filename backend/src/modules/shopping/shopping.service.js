@@ -18,12 +18,12 @@ const getShoppingList = async (db, family_id) => {
   };
 };
 
-const addItem = async (db, family_id, user_id, name, is_urgent = 0, establishment = null, quantity = null, description = null) => {
+const addItem = async (db, family_id, user_id, name, is_urgent = false, establishment = null, quantity = null, description = null) => {
   const id = uuidv4();
-  db.prepare(`
+  await db.prepare(`
     INSERT INTO shopping_list (id, family_id, name, is_urgent, registered_by, establishment, quantity, description)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(id, family_id, name, is_urgent ? 1 : 0, user_id, establishment, quantity, description);
+  `).run(id, family_id, name, !!is_urgent, user_id, establishment, quantity, description);
 
   return await db.prepare(`
     SELECT s.*, r.name as registered_by_name
@@ -33,12 +33,12 @@ const addItem = async (db, family_id, user_id, name, is_urgent = 0, establishmen
   `).get(id);
 };
 
-const editItem = async (db, family_id, id, name, is_urgent = 0, establishment = null, quantity = null, description = null, price = 0) => {
+const editItem = async (db, family_id, id, name, is_urgent = false, establishment = null, quantity = null, description = null, price = 0) => {
   const info = await db.prepare(`
     UPDATE shopping_list
     SET name = ?, is_urgent = ?, establishment = ?, quantity = ?, description = ?, price = ?
     WHERE id = ? AND family_id = ?
-  `).run(name, is_urgent ? 1 : 0, establishment, quantity, description, price || 0, id, family_id);
+  `).run(name, !!is_urgent, establishment, quantity, description, price || 0, id, family_id);
 
   if (info.changes === 0) {
     throw new Error('Item not found');
@@ -56,8 +56,8 @@ const editItem = async (db, family_id, id, name, is_urgent = 0, establishment = 
 const markAsBought = async (db, family_id, id, user_id, price = 0) => {
   const info = await db.prepare(`
     UPDATE shopping_list
-    SET is_bought = 1, bought_by = ?, bought_at = datetime('now'), price = ?
-    WHERE id = ? AND family_id = ? AND is_bought = 0
+    SET is_bought = TRUE, bought_by = ?, bought_at = CURRENT_TIMESTAMP, price = ?
+    WHERE id = ? AND family_id = ? AND is_bought = FALSE
   `).run(user_id, price || 0, id, family_id);
 
   if (info.changes === 0) {
@@ -76,8 +76,8 @@ const markAsBought = async (db, family_id, id, user_id, price = 0) => {
 const unmarkAsBought = async (db, family_id, id) => {
   const info = await db.prepare(`
     UPDATE shopping_list
-    SET is_bought = 0, bought_by = NULL, bought_at = NULL, price = 0
-    WHERE id = ? AND family_id = ? AND is_bought = 1
+    SET is_bought = FALSE, bought_by = NULL, bought_at = NULL, price = 0
+    WHERE id = ? AND family_id = ? AND is_bought = TRUE
   `).run(id, family_id);
 
   if (info.changes === 0) {
@@ -95,7 +95,7 @@ const unmarkAsBought = async (db, family_id, id) => {
 
 
 const deleteItem = async (db, family_id, id) => {
-  const info = db.prepare(`
+  const info = await db.prepare(`
     DELETE FROM shopping_list
     WHERE id = ? AND family_id = ?
   `).run(id, family_id);

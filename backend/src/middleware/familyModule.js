@@ -4,7 +4,7 @@ async function getMap(db, familyId) {
   const rows = await db.prepare('SELECT module_key, is_enabled FROM family_modules WHERE family_id = ?').all(familyId);
   const m = {};
   for (const r of rows) {
-    m[r.module_key] = r.is_enabled === 1;
+    m[r.module_key] = !!r.is_enabled;
   }
   return m;
 }
@@ -13,7 +13,7 @@ async function isEnabled(db, familyId, moduleKey) {
   if (!familyId) return true;
   const r = await db.prepare('SELECT is_enabled FROM family_modules WHERE family_id = ? AND module_key = ?').get(familyId, moduleKey);
   if (!r) return false;
-  return r.is_enabled === 1;
+  return !!r.is_enabled;
 }
 
 function requireModule(moduleKey) {

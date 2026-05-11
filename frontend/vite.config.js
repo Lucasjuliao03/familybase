@@ -5,31 +5,52 @@ import { VitePWA } from 'vite-plugin-pwa'
 // https://vite.dev/config/
 export default defineConfig({
   envPrefix: ['VITE_', 'NEXT_PUBLIC_'],
+
   plugins: [
     react(),
+
     VitePWA({
-      // Use our custom sw.js in public folder
-      strategies: 'injectManifest',
-      srcDir: 'public',
-      filename: 'sw.js',
-      // Don't auto-generate manifest - we have our own
-      manifest: false,
-      injectManifest: {
-        // Inject precache manifest into our sw.js
-        globDirectory: 'dist',
-        globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
+      strategies: 'generateSW',
+      registerType: 'autoUpdate',
+
+      manifest: {
+        name: 'FamilyBase',
+        short_name: 'FamilyBase',
+        description: 'Gestão familiar, tarefas, mesada, saúde e rotina',
+        theme_color: '#2563eb',
+        background_color: '#ffffff',
+        display: 'standalone',
+        start_url: '/',
+        scope: '/',
+        icons: [
+          {
+            src: '/pwa-192x192.png',
+            sizes: '192x192',
+            type: 'image/png'
+          },
+          {
+            src: '/pwa-512x512.png',
+            sizes: '512x512',
+            type: 'image/png'
+          }
+        ]
       },
+
+      workbox: {
+        maximumFileSizeToCacheInBytes: 5 * 1024 * 1024
+      },
+
       devOptions: {
-        enabled: true,
-        type: 'module',
-      },
-    }),
+        enabled: true
+      }
+    })
   ],
+
   server: {
     port: 5173,
     proxy: {
       '/api': 'http://localhost:3001',
-      '/uploads': 'http://localhost:3001',
+      '/uploads': 'http://localhost:3001'
     }
   }
 })

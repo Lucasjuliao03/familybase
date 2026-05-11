@@ -28,16 +28,16 @@ async function canOperateOccurrence(db, req, occ, task) {
     }
     /** Medicamento ligado à criança (sem assignee específico) */
     if (req.user.role === 'child') {
-      const c = getChildFromUser(db, req.user.id);
+      const c = await getChildFromUser(db, req.user.id);
       return !!(c && String(c.id) === String(occ.child_id));
     }
     if (req.user.role === 'parent') return true;
-    if (req.user.role === 'relative') return !!relativeLinkedToChild(db, req.user.id, occ.child_id);
+    if (req.user.role === 'relative') return !!await relativeLinkedToChild(db, req.user.id, occ.child_id);
     return false;
   }
 
   if (req.user.role === 'child') {
-    const c = getChildFromUser(db, req.user.id);
+    const c = await getChildFromUser(db, req.user.id);
     return !!(c && String(c.id) === String(occ.child_id));
   }
 
@@ -61,12 +61,12 @@ router.get('/', async (req, res) => {
     `;
     const params = [req.user.familyId];
     if (req.user.role === 'child') {
-      const child = getChildFromUser(db, req.user.id);
+      const child = await getChildFromUser(db, req.user.id);
       if (child) { query += ' AND t.child_id = ?'; params.push(child.id); }
     } else if (child_id) { query += ' AND t.child_id = ?'; params.push(child_id); }
     if (status) { query += ' AND t.status = ?'; params.push(status); }
     if (type) { query += ' AND t.type = ?'; params.push(type); }
-    if (is_recurring !== undefined) { query += ' AND t.is_recurring = ?'; params.push(is_recurring === 'true' ? 1 : 0); }
+    if (is_recurring !== undefined) { query += ' AND t.is_recurring = ?'; params.push(is_recurring === 'true'); }
     query += ' ORDER BY t.created_at DESC';
     res.json(await db.prepare(query).all(...params));
   } catch (err) { console.error(err); res.status(500).json({ error: 'Erro ao listar tarefas' }); }
@@ -83,7 +83,7 @@ router.get('/occurrences', async (req, res) => {
       SELECT oc.*, t.title, t.description, t.type, t.points, t.coins, t.priority,
              t.due_time, t.requires_approval, t.affects_allowance,
              t.is_recurring, t.frequency,
-             COALESCE(t.is_health_reminder, 0) as is_health_reminder,
+             COALESCE(t.is_health_reminder, FALSE) as is_health_reminder,
              t.assignee_user_id,
              t.source_medication_id,
              r.bonus_amount, r.discount_amount,
@@ -99,7 +99,7 @@ router.get('/occurrences', async (req, res) => {
     const params = [req.user.familyId];
 
     if (req.user.role === 'child') {
-      const child = getChildFromUser(db, req.user.id);
+      const child = await getChildFromUser(db, req.user.id);
       if (child) {
         query += " AND oc.child_id = ? AND COALESCE(t.assignee_user_id, '') = ''";
         params.push(child.id);
@@ -145,7 +145,7 @@ router.post('/', async (req, res) => {
 
     let targetChildId = child_id;
     if (req.user.role === 'child') {
-      const child = getChildFromUser(db, req.user.id);
+      const child = await getChildFromUser(db, req.user.id);
       if (!child) return res.status(400).json({ error: 'Perfil de filho não encontrado' });
       targetChildId = child.id;
     } else if (!child_id) {
@@ -174,17 +174,17 @@ router.post('/', async (req, res) => {
       req.user.role === 'child' ? 0 : (points || 10),
       coins || 0, frequency || 'once', deadline || null, priority || 'medium',
       targetChildId, req.user.familyId,
-      is_recurring ? 1 : 0, recurrence_days || null, start_date || null, end_date || null, due_time || null,
+      !!is_recurring, recurrence_days || null, start_date || null, end_date || null, due_time || null,
       req.user.id,
-      requires_approval !== false ? 1 : 0,
-      (allowance_rule?.affects_allowance) ? 1 : 0,
-      visible_on_calendar ? 1 : 0,
-      generate_notification !== false ? 1 : 0
+      requires_approval !== false,
+      !!(allowance_rule?.affects_allowance),
+      !!visible_on_calendar,
+      generate_notification !== false
     );
 
     if (allowance_rule && allowance_rule.affects_allowance) {
       await db.prepare('INSERT INTO task_allowance_rules (id, task_id, affects_allowance, bonus_amount, discount_amount, apply_discount_if_late) VALUES (?,?,?,?,?,?)').run(
-        uuidv4(), id, 1, allowance_rule.bonus_amount || 0, allowance_rule.discount_amount || 0, allowance_rule.apply_discount_if_late ? 1 : 0
+        uuidv4(), id, true, allowance_rule.bonus_amount || 0, allowance_rule.discount_amount || 0, !!allowance_rule.apply_discount_if_late
       );
     }
 
@@ -247,13 +247,13 @@ router.put('/:id', parentOnly, async (req, res) => {
       is_recurring=COALESCE(?,is_recurring), recurrence_days=COALESCE(?,recurrence_days),
       start_date=COALESCE(?,start_date), end_date=COALESCE(?,end_date), due_time=COALESCE(?,due_time),
       requires_approval=COALESCE(?,requires_approval), visible_on_calendar=COALESCE(?,visible_on_calendar),
-      updated_at=datetime('now')
+      updated_at=CURRENT_TIMESTAMP
       WHERE id=?`).run(
       title, description, type, points, coins, frequency, deadline, priority, status,
-      is_recurring !== undefined ? (is_recurring ? 1 : 0) : null,
+      is_recurring !== undefined ? !!is_recurring : null,
       recurrence_days, start_date, end_date, due_time,
-      requires_approval !== undefined ? (requires_approval ? 1 : 0) : null,
-      visible_on_calendar !== undefined ? (visible_on_calendar ? 1 : 0) : null,
+      requires_approval !== undefined ? !!requires_approval : null,
+      visible_on_calendar !== undefined ? !!visible_on_calendar : null,
       req.params.id
     );
 
@@ -261,14 +261,14 @@ router.put('/:id', parentOnly, async (req, res) => {
       const existing = await db.prepare('SELECT id FROM task_allowance_rules WHERE task_id=?').get(req.params.id);
       if (existing) {
         await db.prepare('UPDATE task_allowance_rules SET affects_allowance=?, bonus_amount=?, discount_amount=? WHERE task_id=?')
-          .run(allowance_rule.affects_allowance ? 1 : 0, allowance_rule.bonus_amount || 0, allowance_rule.discount_amount || 0, req.params.id);
+          .run(!!allowance_rule.affects_allowance, allowance_rule.bonus_amount || 0, allowance_rule.discount_amount || 0, req.params.id);
       } else if (allowance_rule.affects_allowance) {
-        db.prepare('INSERT INTO task_allowance_rules (id, task_id, affects_allowance, bonus_amount, discount_amount) VALUES (?,?,?,?,?)')
-          .run(uuidv4(), req.params.id, 1, allowance_rule.bonus_amount || 0, allowance_rule.discount_amount || 0);
+        await db.prepare('INSERT INTO task_allowance_rules (id, task_id, affects_allowance, bonus_amount, discount_amount) VALUES (?,?,?,?,?)')
+          .run(uuidv4(), req.params.id, true, allowance_rule.bonus_amount || 0, allowance_rule.discount_amount || 0);
       }
     }
 
-    res.json(db.prepare('SELECT * FROM tasks WHERE id=?').get(req.params.id));
+    res.json(await db.prepare('SELECT * FROM tasks WHERE id=?').get(req.params.id));
   } catch (err) { console.error(err); res.status(500).json({ error: 'Erro ao atualizar tarefa' }); }
 });
 
@@ -295,10 +295,10 @@ router.put('/occurrences/:id/complete', async (req, res) => {
       else {
         return res.status(400).json({ error: 'Informe health_intake: taken ou skipped.' });
       }
-      if (!canOperateOccurrence(db, req, occ, task)) {
+      if (!await canOperateOccurrence(db, req, occ, task)) {
         return res.status(403).json({ error: 'Acesso negado' });
       }
-      await db.prepare(`UPDATE task_occurrences SET status='completed', health_intake=?, health_confirmed_by=?, completed_at=datetime('now'), updated_at=datetime('now'), points_awarded=0 WHERE id=?`).run(intake, req.user.id, occ.id);
+      await db.prepare(`UPDATE task_occurrences SET status='completed', health_intake=?, health_confirmed_by=?, completed_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP, points_awarded=0 WHERE id=?`).run(intake, req.user.id, occ.id);
 
       if (task.source_medication_id) {
         const med = await db.prepare('SELECT * FROM medications WHERE id=?').get(task.source_medication_id);
@@ -320,17 +320,17 @@ router.put('/occurrences/:id/complete', async (req, res) => {
     }
 
     if (req.user.role === 'child') {
-      const child = getChildFromUser(db, req.user.id);
+      const child = await getChildFromUser(db, req.user.id);
       if (!child || child.id !== occ.child_id) return res.status(403).json({ error: 'Acesso negado' });
     }
 
     const newStatus = task.requires_approval ? 'waiting_approval' : 'completed';
 
-    await db.prepare(`UPDATE task_occurrences SET status=?, completed_at=datetime('now'), updated_at=datetime('now') WHERE id=?`).run(newStatus, occ.id);
+    await db.prepare(`UPDATE task_occurrences SET status=?, completed_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP WHERE id=?`).run(newStatus, occ.id);
 
     if (!task.requires_approval) {
       // Auto-approve: give points
-      awardPoints(db, occ, task, req.user);
+      await awardPoints(db, occ, task, req.user);
     } else {
       // Notify parents for approval
       if (isEnabled(db, req.user.familyId, 'notifications')) {
@@ -359,14 +359,14 @@ router.put('/occurrences/:id/approve', parentOnly, async (req, res) => {
     const task = await db.prepare('SELECT * FROM tasks WHERE id=?').get(occ.task_id);
 
     if (approved) {
-      await db.prepare(`UPDATE task_occurrences SET status='approved', approved_at=datetime('now'), approved_by=?, updated_at=datetime('now') WHERE id=?`).run(req.user.id, occ.id);
-      if (!task.is_health_reminder) awardPoints(db, occ, task, req.user);
+      await db.prepare(`UPDATE task_occurrences SET status='approved', approved_at=CURRENT_TIMESTAMP, approved_by=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`).run(req.user.id, occ.id);
+      if (!task.is_health_reminder) await awardPoints(db, occ, task, req.user);
     } else {
-      await db.prepare(`UPDATE task_occurrences SET status='rejected', rejected_at=datetime('now'), rejected_by=?, rejection_reason=?, updated_at=datetime('now') WHERE id=?`).run(req.user.id, rejection_reason || null, occ.id);
+      await db.prepare(`UPDATE task_occurrences SET status='rejected', rejected_at=CURRENT_TIMESTAMP, rejected_by=?, rejection_reason=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`).run(req.user.id, rejection_reason || null, occ.id);
       // Apply discount if rule exists
       const rule = await db.prepare('SELECT * FROM task_allowance_rules WHERE task_id=?').get(task.id);
       if (rule && rule.affects_allowance && rule.discount_amount > 0) {
-        applyAllowanceDebit(db, occ, task, rule, req.user);
+        await applyAllowanceDebit(db, occ, task, rule, req.user);
       }
       if (isEnabled(db, req.user.familyId, 'notifications')) {
         await db.prepare('INSERT INTO notifications (id,title,message,type,icon,child_id,family_id) VALUES (?,?,?,?,?,?,?)').run(
@@ -388,15 +388,15 @@ router.put('/:id/complete', async (req, res) => {
     if (task.status !== 'pending') return res.status(400).json({ error: 'Tarefa já processada' });
 
     if (req.user.role === 'child') {
-      const child = getChildFromUser(db, req.user.id);
+      const child = await getChildFromUser(db, req.user.id);
       if (!child || child.id !== task.child_id) return res.status(403).json({ error: 'Acesso negado' });
     }
 
-    await db.prepare("UPDATE tasks SET status='completed', completed_at=datetime('now'), updated_at=datetime('now') WHERE id=?").run(req.params.id);
+    await db.prepare("UPDATE tasks SET status='completed', completed_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP WHERE id=?").run(req.params.id);
 
-    if (isEnabled(db, req.user.familyId, 'notifications')) {
+    if (await isEnabled(db, req.user.familyId, 'notifications')) {
       const parents = await db.prepare("SELECT id FROM users WHERE family_id=? AND role='parent'").all(req.user.familyId);
-      const child = db.prepare('SELECT name FROM children WHERE id=?').get(task.child_id);
+      const child = await db.prepare('SELECT name FROM children WHERE id=?').get(task.child_id);
       for (const p of parents) {
         await db.prepare('INSERT INTO notifications (id,title,message,type,icon,user_id,family_id) VALUES (?,?,?,?,?,?,?)').run(
           uuidv4(), 'Tarefa concluída!', `${child?.name} concluiu "${task.title}"`, 'task', '✅', p.id, req.user.familyId
@@ -415,7 +415,7 @@ router.put('/:id/approve', parentOnly, async (req, res) => {
     const task = await db.prepare('SELECT * FROM tasks WHERE id=? AND family_id=?').get(req.params.id, req.user.familyId);
     if (!task) return res.status(404).json({ error: 'Tarefa não encontrada' });
     const newStatus = approved ? 'approved' : 'rejected';
-    await db.prepare("UPDATE tasks SET status=?, approved_by=?, approved_at=datetime('now'), updated_at=datetime('now') WHERE id=?").run(newStatus, req.user.id, req.params.id);
+    await db.prepare("UPDATE tasks SET status=?, approved_by=?, approved_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP WHERE id=?").run(newStatus, req.user.id, req.params.id);
 
     if (approved) {
       const child = await db.prepare('SELECT * FROM children WHERE id=?').get(task.child_id);
@@ -427,9 +427,9 @@ router.put('/:id/approve', parentOnly, async (req, res) => {
         const today = new Date().toISOString().split('T')[0];
         const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
         let streak = child.streak_last_date !== today ? (child.streak_last_date === yesterday ? child.streak_current + 1 : 1) : child.streak_current;
-        await db.prepare("UPDATE children SET points=?,coins=?,level=?,xp=?,xp_next_level=?,streak_current=?,streak_best=?,streak_last_date=?,updated_at=datetime('now') WHERE id=?")
+        await db.prepare("UPDATE children SET points=?,coins=?,level=?,xp=?,xp_next_level=?,streak_current=?,streak_best=?,streak_last_date=?,updated_at=CURRENT_TIMESTAMP WHERE id=?")
           .run(newPts, newCoins, level, xp, xpNext, streak, Math.max(child.streak_best, streak), today, task.child_id);
-        db.prepare('INSERT INTO history (id,event,points,coins,type,child_id,family_id) VALUES (?,?,?,?,?,?,?)').run(uuidv4(), `Tarefa: ${task.title}`, task.points, task.coins || 0, 'task', task.child_id, req.user.familyId);
+        await db.prepare('INSERT INTO history (id,event,points,coins,type,child_id,family_id) VALUES (?,?,?,?,?,?,?)').run(uuidv4(), `Tarefa: ${task.title}`, task.points, task.coins || 0, 'task', task.child_id, req.user.familyId);
         
         const rule = await db.prepare('SELECT * FROM task_allowance_rules WHERE task_id=?').get(task.id);
         if (rule && rule.affects_allowance && rule.bonus_amount > 0) {
@@ -443,12 +443,12 @@ router.put('/:id/approve', parentOnly, async (req, res) => {
           }
         }
 
-        if (isEnabled(db, req.user.familyId, 'notifications')) {
+        if (await isEnabled(db, req.user.familyId, 'notifications')) {
           await db.prepare('INSERT INTO notifications (id,title,message,type,icon,child_id,family_id) VALUES (?,?,?,?,?,?,?)').run(uuidv4(), 'Tarefa aprovada!', `+${task.points} pontos`, 'task', '⭐', task.child_id, req.user.familyId);
         }
       }
     } else {
-      if (isEnabled(db, req.user.familyId, 'notifications')) {
+      if (await isEnabled(db, req.user.familyId, 'notifications')) {
         await db.prepare('INSERT INTO notifications (id,title,message,type,icon,child_id,family_id) VALUES (?,?,?,?,?,?,?)').run(
           uuidv4(), 'Tarefa reprovada', `"${task.title}" foi reprovada.`, 'task', '❌', task.child_id, req.user.familyId
         );
@@ -462,7 +462,7 @@ router.put('/:id/approve', parentOnly, async (req, res) => {
 router.delete('/:id', parentOnly, async (req, res) => {
   try {
     const db = req.db;
-    await db.prepare("UPDATE tasks SET status='inactive', updated_at=datetime('now') WHERE id=? AND family_id=?").run(req.params.id, req.user.familyId);
+    await db.prepare("UPDATE tasks SET status='inactive', updated_at=CURRENT_TIMESTAMP WHERE id=? AND family_id=?").run(req.params.id, req.user.familyId);
     res.json({ message: 'Tarefa desativada' });
   } catch (err) { res.status(500).json({ error: 'Erro' }); }
 });
@@ -484,10 +484,10 @@ async function awardPoints(db, occ, task, user) {
   const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
   let streak = child.streak_last_date !== today ? (child.streak_last_date === yesterday ? child.streak_current + 1 : 1) : child.streak_current;
 
-  await db.prepare("UPDATE children SET points=?,coins=?,level=?,xp=?,xp_next_level=?,streak_current=?,streak_best=?,streak_last_date=?,updated_at=datetime('now') WHERE id=?")
+  await db.prepare("UPDATE children SET points=?,coins=?,level=?,xp=?,xp_next_level=?,streak_current=?,streak_best=?,streak_last_date=?,updated_at=CURRENT_TIMESTAMP WHERE id=?")
     .run(newPts, newCoins, level, xp, xpNext, streak, Math.max(child.streak_best, streak), today, occ.child_id);
 
-  db.prepare("UPDATE task_occurrences SET points_awarded=? WHERE id=?").run(task.points, occ.id);
+  await db.prepare("UPDATE task_occurrences SET points_awarded=? WHERE id=?").run(task.points, occ.id);
   await db.prepare('INSERT INTO history (id,event,points,coins,type,child_id,family_id) VALUES (?,?,?,?,?,?,?)').run(
     uuidv4(), `Tarefa: ${task.title}`, task.points, task.coins || 0, 'task', occ.child_id, occ.family_id
   );
@@ -505,7 +505,7 @@ async function awardPoints(db, occ, task, user) {
     }
   }
 
-  if (isEnabled(db, occ.family_id, 'notifications')) {
+  if (await isEnabled(db, occ.family_id, 'notifications')) {
     await db.prepare('INSERT INTO notifications (id,title,message,type,icon,child_id,family_id) VALUES (?,?,?,?,?,?,?)').run(
       uuidv4(), 'Tarefa aprovada!', `+${task.points} pontos por "${task.title}"`, 'task', '⭐', occ.child_id, occ.family_id
     );
@@ -516,7 +516,7 @@ async function applyAllowanceDebit(db, occ, task, rule, user) {
   const now = new Date();
   const cycle = await db.prepare("SELECT id FROM allowance_cycles WHERE child_id=? AND month=? AND year=? AND status='open'").get(occ.child_id, now.getMonth() + 1, now.getFullYear());
   if (cycle && rule.discount_amount > 0) {
-    db.prepare("INSERT INTO allowance_transactions (id, child_id, family_id, cycle_id, task_id, task_occurrence_id, type, origin, description, amount, status, approved_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)").run(
+    await db.prepare("INSERT INTO allowance_transactions (id, child_id, family_id, cycle_id, task_id, task_occurrence_id, type, origin, description, amount, status, approved_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)").run(
       uuidv4(), occ.child_id, occ.family_id, cycle.id, task.id, occ.id, 'debit', 'task', `Desconto: ${task.title} reprovada`, rule.discount_amount, 'approved', user.id
     );
     await db.prepare("UPDATE allowance_cycles SET total_discount = total_discount + ? WHERE id=?").run(rule.discount_amount, cycle.id);

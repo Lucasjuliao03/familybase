@@ -53,13 +53,13 @@ router.post('/', async (req, res) => {
       for (const m of medals) {
         if (!await db.prepare('SELECT id FROM earned_medals WHERE medal_id=? AND child_id=?').get(m.id, targetChildId)) {
           await db.prepare('INSERT INTO earned_medals (id,medal_id,child_id) VALUES (?,?,?)').run(uuidv4(), m.id, targetChildId);
-          if (isEnabled(db, req.user.familyId, 'notifications')) {
+          if (await isEnabled(db, req.user.familyId, 'notifications')) {
             await db.prepare('INSERT INTO notifications (id,title,message,type,icon,child_id,family_id) VALUES (?,?,?,?,?,?,?)').run(
               uuidv4(), 'Nova medalha!', m.name, 'achievement', m.icon, targetChildId, req.user.familyId);
           }
         }
       }
-      await db.prepare("UPDATE children SET points=points+20, xp=xp+20, updated_at=datetime('now') WHERE id=?").run(targetChildId);
+      await db.prepare("UPDATE children SET points=points+20, xp=xp+20, updated_at=CURRENT_TIMESTAMP WHERE id=?").run(targetChildId);
       await db.prepare('INSERT INTO history (id,event,points,type,child_id,family_id) VALUES (?,?,?,?,?,?)').run(
         uuidv4(), `Nota máxima em ${subject}!`, 20, 'grade', targetChildId, req.user.familyId);
     }
@@ -81,20 +81,20 @@ router.put('/:id', async (req, res) => {
     }
     await db.prepare("UPDATE grades SET subject=COALESCE(?,subject), type=COALESCE(?,type), score=COALESCE(?,score), max_score=COALESCE(?,max_score), concept=COALESCE(?,concept), observation=COALESCE(?,observation), date=COALESCE(?,date) WHERE id=? AND family_id=?")
       .run(subject, type, score != null ? parseFloat(score) : null, max_score, concept, observation, date, req.params.id, req.user.familyId);
-    res.json(db.prepare('SELECT * FROM grades WHERE id=?').get(req.params.id));
+    res.json(await db.prepare('SELECT * FROM grades WHERE id=?').get(req.params.id));
   } catch (err) { res.status(500).json({ error: 'Erro ao atualizar nota' }); }
 });
 
 // DELETE /api/grades/:id
 router.delete('/:id', parentOnly, async (req, res) => {
-  try { req.db.prepare('DELETE FROM grades WHERE id=? AND family_id=?').run(req.params.id, req.user.familyId); res.json({ message: 'Removida' }); }
+  try { await req.db.prepare('DELETE FROM grades WHERE id=? AND family_id=?').run(req.params.id, req.user.familyId); res.json({ message: 'Removida' }); }
   catch (err) { res.status(500).json({ error: 'Erro ao remover' }); }
 });
 
 // GET /api/grades/subjects
 router.get('/subjects', async (req, res) => {
   try {
-    const subjects = req.db.prepare('SELECT DISTINCT subject FROM grades WHERE family_id=? ORDER BY subject').all(req.user.familyId);
+    const subjects = await req.db.prepare('SELECT DISTINCT subject FROM grades WHERE family_id=? ORDER BY subject').all(req.user.familyId);
     res.json(subjects.map(s => s.subject));
   } catch (err) { res.status(500).json({ error: 'Erro' }); }
 });

@@ -44,14 +44,14 @@ async function relativeLinked(db, userId, childId) {
   return await db.prepare('SELECT 1 FROM relative_children WHERE relative_user_id=? AND child_id=?').get(userId, childId);
 }
 
-function canViewChild(db, req, childId) {
+async function canViewChild(db, req, childId) {
   const fid = req.user.familyId;
-  if (!assertChildFamily(db, childId, fid)) return false;
+  if (!(await assertChildFamily(db, childId, fid))) return false;
   if (req.user.role === 'child') {
-    const c = childRow(db, req.user.id);
+    const c = await childRow(db, req.user.id);
     return c && c.id === childId;
   }
-  if (req.user.role === 'relative') return !!relativeLinked(db, req.user.id, childId);
+  if (req.user.role === 'relative') return !!(await relativeLinked(db, req.user.id, childId));
   return ['parent', 'master'].includes(req.user.role);
 }
 
@@ -101,6 +101,15 @@ function normalizeMedicationStatus(s) {
   return 'active';
 }
 
+async function carrierOr400(db, familyId, res) {
+  const cid = await carrierChildId(db, familyId);
+  if (!cid) {
+    res.status(400).json({ error: 'Cadastre ao menos uma criança nesta família para registos de adultos no Minha Saúde (uso técnico do vínculo).' });
+    return null;
+  }
+  return cid;
+}
+
 /** Adulto da mesma família cujo registo clínico pode ser consultado */
 async function canViewAdultPatient(db, req, patientUserId) {
   if (!patientUserId) return false;
@@ -114,19 +123,10 @@ async function canViewAdultPatient(db, req, patientUserId) {
   return false;
 }
 
-function carrierOr400(db, familyId, res) {
-  const cid = carrierChildId(db, familyId);
-  if (!cid) {
-    res.status(400).json({ error: 'Cadastre ao menos uma criança nesta família para registos de adultos no Minha Saúde (uso técnico do vínculo).' });
-    return null;
-  }
-  return cid;
-}
-
 /**
  * Paciente infantil OU adulto autorizado — retorna child_id obrigatório (FK real ou placeholder carrier) e patient_user_id.
  */
-function resolveMedicationPatient(db, req, res, body) {
+async function resolveMedicationPatient(db, req, res, body) {
   const hasChild = body.child_id && String(body.child_id).trim();
   const hasAdult = body.patient_user_id && String(body.patient_user_id).trim();
   if (hasChild && hasAdult) {
@@ -138,21 +138,21 @@ function resolveMedicationPatient(db, req, res, body) {
     return null;
   }
   if (hasChild) {
-    if (!canViewChild(db, req, body.child_id)) {
+    if (!(await canViewChild(db, req, body.child_id))) {
       res.status(403).json({ error: 'Acesso negado' });
       return null;
     }
-    if (req.user.role === 'relative' && !relativeLinked(db, req.user.id, body.child_id)) {
+    if (req.user.role === 'relative' && !(await relativeLinked(db, req.user.id, body.child_id))) {
       res.status(403).json({ error: 'Acesso negado' });
       return null;
     }
     return { childFk: body.child_id, patientUserId: null };
   }
-  if (!canViewAdultPatient(db, req, body.patient_user_id)) {
+  if (!(await canViewAdultPatient(db, req, body.patient_user_id))) {
     res.status(403).json({ error: 'Acesso negado ao paciente adulto' });
     return null;
   }
-  const childFk = carrierOr400(db, req.user.familyId, res);
+  const childFk = await carrierOr400(db, req.user.familyId, res);
   if (!childFk) return null;
   return { childFk, patientUserId: body.patient_user_id };
 }
@@ -182,55 +182,56 @@ async function healthScopeClause(db, req, queryParams, tblAlias) {
   let clause = '';
 
   if (req.user.role === 'child') {
-    const c = childRow(db, req.user.id);
+    const c = await childRow(db, req.user.id);
     if (!c) return { where: ' AND 1=0 ', extra: [], err: null };
     return { where: ` AND COALESCE(${tblAlias}.patient_user_id,'')='' AND ${tblAlias}.child_id=? `, extra: [c.id], err: null };
   }
 
   if (req.user.role === 'relative') {
-    const links = await db.prepare('SELECT child_id FROM relative_children WHERE relative_user_id=?').all(req.user.id).map((x) => x.child_id);
-    if (!links.length) return { where: ' AND 1=0 ', extra: [], err: null };
+    const links = await db.prepare('SELECT child_id FROM relative_children WHERE relative_user_id=?').all(req.user.id);
+    const linkIds = links.map((x) => x.child_id);
+    if (!linkIds.length) return { where: ' AND 1=0 ', extra: [], err: null };
     if (patientParam) {
       if (patientParam !== req.user.id) return { err: [403, 'Acesso negado'] };
       return { where: ` AND ${tblAlias}.patient_user_id=? `, extra: [patientParam], err: null };
     }
     if (childParam) {
-      if (!relativeLinked(db, req.user.id, childParam)) return { err: [403, 'Acesso negado'] };
+      if (!(await relativeLinked(db, req.user.id, childParam))) return { err: [403, 'Acesso negado'] };
       return { where: ` AND COALESCE(${tblAlias}.patient_user_id,'')='' AND ${tblAlias}.child_id=? `, extra: [childParam], err: null };
     }
-    const qm = links.map(() => '?').join(',');
+    const qm = linkIds.map(() => '?').join(',');
     return {
       where: ` AND (${tblAlias}.patient_user_id=? OR (COALESCE(${tblAlias}.patient_user_id,'')='' AND ${tblAlias}.child_id IN (${qm}))) `,
-      extra: [req.user.id, ...links],
+      extra: [req.user.id, ...linkIds],
       err: null,
     };
   }
 
   /** parent | master */
   if (patientParam) {
-    if (!canViewAdultPatient(db, req, patientParam)) return { err: [403, 'Acesso negado'] };
+    if (!(await canViewAdultPatient(db, req, patientParam))) return { err: [403, 'Acesso negado'] };
     return { where: ` AND ${tblAlias}.patient_user_id=? `, extra: [patientParam], err: null };
   }
   if (childParam) {
-    if (!canViewChild(db, req, childParam)) return { err: [403, 'Acesso negado'] };
+    if (!(await canViewChild(db, req, childParam))) return { err: [403, 'Acesso negado'] };
     return { where: ` AND COALESCE(${tblAlias}.patient_user_id,'')='' AND ${tblAlias}.child_id=? `, extra: [childParam], err: null };
   }
   return { where: ` AND COALESCE(${tblAlias}.patient_user_id,'')='' `, extra: [], err: null };
 }
 
-function canAccessMedication(db, req, med) {
+async function canAccessMedication(db, req, med) {
   const fid = req.user.familyId;
   if (!med || med.family_id !== fid) return false;
   if (req.user.role === 'child') {
-    const c = childRow(db, req.user.id);
+    const c = await childRow(db, req.user.id);
     return !!(c && !med.patient_user_id && med.child_id === c.id);
   }
   if (req.user.role === 'relative') {
     if (med.patient_user_id) return med.patient_user_id === req.user.id;
-    return !!(med.child_id && relativeLinked(db, req.user.id, med.child_id));
+    return !!(med.child_id && (await relativeLinked(db, req.user.id, med.child_id)));
   }
-  if (med.patient_user_id) return canViewAdultPatient(db, req, med.patient_user_id);
-  return !!(med.child_id && canViewChild(db, req, med.child_id));
+  if (med.patient_user_id) return await canViewAdultPatient(db, req, med.patient_user_id);
+  return !!(med.child_id && (await canViewChild(db, req, med.child_id)));
 }
 
 router.use(authMiddleware, requireModule('health'));
@@ -294,11 +295,11 @@ router.get('/overview', async (req, res) => {
     const { from, to } = q;
     if (!fid) return res.json({ upcomingAppointments: [], activeMedications: [], recentRecords: [], monitoring: [], alerts: [] });
 
-    const apptScope = healthScopeClause(db, req, q, 'a');
+    const apptScope = await healthScopeClause(db, req, q, 'a');
     if (apptScope.err) return res.status(apptScope.err[0]).json({ error: apptScope.err[1] });
-    const medScope = healthScopeClause(db, req, q, 'm');
+    const medScope = await healthScopeClause(db, req, q, 'm');
     if (medScope.err) return res.status(medScope.err[0]).json({ error: medScope.err[1] });
-    const recScope = healthScopeClause(db, req, q, 'h');
+    const recScope = await healthScopeClause(db, req, q, 'h');
     if (recScope.err) return res.status(recScope.err[0]).json({ error: recScope.err[1] });
 
     const dateClause = from ? ' AND a.appointment_date>=? ' : '';
@@ -330,7 +331,7 @@ router.get('/overview', async (req, res) => {
       SELECT h.*, ${sqlPatientDisplay('h')}
       FROM health_records h
       ${joinsPatient('h')}
-      WHERE h.family_id=? AND h.inactive=0 ${recScope.where}
+      WHERE h.family_id=? AND h.inactive=FALSE ${recScope.where}
       ORDER BY h.record_date DESC, h.record_time DESC LIMIT 10
     `).all(...recParams);
 
@@ -338,7 +339,7 @@ router.get('/overview', async (req, res) => {
       SELECT h.*, ${sqlPatientDisplay('h')}
       FROM health_records h
       ${joinsPatient('h')}
-      WHERE h.family_id=? AND h.status='monitoring' AND h.inactive=0 ${recScope.where}
+      WHERE h.family_id=? AND h.status='monitoring' AND h.inactive=FALSE ${recScope.where}
       ORDER BY h.record_date DESC LIMIT 8
     `).all(...recParams);
 
@@ -356,9 +357,9 @@ router.get('/records', async (req, res) => {
     const fid = req.user.familyId;
     const qu = req.query;
     const { status, record_type, from, to } = qu;
-    const sc = healthScopeClause(db, req, qu, 'h');
+    const sc = await healthScopeClause(db, req, qu, 'h');
     if (sc.err) return res.status(sc.err[0]).json({ error: sc.err[1] });
-    let qstr = `SELECT h.*, ${sqlPatientDisplay('h')} FROM health_records h ${joinsPatient('h')} WHERE h.family_id=? AND h.inactive=0${sc.where}`;
+    let qstr = `SELECT h.*, ${sqlPatientDisplay('h')} FROM health_records h ${joinsPatient('h')} WHERE h.family_id=? AND h.inactive=FALSE${sc.where}`;
     const p = [fid, ...sc.extra];
     if (status) { qstr += ' AND h.status=?'; p.push(status); }
     if (record_type) { qstr += ' AND h.record_type=?'; p.push(record_type); }
@@ -379,7 +380,7 @@ router.post('/records', async (req, res) => {
     } = req.body;
 
     if (req.user.role === 'child') {
-      const c = childRow(db, req.user.id);
+      const c = await childRow(db, req.user.id);
       if (!c) return res.status(400).json({ error: 'Perfil não encontrado' });
       const id = uuidv4();
       const today = new Date().toISOString().split('T')[0];
@@ -388,11 +389,11 @@ router.post('/records', async (req, res) => {
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       `).run(
         id, fid, c.id, record_type || 'other', symptoms || null, temperature ?? null,
-        severity || 'mild', status || 'active', notes || null, medication_given || null, stayed_home ? 1 : 0,
+        severity || 'mild', status || 'active', notes || null, medication_given || null, !!stayed_home,
         record_date || today,
         record_time || null, attachment_urls ? JSON.stringify(attachment_urls) : null, req.user.id,
       );
-      audit(db, req, 'health', 'child_symptom', `Registro sintoma filho ${c.id}`);
+      await audit(db, req, 'health', 'child_symptom', `Registro sintoma filho ${c.id}`);
       return res.status(201).json(await db.prepare('SELECT * FROM health_records WHERE id=?').get(id));
     }
 
@@ -409,8 +410,8 @@ router.post('/records', async (req, res) => {
       childFk = car;
       patientUserId = patient_user_id;
     } else if (child_id) {
-      if (!canViewChild(db, req, child_id)) return res.status(403).json({ error: 'Acesso negado' });
-      if (req.user.role === 'relative' && !relativeLinked(db, req.user.id, child_id)) return res.status(403).json({ error: 'Acesso negado' });
+      if (!(await canViewChild(db, req, child_id))) return res.status(403).json({ error: 'Acesso negado' });
+      if (req.user.role === 'relative' && !(await relativeLinked(db, req.user.id, child_id))) return res.status(403).json({ error: 'Acesso negado' });
       childFk = child_id;
     } else {
       return res.status(400).json({ error: 'Selecione o paciente (filho ou adulto)' });
@@ -423,12 +424,12 @@ router.post('/records', async (req, res) => {
     `).run(
       id, fid, childFk, patientUserId,
       record_type, symptoms || null, temperature ?? null,
-      severity || 'mild', status || 'active', notes || null, medication_given || null, stayed_home ? 1 : 0,
+      severity || 'mild', status || 'active', notes || null, medication_given || null, !!stayed_home,
       record_date, record_time || null,
       attachment_urls ? (typeof attachment_urls === 'string' ? attachment_urls : JSON.stringify(attachment_urls)) : null,
       req.user.id,
     );
-    audit(db, req, 'health', 'create_record', id);
+    await audit(db, req, 'health', 'create_record', id);
     res.status(201).json(await db.prepare('SELECT * FROM health_records WHERE id=?').get(id));
   } catch (err) {
     console.error(err);
@@ -454,17 +455,17 @@ router.put('/records/:id', adultFamilyMember, async (req, res) => {
         medication_given=COALESCE(?,medication_given), stayed_home=COALESCE(?,stayed_home),
         record_date=COALESCE(?,record_date), record_time=COALESCE(?,record_time),
         attachment_urls=COALESCE(?,attachment_urls), inactive=COALESCE(?,inactive),
-        updated_at=datetime('now')
+        updated_at=CURRENT_TIMESTAMP
       WHERE id=?
     `).run(
       record_type, symptoms, temperature, severity, status, notes, medication_given,
-      stayed_home !== undefined ? (stayed_home ? 1 : 0) : null,
+      stayed_home !== undefined ? !!stayed_home : null,
       record_date, record_time,
       attachment_urls != null ? (typeof attachment_urls === 'string' ? attachment_urls : JSON.stringify(attachment_urls)) : null,
-      inactive !== undefined ? inactive : null,
+      inactive !== undefined ? !!inactive : null,
       req.params.id,
     );
-    audit(db, req, 'health', 'update_record', req.params.id);
+    await audit(db, req, 'health', 'update_record', req.params.id);
     res.json(await db.prepare('SELECT * FROM health_records WHERE id=?').get(req.params.id));
   } catch (err) { res.status(500).json({ error: 'Erro' }); }
 });
@@ -475,8 +476,8 @@ router.delete('/records/:id', adultFamilyMember, async (req, res) => {
     const row = await db.prepare('SELECT * FROM health_records WHERE id=? AND family_id=?').get(req.params.id, req.user.familyId);
     if (!row) return res.status(404).json({ error: 'Não encontrado' });
     if (!isGestor(req) && row.created_by !== req.user.id) return res.status(403).json({ error: 'Sem permissão' });
-    await db.prepare('UPDATE health_records SET inactive=1, updated_at=datetime(\'now\') WHERE id=?').run(req.params.id);
-    audit(db, req, 'health', 'soft_delete_record', req.params.id);
+    await db.prepare('UPDATE health_records SET inactive=TRUE, updated_at=CURRENT_TIMESTAMP WHERE id=?').run(req.params.id);
+    await audit(db, req, 'health', 'soft_delete_record', req.params.id);
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: 'Erro' }); }
 });
@@ -488,7 +489,7 @@ router.get('/appointments', async (req, res) => {
     const fid = req.user.familyId;
     const qu = req.query;
     const { status, from, to } = qu;
-    const sc = healthScopeClause(db, req, qu, 'a');
+    const sc = await healthScopeClause(db, req, qu, 'a');
     if (sc.err) return res.status(sc.err[0]).json({ error: sc.err[1] });
     let q = `SELECT a.*, ${sqlPatientDisplay('a')} FROM medical_appointments a ${joinsPatient('a')} WHERE a.family_id=? ${sc.where} `;
     const p = [fid, ...sc.extra];
@@ -514,15 +515,15 @@ router.post('/appointments', adultFamilyMember, async (req, res) => {
     let childFk;
     let patientUid = null;
     if (patient_user_id && String(patient_user_id).trim()) {
-      if (!canViewAdultPatient(db, req, patient_user_id)) return res.status(403).json({ error: 'Acesso negado' });
-      const car = carrierOr400(db, fid, res);
+      if (!(await canViewAdultPatient(db, req, patient_user_id))) return res.status(403).json({ error: 'Acesso negado' });
+      const car = await carrierOr400(db, fid, res);
       if (!car) return;
       childFk = car;
       patientUid = patient_user_id;
     } else if (child_id) {
-      if (!assertChildFamily(db, child_id, fid)) return res.status(400).json({ error: 'Filho inválido' });
-      if (!canViewChild(db, req, child_id)) return res.status(403).json({ error: 'Acesso negado' });
-      if (req.user.role === 'relative' && !relativeLinked(db, req.user.id, child_id)) return res.status(403).json({ error: 'Acesso negado' });
+      if (!(await assertChildFamily(db, child_id, fid))) return res.status(400).json({ error: 'Filho inválido' });
+      if (!(await canViewChild(db, req, child_id))) return res.status(403).json({ error: 'Acesso negado' });
+      if (req.user.role === 'relative' && !(await relativeLinked(db, req.user.id, child_id))) return res.status(403).json({ error: 'Acesso negado' });
       childFk = child_id;
     } else {
       return res.status(400).json({ error: 'Selecione o paciente da consulta' });
@@ -534,10 +535,10 @@ router.post('/appointments', adultFamilyMember, async (req, res) => {
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     `).run(
       id, fid, childFk, patientUid, appointment_date, appointment_time || null, specialty || null, professional_name || null,
-      location || null, reason || null, diagnosis_notes || null, needs_followup ? 1 : 0, followup_date || null,
+      location || null, reason || null, diagnosis_notes || null, !!needs_followup, followup_date || null,
       status || 'scheduled', attachment_urls ? JSON.stringify(attachment_urls) : null, req.user.id,
     );
-    audit(db, req, 'health', 'create_appointment', id);
+    await audit(db, req, 'health', 'create_appointment', id);
     res.status(201).json(await db.prepare('SELECT * FROM medical_appointments WHERE id=?').get(id));
   } catch (err) { res.status(500).json({ error: 'Erro' }); }
 });
@@ -555,15 +556,15 @@ router.put('/appointments/:id', adultFamilyMember, async (req, res) => {
     if (Object.prototype.hasOwnProperty.call(u, 'patient_user_id') || Object.prototype.hasOwnProperty.call(u, 'child_id')) {
       const pu = u.patient_user_id;
       if (pu != null && String(pu).trim() !== '') {
-        if (!canViewAdultPatient(db, req, pu)) return res.status(403).json({ error: 'Acesso negado' });
-        const car = carrierOr400(db, fid, res);
+        if (!(await canViewAdultPatient(db, req, pu))) return res.status(403).json({ error: 'Acesso negado' });
+        const car = await carrierOr400(db, fid, res);
         if (!car) return;
         nextChildFk = car;
         nextPatientUid = pu;
       } else if (u.child_id) {
-        if (!assertChildFamily(db, u.child_id, fid)) return res.status(400).json({ error: 'Filho inválido' });
-        if (!canViewChild(db, req, u.child_id)) return res.status(403).json({ error: 'Acesso negado' });
-        if (req.user.role === 'relative' && !relativeLinked(db, req.user.id, u.child_id)) return res.status(403).json({ error: 'Acesso negado' });
+        if (!(await assertChildFamily(db, u.child_id, fid))) return res.status(400).json({ error: 'Filho inválido' });
+        if (!(await canViewChild(db, req, u.child_id))) return res.status(403).json({ error: 'Acesso negado' });
+        if (req.user.role === 'relative' && !(await relativeLinked(db, req.user.id, u.child_id))) return res.status(403).json({ error: 'Acesso negado' });
         nextChildFk = u.child_id;
         nextPatientUid = null;
       }
@@ -581,7 +582,7 @@ router.put('/appointments/:id', adultFamilyMember, async (req, res) => {
     `).run(
       nextChildFk, nextPatientUid,
       u.appointment_date, u.appointment_time, u.specialty, u.professional_name, u.location, u.reason, u.diagnosis_notes,
-      u.needs_followup !== undefined ? (u.needs_followup ? 1 : 0) : null, u.followup_date, u.status,
+      u.needs_followup !== undefined ? !!u.needs_followup : null, u.followup_date, u.status,
       u.attachment_urls != null ? JSON.stringify(u.attachment_urls) : null, req.params.id,
     );
     res.json(await db.prepare('SELECT * FROM medical_appointments WHERE id=?').get(req.params.id));
@@ -623,7 +624,7 @@ router.post('/medications', adultFamilyMember, async (req, res) => {
     const {
       name, dosage, frequency, start_date, end_date, notes, prescription_image_url, attachment_urls, status,
     } = req.body;
-    const resolved = resolveMedicationPatient(db, req, res, req.body);
+    const resolved = await resolveMedicationPatient(db, req, res, req.body);
     if (!resolved) return;
     if (!name) return res.status(400).json({ error: 'Dados incompletos' });
 
@@ -642,7 +643,7 @@ router.post('/medications', adultFamilyMember, async (req, res) => {
       attachment_urls != null ? (typeof attachment_urls === 'string' ? attachment_urls : JSON.stringify(attachment_urls)) : null,
       st, req.user.id,
     );
-    syncMedicationReminderTasks(db, id);
+    await syncMedicationReminderTasks(db, id);
     res.status(201).json(await db.prepare('SELECT * FROM medications WHERE id=?').get(id));
   } catch (err) { res.status(500).json({ error: 'Erro' }); }
 });
@@ -667,7 +668,7 @@ router.put('/medications/:id', adultFamilyMember, async (req, res) => {
     let nextChildFk = row.child_id;
     let nextPatUid = row.patient_user_id;
     if (Object.prototype.hasOwnProperty.call(u, 'patient_user_id') || Object.prototype.hasOwnProperty.call(u, 'child_id')) {
-      const resolved = resolveMedicationPatient(db, req, res, u);
+      const resolved = await resolveMedicationPatient(db, req, res, u);
       if (!resolved) return;
       nextChildFk = resolved.childFk;
       nextPatUid = resolved.patientUserId;
@@ -692,7 +693,7 @@ router.put('/medications/:id', adultFamilyMember, async (req, res) => {
       nextStatus,
       req.params.id,
     );
-    syncMedicationReminderTasks(db, req.params.id);
+    await syncMedicationReminderTasks(db, req.params.id);
     res.json(await db.prepare('SELECT * FROM medications WHERE id=?').get(req.params.id));
   } catch (err) { res.status(500).json({ error: 'Erro' }); }
 });
@@ -703,7 +704,7 @@ router.delete('/medications/:id', adultFamilyMember, async (req, res) => {
     const row = await db.prepare('SELECT * FROM medications WHERE id=? AND family_id=?').get(req.params.id, req.user.familyId);
     if (!row) return res.status(404).json({ error: 'Não encontrado' });
     if (!isGestor(req) && row.created_by !== req.user.id) return res.status(403).json({ error: 'Sem permissão' });
-    removeMedicationTasks(db, req.params.id);
+    await removeMedicationTasks(db, req.params.id);
     await db.prepare('DELETE FROM medications WHERE id=?').run(req.params.id);
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: 'Erro' }); }
@@ -716,7 +717,7 @@ router.get('/medication-logs', async (req, res) => {
     const fid = req.user.familyId;
     const qu = req.query;
     const { medication_id, from, to } = qu;
-    const sc = healthScopeClause(db, req, qu, 'm');
+    const sc = await healthScopeClause(db, req, qu, 'm');
     if (sc.err) return res.status(sc.err[0]).json({ error: sc.err[1] });
     let q = `SELECT l.*, m.name AS medication_name, ${sqlPatientDisplay('m')} FROM medication_logs l
       JOIN medications m ON m.id = l.medication_id
@@ -737,9 +738,9 @@ router.post('/medication-logs', async (req, res) => {
     const fid = req.user.familyId;
     const { medication_id, taken_date, taken_time, status, notes } = req.body;
     if (!medication_id || !taken_date) return res.status(400).json({ error: 'Dados incompletos' });
-    const med = db.prepare('SELECT * FROM medications WHERE id=? AND family_id=?').get(medication_id, fid);
+    const med = await db.prepare('SELECT * FROM medications WHERE id=? AND family_id=?').get(medication_id, fid);
     if (!med) return res.status(404).json({ error: 'Medicamento não encontrado' });
-    if (!canAccessMedication(db, req, med)) return res.status(403).json({ error: 'Acesso negado' });
+    if (!(await canAccessMedication(db, req, med))) return res.status(403).json({ error: 'Acesso negado' });
 
     const id = uuidv4();
     await db.prepare(`
@@ -760,7 +761,7 @@ router.delete('/medication-logs/:id', parentOnly, async (req, res) => {
     if (!row) return res.status(404).json({ error: 'Não encontrado' });
     const med = await db.prepare('SELECT * FROM medications WHERE id=?').get(row.medication_id);
     if (!canEditHealthRecord(db, req, med)) return res.status(403).json({ error: 'Sem permissão' });
-    db.prepare('DELETE FROM medication_logs WHERE id=?').run(req.params.id);
+    await db.prepare('DELETE FROM medication_logs WHERE id=?').run(req.params.id);
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: 'Erro' }); }
 });

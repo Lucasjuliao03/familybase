@@ -608,3 +608,21 @@ tr:hover td { background: rgba(108,92,231,0.03); }
 .piggy-section .section-icon { font-size: 1.5rem; margin-bottom: 8px; }
 .piggy-section .section-amount { font-size: 1.3rem; font-weight: 800; }
 .piggy-section .section-label { font-size: 0.75rem; color: var(--text-light); font-weight: 600; }
+/* Module Administration Styles */
+.fam-admin-section { animation: slideUp 0.4s ease; }
+.fam-admin-subh { font-size: 1rem; font-weight: 700; margin-bottom: 12px; color: var(--text); display: flex; align-items: center; gap: 8px; }
+.fam-modules-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 20px; margin-top: 20px; }
+.fam-module-card {
+  display: flex; flex-direction: column; gap: 16px; transition: var(--transition);
+  border: 2px solid transparent; position: relative; overflow: hidden;
+}
+.fam-module-card--on { border-color: var(--primary-light); background: rgba(108,92,231,0.02); }
+.fam-module-card__head { display: flex; gap: 16px; align-items: flex-start; }
+.fam-module-card__icon {
+  width: 48px; height: 48px; border-radius: 12px; background: var(--bg);
+  display: flex; align-items: center; justify-content: center; font-size: 1.5rem;
+}
+.fam-module-card__title { font-size: 1.05rem; font-weight: 700; color: var(--text); }
+.fam-module-card__desc { font-size: 0.85rem; color: var(--text-light); line-height: 1.5; flex: 1; }
+.fam-module-card__status { font-size: 0.8rem; font-weight: 600; padding: 8px 12px; background: var(--bg); border-radius: 8px; }
+.fam-module-card__locked { font-size: 0.75rem; color: var(--danger); font-weight: 600; margin-top: 8px; }

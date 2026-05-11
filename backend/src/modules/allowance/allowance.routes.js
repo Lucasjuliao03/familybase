@@ -45,13 +45,13 @@ router.put('/settings/:child_id', modAllow, parentOnly, async (req, res) => {
 
     const exists = await db.prepare('SELECT id FROM allowance_settings WHERE child_id=? AND family_id=?').get(req.params.child_id, req.user.familyId);
     if (exists) {
-      await db.prepare(`UPDATE allowance_settings SET model_type=?, base_amount=?, currency=?, cycle_closing_day=?, payment_day=?, allow_accumulation=?, allow_negative_balance=?, max_bonus=?, max_discount=?, require_parent_approval=?, is_active=?, updated_at=datetime('now') WHERE id=?`).run(
-        model_type, base_amount, currency, cycle_closing_day, payment_day, allow_accumulation, allow_negative_balance, max_bonus, max_discount, require_parent_approval, is_active, exists.id,
+      await db.prepare(`UPDATE allowance_settings SET model_type=?, base_amount=?, currency=?, cycle_closing_day=?, payment_day=?, allow_accumulation=?, allow_negative_balance=?, max_bonus=?, max_discount=?, require_parent_approval=?, is_active=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`).run(
+        model_type, base_amount, currency, cycle_closing_day, payment_day, !!allow_accumulation, !!allow_negative_balance, max_bonus, max_discount, !!require_parent_approval, !!is_active, exists.id,
       );
     } else {
       const id = uuidv4();
       await db.prepare(`INSERT INTO allowance_settings (id, child_id, family_id, model_type, base_amount, currency, cycle_closing_day, payment_day, allow_accumulation, allow_negative_balance, max_bonus, max_discount, require_parent_approval, is_active) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
-        id, req.params.child_id, req.user.familyId, model_type, base_amount, currency, cycle_closing_day, payment_day, allow_accumulation, allow_negative_balance, max_bonus, max_discount, require_parent_approval, is_active,
+        id, req.params.child_id, req.user.familyId, model_type, base_amount, currency, cycle_closing_day, payment_day, !!allow_accumulation, !!allow_negative_balance, max_bonus, max_discount, !!require_parent_approval, !!is_active,
       );
     }
     res.json({ ok: true });
@@ -112,7 +112,7 @@ router.post('/cycles/:id/close', modAllow, parentOnly, async (req, res) => {
 
     if (settings && !settings.allow_negative_balance && final_amount < 0) final_amount = 0;
 
-    await db.prepare("UPDATE allowance_cycles SET status='closed', closed_at=datetime('now'), final_amount=? WHERE id=?").run(final_amount, req.params.id);
+    await db.prepare("UPDATE allowance_cycles SET status='closed', closed_at=CURRENT_TIMESTAMP, final_amount=? WHERE id=?").run(final_amount, req.params.id);
     res.json({ ok: true, final_amount });
   } catch (err) { res.status(500).json({ error: 'Erro' }); }
 });
@@ -123,7 +123,7 @@ router.post('/cycles/:id/pay', modAllow, parentOnly, async (req, res) => {
     const cycle = await db.prepare('SELECT * FROM allowance_cycles WHERE id=? AND family_id=?').get(req.params.id, req.user.familyId);
     if (!cycle) return res.status(404).json({ error: 'Ciclo não encontrado' });
 
-    await db.prepare("UPDATE allowance_cycles SET status='paid', paid_at=datetime('now'), approved_by=? WHERE id=?").run(req.user.id, req.params.id);
+    await db.prepare("UPDATE allowance_cycles SET status='paid', paid_at=CURRENT_TIMESTAMP, approved_by=? WHERE id=?").run(req.user.id, req.params.id);
 
     const transId = uuidv4();
     await db.prepare('INSERT INTO allowance_transactions (id, child_id, family_id, cycle_id, type, origin, description, amount, status, approved_by) VALUES (?,?,?,?,?,?,?,?,?,?)').run(
@@ -216,7 +216,7 @@ router.delete('/goals/:id', modPiggyGoals, async (req, res) => {
 router.get('/rewards/list', modFamilyShop, async (req, res) => {
   try {
     let q = 'SELECT * FROM rewards WHERE family_id=?';
-    if (req.user.role === 'child') q += ' AND is_active=1';
+    if (req.user.role === 'child') q += ' AND is_active=TRUE';
     q += ' ORDER BY point_cost';
     res.json(await req.db.prepare(q).all(req.user.familyId));
   } catch (err) { res.status(500).json({ error: 'Erro' }); }
@@ -226,7 +226,7 @@ router.post('/rewards', modFamilyShop, parentOnly, async (req, res) => {
   try {
     const { name, description, point_cost, coin_cost, type, icon } = req.body;
     const id = uuidv4();
-    await req.db.prepare('INSERT INTO rewards (id,name,description,point_cost,coin_cost,type,icon,family_id,is_active) VALUES (?,?,?,?,?,?,?,?,1)').run(
+    await req.db.prepare('INSERT INTO rewards (id,name,description,point_cost,coin_cost,type,icon,family_id,is_active) VALUES (?,?,?,?,?,?,?,?,TRUE)').run(
       id, name, description || null, point_cost || 0, coin_cost || 0, type || 'non_financial', icon || '🎁', req.user.familyId,
     );
     res.status(201).json(await req.db.prepare('SELECT * FROM rewards WHERE id=?').get(id));
@@ -243,9 +243,10 @@ router.put('/rewards/:id', modFamilyShop, parentOnly, async (req, res) => {
       coin_cost=COALESCE(?,coin_cost), 
       type=COALESCE(?,type), 
       icon=COALESCE(?,icon), 
-      is_active=COALESCE(?,is_active) 
+      is_active=COALESCE(?,is_active),
+      updated_at=CURRENT_TIMESTAMP
       WHERE id=? AND family_id=?`).run(
-      name, description, point_cost, coin_cost, type, icon, is_active, req.params.id, req.user.familyId,
+      name, description, point_cost, coin_cost, type, icon, is_active !== undefined ? !!is_active : null, req.params.id, req.user.familyId,
     );
     res.json(await req.db.prepare('SELECT * FROM rewards WHERE id=?').get(req.params.id));
   } catch (err) { res.status(500).json({ error: 'Erro ao atualizar' }); }
@@ -272,7 +273,7 @@ router.post('/rewards/:id/redeem', modFamilyShop, async (req, res) => {
     } else { childId = req.body.child_id; }
     const id = uuidv4();
     await db.prepare('INSERT INTO redemptions (id,reward_id,child_id) VALUES (?,?,?)').run(id, req.params.id, childId);
-    if (isEnabled(db, req.user.familyId, 'notifications')) {
+    if (await isEnabled(db, req.user.familyId, 'notifications')) {
       const parents = await db.prepare('SELECT id FROM users WHERE family_id=? AND role=?').all(req.user.familyId, 'parent');
       const child = await db.prepare('SELECT name FROM children WHERE id=?').get(childId);
       for (const p of parents) {
@@ -291,14 +292,14 @@ router.put('/redemptions/:id/approve', modFamilyShop, parentOnly, async (req, re
     const redemption = await db.prepare('SELECT r.*,rw.point_cost,rw.name as reward_name FROM redemptions r JOIN rewards rw ON r.reward_id=rw.id WHERE r.id=?').get(req.params.id);
     if (!redemption) return res.status(404).json({ error: 'Não encontrado' });
     const status = approved ? 'approved' : 'rejected';
-    await db.prepare('UPDATE redemptions SET status=?,approved_by=?,approved_at=datetime(\'now\') WHERE id=?').run(status, req.user.id, req.params.id);
+    await db.prepare('UPDATE redemptions SET status=?,approved_by=?,approved_at=CURRENT_TIMESTAMP WHERE id=?').run(status, req.user.id, req.params.id);
     if (approved) {
       await db.prepare('UPDATE children SET points=points-? WHERE id=?').run(redemption.point_cost, redemption.child_id);
       await db.prepare('INSERT INTO history (id,event,points,type,child_id,family_id) VALUES (?,?,?,?,?,?)').run(
         uuidv4(), `Resgate: ${redemption.reward_name}`, -redemption.point_cost, 'reward', redemption.child_id, req.user.familyId,
       );
     }
-    if (isEnabled(db, req.user.familyId, 'notifications')) {
+    if (await isEnabled(db, req.user.familyId, 'notifications')) {
       await db.prepare('INSERT INTO notifications (id,title,message,type,icon,child_id,family_id) VALUES (?,?,?,?,?,?,?)').run(
         uuidv4(), approved ? 'Resgate aprovado!' : 'Resgate negado', redemption.reward_name, 'reward', approved ? '🎉' : '❌', redemption.child_id, req.user.familyId,
       );
@@ -391,7 +392,7 @@ router.put('/piggy-requests/:id/review', modPiggyFlow, parentOnly, async (req, r
     const db = req.db;
     const fid = req.user.familyId;
     const { approved, review_note } = req.body;
-    const reqRow = db.prepare('SELECT * FROM savings_conversion_requests WHERE id=? AND family_id=?').get(req.params.id, fid);
+    const reqRow = await db.prepare('SELECT * FROM savings_conversion_requests WHERE id=? AND family_id=?').get(req.params.id, fid);
     if (!reqRow) return res.status(404).json({ error: 'Não encontrado' });
     if (reqRow.status !== 'pending') return res.status(400).json({ error: 'Solicitação já processada' });
 
@@ -411,7 +412,7 @@ router.put('/piggy-requests/:id/review', modPiggyFlow, parentOnly, async (req, r
       );
       await db.prepare('UPDATE savings_goals SET current_amount = current_amount + ? WHERE id=?').run(amt, goal.id);
 
-      await db.prepare(`UPDATE savings_conversion_requests SET status='approved', reviewed_at=datetime('now'), reviewed_by=?, review_note=? WHERE id=?`).run(
+      await db.prepare(`UPDATE savings_conversion_requests SET status='approved', reviewed_at=CURRENT_TIMESTAMP, reviewed_by=?, review_note=? WHERE id=?`).run(
         req.user.id, review_note || null, req.params.id,
       );
 
@@ -422,7 +423,7 @@ router.put('/piggy-requests/:id/review', modPiggyFlow, parentOnly, async (req, r
       } catch (e) { /* ignore */ }
 
       const childUser = await db.prepare('SELECT user_id FROM children WHERE id=?').get(reqRow.child_id);
-      if (childUser?.user_id && isEnabled(db, fid, 'notifications')) {
+      if (childUser?.user_id && await isEnabled(db, fid, 'notifications')) {
         await db.prepare(`INSERT INTO notifications (id,title,message,type,icon,user_id,child_id,family_id) VALUES (?,?,?,?,?,?,?,?)`).run(
           uuidv4(),
           'Pedido de cofrinho aprovado',
@@ -435,12 +436,12 @@ router.put('/piggy-requests/:id/review', modPiggyFlow, parentOnly, async (req, r
         );
       }
     } else {
-      await db.prepare(`UPDATE savings_conversion_requests SET status='rejected', reviewed_at=datetime('now'), reviewed_by=?, review_note=? WHERE id=?`).run(
+      await db.prepare(`UPDATE savings_conversion_requests SET status='rejected', reviewed_at=CURRENT_TIMESTAMP, reviewed_by=?, review_note=? WHERE id=?`).run(
         req.user.id, review_note || null, req.params.id,
       );
       const childUser = await db.prepare('SELECT user_id FROM children WHERE id=?').get(reqRow.child_id);
-      if (childUser?.user_id && isEnabled(db, fid, 'notifications')) {
-        db.prepare(`INSERT INTO notifications (id,title,message,type,icon,user_id,child_id,family_id) VALUES (?,?,?,?,?,?,?,?)`).run(
+      if (childUser?.user_id && await isEnabled(db, fid, 'notifications')) {
+        await db.prepare(`INSERT INTO notifications (id,title,message,type,icon,user_id,child_id,family_id) VALUES (?,?,?,?,?,?,?,?)`).run(
           uuidv4(),
           'Pedido de cofrinho recusado',
           review_note || 'Um responsável recusou o pedido.',

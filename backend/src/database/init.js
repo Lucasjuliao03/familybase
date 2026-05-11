@@ -3,23 +3,50 @@ require('dotenv').config();
 
 let pool;
 
+/**
+ * SQL herdado de SQLite → PostgreSQL (pool Supabase).
+ */
+function sqliteToPgSql(sql) {
+  if (!sql || typeof sql !== 'string') return sql;
+  let s = sql;
+  s = s.replace(/datetime\('now'\)/gi, 'CURRENT_TIMESTAMP');
+  s = s.replace(/datetime\("now"\)/gi, 'CURRENT_TIMESTAMP');
+
+  if (/\bINSERT OR IGNORE INTO\s+task_occurrences\b/i.test(s)) {
+    s = s.replace(/\bINSERT OR IGNORE INTO\s+task_occurrences\b/i, 'INSERT INTO task_occurrences');
+    if (!/\bON CONFLICT\b/i.test(s)) {
+      s = `${s.trim()} ON CONFLICT (task_id, child_id, occurrence_date) DO NOTHING`;
+    }
+  }
+
+  if (/\bINSERT OR IGNORE INTO\s+earned_medals\b/i.test(s)) {
+    s = s.replace(/\bINSERT OR IGNORE INTO\s+earned_medals\b/i, 'INSERT INTO earned_medals');
+    if (!/\bON CONFLICT\b/i.test(s)) {
+      s = `${s.trim()} ON CONFLICT (medal_id, child_id) DO NOTHING`;
+    }
+  }
+
+  return s;
+}
+
 function initDatabase() {
   if (!pool) {
+    const conn = process.env.DATABASE_URL || '';
     pool = new Pool({
-      connectionString: process.env.DATABASE_URL,
-      // If connecting to Supabase, sometimes SSL is required
-      ssl: process.env.DATABASE_URL.includes('supabase') ? { rejectUnauthorized: false } : false
+      connectionString: conn || undefined,
+      ssl: conn.includes('supabase') ? { rejectUnauthorized: false } : false,
     });
-    
+
     console.log('✅ PostgreSQL Connection Pool initialized');
   }
 
   // Wrapper para imitar a API do better-sqlite3 mas de forma assíncrona
   const dbWrapper = {
     prepare: (sql) => {
+      const adapted = sqliteToPgSql(sql);
       // Converte parâmetros '?' do SQLite para '$1', '$2', etc. do Postgres
       let i = 1;
-      const pgSql = sql.replace(/\?/g, () => `$${i++}`);
+      const pgSql = adapted.replace(/\?/g, () => `$${i++}`);
       
       return {
         get: async (...args) => {

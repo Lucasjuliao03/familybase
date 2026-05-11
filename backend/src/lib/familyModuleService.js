@@ -5,9 +5,10 @@ async function seedSystemModules(db) {
   for (let i = 0; i < MODULE_KEYS.length; i++) {
     const k = MODULE_KEYS[i];
     await db.prepare(`
-      INSERT OR IGNORE INTO system_modules (module_key, sort_order, is_premium, default_enabled)
-      VALUES (?, ?, ?, ?)
-    `).run(k, i, PREMIUM_KEYS.has(k) ? 1 : 0, DEFAULT_ENABLED.has(k) ? 1 : 0);
+      INSERT INTO system_modules (module_key, sort_order, is_premium, default_enabled)
+      SELECT ?, ?, ?, ?
+      WHERE NOT EXISTS (SELECT 1 FROM system_modules WHERE module_key = ?)
+    `).run(k, i, PREMIUM_KEYS.has(k), DEFAULT_ENABLED.has(k), k);
   }
 }
 
@@ -17,12 +18,12 @@ async function ensureFamilyModules(db, familyId, plan) {
     const exists = await db.prepare('SELECT id FROM family_modules WHERE family_id = ? AND module_key = ?').get(familyId, key);
     if (exists) continue;
     const isPremium = PREMIUM_KEYS.has(key);
-    let isEnabled = DEFAULT_ENABLED.has(key) ? 1 : 0;
-    if (isPremium && !premiumOk) isEnabled = 0;
+    let isEnabled = !!DEFAULT_ENABLED.has(key);
+    if (isPremium && !premiumOk) isEnabled = false;
     const now = new Date().toISOString();
     await db.prepare(`
       INSERT INTO family_modules (id, family_id, module_key, is_enabled, enabled_at, disabled_at, updated_by, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+      VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     `).run(
       uuidv4(),
       familyId,
@@ -45,7 +46,7 @@ async function setFamilyModules(db, familyId, updates, updatedByUserId, plan) {
 
     const cur = await db.prepare('SELECT * FROM family_modules WHERE family_id = ? AND module_key = ?').get(familyId, key);
     if (!cur) continue;
-    const was = cur.is_enabled === 1;
+    const was = !!cur.is_enabled;
     if (was === want) continue;
 
     let enabledAt = cur.enabled_at;
@@ -63,9 +64,9 @@ async function setFamilyModules(db, familyId, updates, updatedByUserId, plan) {
         enabled_at = ?,
         disabled_at = ?,
         updated_by = ?,
-        updated_at = datetime('now')
+        updated_at = CURRENT_TIMESTAMP
       WHERE family_id = ? AND module_key = ?
-    `).run(want ? 1 : 0, enabledAt, disabledAt, updatedByUserId || null, familyId, key);
+    `).run(!!want, enabledAt, disabledAt, updatedByUserId || null, familyId, key);
   }
 }
 

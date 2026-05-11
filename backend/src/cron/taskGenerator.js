@@ -2,7 +2,21 @@ const cron = require('node-cron');
 const { v4: uuidv4 } = require('uuid');
 const { isEnabled } = require('../middleware/familyModule');
 
+function logCronDbError(context, err) {
+  const code = err && (err.code || err.errno);
+  const transient = ['ENOTFOUND', 'ECONNREFUSED', 'ETIMEDOUT', 'EAI_AGAIN'].includes(code);
+  if (transient) {
+    console.warn(
+      `⚠️  [${context}] Base de dados inacessível (${code || err.message}). ` +
+        'O API mantém-se ativa — confirme DATABASE_URL, rede e se o projeto Supabase existe.',
+    );
+  } else {
+    console.error(`❌ [${context}]`, err && err.message ? err.message : err);
+  }
+}
+
 async function generateTaskOccurrences(db) {
+  try {
   const today = new Date();
   const todayStr = today.toISOString().split('T')[0];
   const dayOfWeek = today.getDay();
@@ -10,7 +24,7 @@ async function generateTaskOccurrences(db) {
 
   const recurringTasks = await db.prepare(`
     SELECT t.* FROM tasks t
-    WHERE t.is_recurring = 1 AND t.status = 'active'
+    WHERE t.is_recurring = TRUE AND t.status = 'active'
     AND (t.start_date IS NULL OR t.start_date <= ?)
     AND (t.end_date IS NULL OR t.end_date >= ?)
   `).all(todayStr, todayStr);
@@ -27,7 +41,7 @@ async function generateTaskOccurrences(db) {
       const dueDatetime = task.due_time ? `${todayStr}T${task.due_time}:00` : null;
       try {
         const assignee = task.assignee_user_id || null;
-        db.prepare(`
+        await db.prepare(`
           INSERT OR IGNORE INTO task_occurrences
           (id, task_id, family_id, child_id, assignee_user_id, occurrence_date, due_datetime, status)
           VALUES (?,?,?,?,?,?,?,'pending')
@@ -93,17 +107,22 @@ async function generateTaskOccurrences(db) {
     }
   }
 
-  console.log(`📋 Task occurrences: ${created} created, ${skipped} skipped for ${todayStr}`);
-  return { created, skipped };
+    console.log(`📋 Task occurrences: ${created} created, ${skipped} skipped for ${todayStr}`);
+    return { created, skipped };
+  } catch (err) {
+    logCronDbError('generateTaskOccurrences', err);
+    return { created: 0, skipped: 0, error: true };
+  }
 }
 
 async function markExpiredOccurrences(db) {
+  try {
   const now = new Date().toISOString();
   const today = new Date().toISOString().split('T')[0];
 
   const delayedResult = await db.prepare(`
     UPDATE task_occurrences 
-    SET status = 'delayed', updated_at = datetime('now')
+    SET status = 'delayed', updated_at = CURRENT_TIMESTAMP
     WHERE status = 'pending'
     AND due_datetime IS NOT NULL
     AND due_datetime < ?
@@ -116,31 +135,50 @@ async function markExpiredOccurrences(db) {
 
   const expiredResult = await db.prepare(`
     UPDATE task_occurrences 
-    SET status = 'expired', updated_at = datetime('now')
+    SET status = 'expired', updated_at = CURRENT_TIMESTAMP
     WHERE status IN ('pending', 'delayed', 'in_progress')
     AND occurrence_date = ?
   `).run(yesterdayStr);
 
-  if (delayedResult.changes > 0 || expiredResult.changes > 0) {
-    console.log(`⏰ Marked ${delayedResult.changes} delayed, ${expiredResult.changes} expired`);
+    if (delayedResult.changes > 0 || expiredResult.changes > 0) {
+      console.log(`⏰ Marked ${delayedResult.changes} delayed, ${expiredResult.changes} expired`);
+    }
+  } catch (err) {
+    logCronDbError('markExpiredOccurrences', err);
+  }
+}
+
+async function runInitialTaskCron(db) {
+  try {
+    console.log('🚀 Generating initial task occurrences for today...');
+    await generateTaskOccurrences(db);
+    await markExpiredOccurrences(db);
+  } catch (err) {
+    logCronDbError('initialTaskCron', err);
+  }
+}
+
+async function runMidnightTaskCron(db) {
+  try {
+    console.log('🌙 Running midnight task generation cron...');
+    await generateTaskOccurrences(db);
+    await markExpiredOccurrences(db);
+  } catch (err) {
+    logCronDbError('midnightTaskCron', err);
   }
 }
 
 function startCronJobs(db) {
   cron.schedule('0 0 * * *', () => {
-    console.log('🌙 Running midnight task generation cron...');
-    generateTaskOccurrences(db);
-    markExpiredOccurrences(db);
+    runMidnightTaskCron(db).catch((err) => logCronDbError('midnightTaskCron(unhandled)', err));
   });
 
   cron.schedule('*/30 * * * *', () => {
-    markExpiredOccurrences(db);
+    markExpiredOccurrences(db).catch((err) => logCronDbError('markExpiredOccurrences(schedule)', err));
   });
 
   setTimeout(() => {
-    console.log('🚀 Generating initial task occurrences for today...');
-    generateTaskOccurrences(db);
-    markExpiredOccurrences(db);
+    runInitialTaskCron(db).catch((err) => logCronDbError('initialTaskCron(unhandled)', err));
   }, 2000);
 
   console.log('✅ Cron jobs started');

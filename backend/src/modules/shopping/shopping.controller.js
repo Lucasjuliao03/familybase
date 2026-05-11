@@ -2,7 +2,7 @@ const shoppingService = require('./shopping.service');
 
 const getShoppingList = async (req, res) => {
   try {
-    const list = shoppingService.getShoppingList(req.db, req.user.familyId);
+    const list = await shoppingService.getShoppingList(req.db, req.user.familyId);
     res.json(list);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -15,7 +15,7 @@ const addItem = async (req, res) => {
     if (!name) {
       return res.status(400).json({ error: 'Name is required' });
     }
-    const item = shoppingService.addItem(req.db, req.user.familyId, req.user.id, name, is_urgent, establishment, quantity, description);
+    const item = await shoppingService.addItem(req.db, req.user.familyId, req.user.id, name, is_urgent, establishment, quantity, description);
     res.status(201).json(item);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -29,7 +29,7 @@ const editItem = async (req, res) => {
     if (!name) {
       return res.status(400).json({ error: 'Name is required' });
     }
-    const item = shoppingService.editItem(req.db, req.user.familyId, id, name, is_urgent, establishment, quantity, description, price);
+    const item = await shoppingService.editItem(req.db, req.user.familyId, id, name, is_urgent, establishment, quantity, description, price);
     res.json(item);
   } catch (error) {
     if (error.message === 'Item not found') return res.status(404).json({ error: error.message });
@@ -41,7 +41,7 @@ const markAsBought = async (req, res) => {
   try {
     const { id } = req.params;
     const { price } = req.body;
-    const item = shoppingService.markAsBought(req.db, req.user.familyId, id, req.user.id, price);
+    const item = await shoppingService.markAsBought(req.db, req.user.familyId, id, req.user.id, price);
     res.json(item);
   } catch (error) {
     if (error.message === 'Item not found') return res.status(404).json({ error: error.message });
@@ -52,7 +52,7 @@ const markAsBought = async (req, res) => {
 const unmarkAsBought = async (req, res) => {
   try {
     const { id } = req.params;
-    const item = shoppingService.unmarkAsBought(req.db, req.user.familyId, id);
+    const item = await shoppingService.unmarkAsBought(req.db, req.user.familyId, id);
     res.json(item);
   } catch (error) {
     if (error.message === 'Item not found') return res.status(404).json({ error: error.message });
@@ -63,7 +63,7 @@ const unmarkAsBought = async (req, res) => {
 const deleteItem = async (req, res) => {
   try {
     const { id } = req.params;
-    shoppingService.deleteItem(req.db, req.user.familyId, id);
+    await shoppingService.deleteItem(req.db, req.user.familyId, id);
     res.json({ success: true });
   } catch (error) {
     if (error.message === 'Item not found') return res.status(404).json({ error: error.message });
