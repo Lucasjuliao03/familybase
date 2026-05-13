@@ -375,6 +375,7 @@ CREATE POLICY "Authenticated users can delete uploads"
 
 DROP POLICY IF EXISTS "Parents manage piggy requests" ON public.piggy_requests;
 DROP POLICY IF EXISTS "Family view piggy requests" ON public.piggy_requests;
+DROP POLICY IF EXISTS "Children can insert piggy requests" ON public.piggy_requests;
 
 CREATE POLICY "Family view piggy requests" ON public.piggy_requests
   FOR SELECT USING (family_id = public.get_current_user_family_id());

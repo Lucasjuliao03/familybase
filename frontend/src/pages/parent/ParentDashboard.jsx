@@ -87,17 +87,20 @@ export default function ParentDashboard() {
 
   useEffect(() => { fetchDashboard(); }, [fetchDashboard]);
 
-  if (loading) return (
-    <div className="dash-loading">
-      <div className="dash-loading__spinner" />
-      <p>Carregando painel…</p>
-    </div>
-  );
-
+  // IMPORTANTE: todos os hooks têm de vir ANTES de qualquer return (Rules of Hooks).
   const stats    = useMemo(() => data?.stats           || {}, [data]);
   const children = useMemo(() => data?.children        || [], [data]);
   const events   = useMemo(() => data?.upcomingEvents  || [], [data]);
   const history  = useMemo(() => data?.recentHistory   || [], [data]);
+
+  if (loading) {
+    return (
+      <div className="dash-loading">
+        <div className="dash-loading__spinner" />
+        <p>Carregando painel…</p>
+      </div>
+    );
+  }
 
   return (
     <div className="parent-dash animate-fade-in">
