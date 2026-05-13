@@ -862,6 +862,136 @@ tr:hover td { background: rgba(108,92,231,0.03); }
   .login-card__title, .login-card h1 { font-size: 1.4rem; }
 }
 
+/* Selector de perfil no registo */
+.login-card--wide { max-width: 520px; }
+
+.profile-picker {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+.profile-option {
+  background: var(--surface);
+  border: 2px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-align: center;
+}
+.profile-option:hover {
+  border-color: var(--primary);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+}
+.profile-option.is-active {
+  border-color: var(--primary);
+  background: linear-gradient(135deg, rgba(99,102,241,0.08), rgba(168,85,247,0.08));
+  box-shadow: 0 4px 14px rgba(99,102,241,0.18);
+}
+.profile-option__emoji { font-size: 1.7rem; line-height: 1; }
+.profile-option__label { font-weight: 700; font-size: 0.95rem; color: var(--text); }
+.profile-option__hint  { font-size: 0.72rem; color: var(--text-muted); }
+
+.trial-callout {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: linear-gradient(135deg, #ECFCCB, #D9F99D);
+  border: 1px solid #BEF264;
+  color: #365314;
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  margin: 16px 0;
+  font-size: 0.85rem;
+}
+.trial-callout strong { font-size: 0.95rem; }
+
+.pwd-toggle {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 1.1rem;
+  padding: 4px 6px;
+}
+
+/* Banner de trial dentro da app */
+.trial-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background: linear-gradient(135deg, #FEF3C7, #FDE68A);
+  border-bottom: 1px solid #F59E0B;
+  color: #78350F;
+  font-size: 0.88rem;
+  font-weight: 500;
+}
+.trial-banner.is-expired {
+  background: linear-gradient(135deg, #FEE2E2, #FECACA);
+  border-color: #EF4444;
+  color: #7F1D1D;
+}
+.trial-banner__btn {
+  margin-left: auto;
+  background: var(--text);
+  color: #fff;
+  border: none;
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-weight: 600;
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+.trial-banner__btn:hover { transform: translateY(-1px); }
+
+/* Tela de bloqueio do trial */
+.trial-blocked {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--grad-primary);
+}
+.trial-blocked__card {
+  background: #fff;
+  border-radius: var(--radius-lg);
+  padding: 36px 32px;
+  max-width: 480px;
+  width: 100%;
+  text-align: center;
+  box-shadow: var(--shadow-lg);
+}
+.trial-blocked__icon { font-size: 3rem; margin-bottom: 8px; }
+.trial-blocked__title { font-size: 1.4rem; font-weight: 800; margin-bottom: 8px; }
+.trial-blocked__desc { color: var(--text-light); margin-bottom: 20px; line-height: 1.5; }
+.trial-blocked__plans { display: grid; gap: 12px; margin-bottom: 16px; }
+.plan-card {
+  border: 2px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.plan-card:hover { border-color: var(--primary); }
+.plan-card.is-featured {
+  border-color: var(--primary);
+  background: linear-gradient(135deg, rgba(99,102,241,0.08), rgba(168,85,247,0.06));
+}
+.plan-card__title { font-weight: 700; }
+.plan-card__price { font-size: 1.3rem; font-weight: 800; color: var(--primary); }
+.plan-card__hint  { font-size: 0.8rem; color: var(--text-muted); }
+
 /* Piggy bank */
 .piggy-bank {
   background: linear-gradient(135deg, #FFF3E0, #FFECB3);

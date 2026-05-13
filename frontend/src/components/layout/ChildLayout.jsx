@@ -6,6 +6,7 @@ import api from '../../services/api';
 import AvatarPicker from '../../components/AvatarPicker';
 import { anyModuleAllowed, moduleAllowed } from '../../lib/familyModules';
 import MobileNav from './MobileNav';
+import TrialBanner from '../TrialBanner';
 
 export default function ChildLayout() {
   const { user, childProfile, family, logout, modules } = useAuth();
@@ -157,6 +158,7 @@ export default function ChildLayout() {
             </div>
           </div>
         </header>
+        <TrialBanner />
         <div className="app-content">
           <Outlet />
         </div>

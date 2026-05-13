@@ -508,3 +508,258 @@ $$;
 
 REVOKE ALL ON FUNCTION public.approve_piggy_request(UUID, UUID) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.approve_piggy_request(UUID, UUID) TO authenticated;
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- 17) PERFIL no registo + TRIAL de 7 dias + Assinatura
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+-- 17.1 Colunas em families para trial e assinatura
+ALTER TABLE public.families ADD COLUMN IF NOT EXISTS subscription_status TEXT DEFAULT 'trial';
+ALTER TABLE public.families ADD COLUMN IF NOT EXISTS trial_started_at    TIMESTAMPTZ;
+ALTER TABLE public.families ADD COLUMN IF NOT EXISTS trial_ends_at       TIMESTAMPTZ;
+ALTER TABLE public.families ADD COLUMN IF NOT EXISTS subscription_id     TEXT;
+ALTER TABLE public.families ADD COLUMN IF NOT EXISTS plan_id             TEXT;
+ALTER TABLE public.families ADD COLUMN IF NOT EXISTS plan                TEXT DEFAULT 'free';
+
+-- subscription_status: 'trial', 'active', 'expired', 'cancelled', 'past_due'
+
+-- 17.2 Coluna profile_type em users (pai/mae/filho/filha)
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS profile_type TEXT;
+
+-- 17.3 Tabela de histórico de assinaturas (audit)
+CREATE TABLE IF NOT EXISTS public.subscription_events (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  family_id UUID NOT NULL REFERENCES public.families(id) ON DELETE CASCADE,
+  event_type TEXT NOT NULL,         -- trial_started, trial_ended, subscribed, payment, cancelled
+  subscription_id TEXT,
+  amount NUMERIC(10,2),
+  payload JSONB,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+ALTER TABLE public.subscription_events ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Family view subscription events" ON public.subscription_events;
+CREATE POLICY "Family view subscription events" ON public.subscription_events
+  FOR SELECT USING (family_id = public.get_current_user_family_id());
+
+-- 17.4 RPC atualizada: register_family_and_user com perfil e trial
+DROP FUNCTION IF EXISTS public.register_family_and_user(text, text);
+DROP FUNCTION IF EXISTS public.register_family_and_user(text, text, text);
+CREATE OR REPLACE FUNCTION public.register_family_and_user(
+  p_family_name  TEXT DEFAULT NULL,
+  p_user_name    TEXT DEFAULT NULL,
+  p_profile_type TEXT DEFAULT 'pai'   -- 'pai' | 'mae' | 'filho' | 'filha'
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_uid       UUID;
+  v_fid       UUID;
+  v_email     TEXT;
+  v_fn        TEXT;
+  v_un        TEXT;
+  v_profile   TEXT;
+  v_role      TEXT;
+  v_avatar    TEXT;
+  meta        JSONB;
+BEGIN
+  v_uid := auth.uid();
+  IF v_uid IS NULL THEN
+    RAISE EXCEPTION 'not_authenticated';
+  END IF;
+
+  -- Já tem família? Apenas atualiza profile_type/avatar.
+  IF EXISTS (SELECT 1 FROM public.users u WHERE u.id = v_uid AND u.family_id IS NOT NULL) THEN
+    IF p_profile_type IS NOT NULL THEN
+      UPDATE public.users SET profile_type = lower(p_profile_type) WHERE id = v_uid;
+    END IF;
+    RETURN (
+      SELECT jsonb_build_object('family_id', u.family_id, 'already_registered', true)
+      FROM public.users u WHERE u.id = v_uid LIMIT 1
+    );
+  END IF;
+
+  SELECT email::text, COALESCE(raw_user_meta_data, '{}'::jsonb)
+    INTO v_email, meta
+    FROM auth.users WHERE id = v_uid;
+
+  v_profile := lower(COALESCE(NULLIF(trim(p_profile_type), ''), 'pai'));
+  IF v_profile NOT IN ('pai', 'mae', 'mãe', 'filho', 'filha') THEN
+    v_profile := 'pai';
+  END IF;
+  IF v_profile = 'mãe' THEN v_profile := 'mae'; END IF;
+
+  -- Mapear perfil → role e avatar default
+  v_role := CASE WHEN v_profile IN ('pai','mae') THEN 'parent' ELSE 'child' END;
+  v_avatar := CASE v_profile
+    WHEN 'pai'   THEN 'parent_male'
+    WHEN 'mae'   THEN 'parent_female'
+    WHEN 'filho' THEN 'gamer'
+    WHEN 'filha' THEN 'princess'
+    ELSE NULL
+  END;
+
+  v_fn := COALESCE(NULLIF(trim(p_family_name), ''), NULLIF(trim(meta->>'family_name'), ''), 'Minha família');
+  v_un := COALESCE(NULLIF(trim(p_user_name), ''),  NULLIF(trim(meta->>'name'), ''), split_part(v_email, '@', 1), 'Utilizador');
+
+  -- Criar família com trial de 7 dias
+  INSERT INTO public.families (name, plan, status, subscription_status, trial_started_at, trial_ends_at)
+  VALUES (v_fn, 'free', 'trial', 'trial', now(), now() + INTERVAL '7 days')
+  RETURNING id INTO v_fid;
+
+  -- Criar/atualizar utilizador
+  INSERT INTO public.users (id, name, email, role, family_id, status, must_change_password, profile_type, avatar_preset)
+  VALUES (v_uid, v_un, v_email, v_role, v_fid, 'active', false, v_profile, v_avatar)
+  ON CONFLICT (id) DO UPDATE SET
+    name = COALESCE(EXCLUDED.name, public.users.name),
+    email = COALESCE(EXCLUDED.email, public.users.email),
+    family_id = EXCLUDED.family_id,
+    role = CASE WHEN public.users.role = 'master' THEN public.users.role ELSE EXCLUDED.role END,
+    status = 'active',
+    profile_type = EXCLUDED.profile_type,
+    avatar_preset = COALESCE(public.users.avatar_preset, EXCLUDED.avatar_preset),
+    updated_at = now();
+
+  -- Se for criança/filho, criar registo em children
+  IF v_role = 'child' THEN
+    INSERT INTO public.children (id, family_id, user_id, name, color, level, xp, xp_next_level, points, coins, streak_current, avatar_preset)
+    VALUES (gen_random_uuid(), v_fid, v_uid, v_un, '#6366F1', 1, 0, 100, 0, 0, 0, v_avatar)
+    ON CONFLICT (user_id) DO UPDATE SET family_id = EXCLUDED.family_id;
+  END IF;
+
+  -- Log do início do trial
+  INSERT INTO public.subscription_events (family_id, event_type, payload)
+  VALUES (v_fid, 'trial_started', jsonb_build_object('user_id', v_uid, 'profile', v_profile));
+
+  RETURN jsonb_build_object(
+    'family_id', v_fid,
+    'profile_type', v_profile,
+    'role', v_role,
+    'trial_ends_at', (now() + INTERVAL '7 days')
+  );
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.register_family_and_user(TEXT, TEXT, TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.register_family_and_user(TEXT, TEXT, TEXT) TO authenticated;
+
+-- 17.5 RPC para activar assinatura (chamada após pagamento confirmado)
+CREATE OR REPLACE FUNCTION public.activate_subscription(
+  p_subscription_id TEXT,
+  p_plan_id         TEXT DEFAULT 'premium_mensal',
+  p_plan            TEXT DEFAULT 'premium'
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_fid UUID;
+BEGIN
+  v_fid := public.get_current_user_family_id();
+  IF v_fid IS NULL THEN
+    RAISE EXCEPTION 'not_authenticated';
+  END IF;
+
+  UPDATE public.families
+     SET subscription_status = 'active',
+         subscription_id = p_subscription_id,
+         plan_id = p_plan_id,
+         plan = p_plan,
+         status = 'active'
+   WHERE id = v_fid;
+
+  INSERT INTO public.subscription_events (family_id, event_type, subscription_id, payload)
+  VALUES (v_fid, 'subscribed', p_subscription_id,
+          jsonb_build_object('plan_id', p_plan_id, 'plan', p_plan));
+
+  RETURN jsonb_build_object('ok', true, 'family_id', v_fid);
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.activate_subscription(TEXT, TEXT, TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.activate_subscription(TEXT, TEXT, TEXT) TO authenticated;
+
+-- 17.6 RPC helper: estado do trial / assinatura
+CREATE OR REPLACE FUNCTION public.get_subscription_status()
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_fid UUID;
+  v_row public.families%ROWTYPE;
+  v_now TIMESTAMPTZ := now();
+BEGIN
+  v_fid := public.get_current_user_family_id();
+  IF v_fid IS NULL THEN
+    RETURN jsonb_build_object('ok', false);
+  END IF;
+
+  SELECT * INTO v_row FROM public.families WHERE id = v_fid;
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('ok', false);
+  END IF;
+
+  -- Auto-marca como expired quando o trial passou
+  IF v_row.subscription_status = 'trial' AND v_row.trial_ends_at IS NOT NULL AND v_row.trial_ends_at < v_now THEN
+    UPDATE public.families SET subscription_status = 'expired' WHERE id = v_fid;
+    v_row.subscription_status := 'expired';
+  END IF;
+
+  RETURN jsonb_build_object(
+    'ok', true,
+    'subscription_status', v_row.subscription_status,
+    'trial_started_at', v_row.trial_started_at,
+    'trial_ends_at', v_row.trial_ends_at,
+    'plan', v_row.plan,
+    'days_remaining', GREATEST(0, EXTRACT(DAY FROM (v_row.trial_ends_at - v_now)))::int
+  );
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.get_subscription_status() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.get_subscription_status() TO authenticated;
+
+-- 17.7 Backfill: famílias antigas sem trial recebem 7 dias a partir de hoje
+UPDATE public.families
+   SET subscription_status = COALESCE(subscription_status, 'trial'),
+       trial_started_at    = COALESCE(trial_started_at, created_at, now()),
+       trial_ends_at       = COALESCE(trial_ends_at, COALESCE(created_at, now()) + INTERVAL '7 days')
+ WHERE subscription_status IS NULL
+    OR (subscription_status = 'trial' AND trial_ends_at IS NULL);
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- 18) Tabelas de suporte ao Mercado Pago
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+-- Planos do Mercado Pago (preenchidos pela Edge Function mp-create-plan)
+CREATE TABLE IF NOT EXISTS public.mp_plans (
+  code        TEXT PRIMARY KEY,             -- premium_mensal, premium_anual
+  mp_plan_id  TEXT NOT NULL,                -- preapproval_plan.id
+  label       TEXT,
+  amount      NUMERIC(10,2) NOT NULL,
+  currency    TEXT DEFAULT 'BRL',
+  active      BOOLEAN DEFAULT true,
+  created_at  TIMESTAMPTZ DEFAULT NOW(),
+  updated_at  TIMESTAMPTZ DEFAULT NOW()
+);
+ALTER TABLE public.mp_plans ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Authenticated can read plans" ON public.mp_plans;
+CREATE POLICY "Authenticated can read plans" ON public.mp_plans
+  FOR SELECT TO authenticated USING (active = true);
+
+-- Eventos de webhook (idempotência)
+CREATE TABLE IF NOT EXISTS public.mp_webhook_events (
+  event_id    TEXT PRIMARY KEY,
+  type        TEXT,
+  payload     JSONB,
+  received_at TIMESTAMPTZ DEFAULT NOW()
+);
+ALTER TABLE public.mp_webhook_events ENABLE ROW LEVEL SECURITY;
+-- Apenas service_role escreve/lê (default sem políticas → bloqueado para anon/authenticated)
+

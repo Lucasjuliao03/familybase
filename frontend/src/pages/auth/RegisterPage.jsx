@@ -4,83 +4,175 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useToast } from '../../contexts/ToastContext';
 
+const PROFILES = [
+  { id: 'pai',   label: 'Pai',   emoji: '👨',     hint: 'Gestor da família' },
+  { id: 'mae',   label: 'Mãe',   emoji: '👩',     hint: 'Gestora da família' },
+  { id: 'filho', label: 'Filho', emoji: '👦',     hint: 'Tarefas e recompensas' },
+  { id: 'filha', label: 'Filha', emoji: '👧',     hint: 'Tarefas e recompensas' },
+];
+
 export default function RegisterPage() {
   const { register } = useAuth();
   const { t } = useLanguage();
   const toast = useToast();
-  const [form, setForm] = useState({ familyName: '', name: '', email: '', password: '', confirmPassword: '' });
+  const [form, setForm] = useState({
+    familyName: '',
+    name: '',
+    email: '',
+    password: '',
+    confirmPassword: '',
+    profileType: '',
+  });
   const [loading, setLoading] = useState(false);
+  const [showPwd, setShowPwd] = useState(false);
+
+  const update = (field, value) => setForm(prev => ({ ...prev, [field]: value }));
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (!form.profileType) {
+      toast.error('Selecione o seu perfil (Pai, Mãe, Filho ou Filha)');
+      return;
+    }
     if (form.password !== form.confirmPassword) {
       toast.error('As senhas não coincidem');
+      return;
+    }
+    if (form.password.length < 6) {
+      toast.error('A senha deve ter no mínimo 6 caracteres');
       return;
     }
     setLoading(true);
     try {
       await register(form);
+      toast.success('Conta criada! Bem-vindo ao seu teste gratuito de 7 dias.');
     } catch (err) {
-      toast.error(err?.message || err.response?.data?.error || t('error_occurred'));
+      toast.error(err?.message || err?.response?.data?.error || t('error_occurred'));
     } finally {
       setLoading(false);
     }
   };
 
-  const update = (field, value) => setForm(prev => ({ ...prev, [field]: value }));
-
   return (
     <div className="login-page">
-      <div className="login-card animate-fade-in">
+      <div className="login-card login-card--wide animate-fade-in">
         <div className="login-card__logo">
           <img src="/logo512.png" alt="Base Familiar" loading="eager" />
         </div>
         <h1 className="login-card__title">Base Familiar</h1>
-        <p className="login-subtitle">{t('register_subtitle')}</p>
+        <p className="login-subtitle">Crie a sua conta e ganhe 7 dias grátis</p>
 
         <form onSubmit={handleSubmit}>
           <div className="form-group">
-            <label className="form-label">{t('family_name')}</label>
-            <input className="form-input" value={form.familyName}
-              onChange={e => update('familyName', e.target.value)}
-              placeholder="Ex: Família Silva" required />
+            <label className="form-label">Nome da família</label>
+            <input
+              className="form-input"
+              value={form.familyName}
+              onChange={(e) => update('familyName', e.target.value)}
+              placeholder="Ex: Família Silva"
+              required
+              autoComplete="organization"
+            />
           </div>
+
           <div className="form-group">
-            <label className="form-label">{t('name')}</label>
-            <input className="form-input" value={form.name}
-              onChange={e => update('name', e.target.value)}
-              placeholder="Seu nome completo" required />
+            <label className="form-label">Nome completo</label>
+            <input
+              className="form-input"
+              value={form.name}
+              onChange={(e) => update('name', e.target.value)}
+              placeholder="Seu nome completo"
+              required
+              autoComplete="name"
+            />
           </div>
+
           <div className="form-group">
-            <label className="form-label">{t('email')}</label>
-            <input className="form-input" type="email" autoComplete="email"
+            <label className="form-label">Email</label>
+            <input
+              className="form-input"
+              type="email"
+              autoComplete="email"
               value={form.email}
-              onChange={e => update('email', e.target.value)}
-              placeholder="email@exemplo.com" required />
+              onChange={(e) => update('email', e.target.value)}
+              placeholder="email@exemplo.com"
+              required
+            />
           </div>
+
           <div className="form-group">
-            <label className="form-label">{t('password')}</label>
-            <input className="form-input" type="password" autoComplete="new-password"
-              value={form.password}
-              onChange={e => update('password', e.target.value)}
-              placeholder="Mínimo 6 caracteres" required minLength={6} />
+            <label className="form-label">Senha</label>
+            <div style={{ position: 'relative' }}>
+              <input
+                className="form-input"
+                type={showPwd ? 'text' : 'password'}
+                autoComplete="new-password"
+                value={form.password}
+                onChange={(e) => update('password', e.target.value)}
+                placeholder="Mínimo 6 caracteres"
+                required
+                minLength={6}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPwd((v) => !v)}
+                className="pwd-toggle"
+                aria-label={showPwd ? 'Ocultar senha' : 'Mostrar senha'}
+              >
+                {showPwd ? '🙈' : '👁️'}
+              </button>
+            </div>
           </div>
+
           <div className="form-group">
-            <label className="form-label">{t('confirm_password')}</label>
-            <input className="form-input" type="password" autoComplete="new-password"
+            <label className="form-label">Confirmar senha</label>
+            <input
+              className="form-input"
+              type={showPwd ? 'text' : 'password'}
+              autoComplete="new-password"
               value={form.confirmPassword}
-              onChange={e => update('confirmPassword', e.target.value)}
-              placeholder="Repita a senha" required />
+              onChange={(e) => update('confirmPassword', e.target.value)}
+              placeholder="Repita a senha"
+              required
+            />
           </div>
-          <button className="btn btn-primary btn-lg" type="submit" disabled={loading}
-            style={{ width: '100%', justifyContent: 'center' }}>
-            {loading ? 'Criando…' : t('register')}
+
+          <div className="form-group">
+            <label className="form-label">Qual é o seu perfil?</label>
+            <div className="profile-picker">
+              {PROFILES.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  className={`profile-option ${form.profileType === p.id ? 'is-active' : ''}`}
+                  onClick={() => update('profileType', p.id)}
+                >
+                  <span className="profile-option__emoji">{p.emoji}</span>
+                  <span className="profile-option__label">{p.label}</span>
+                  <span className="profile-option__hint">{p.hint}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="trial-callout">
+            <strong>🎁 Teste grátis de 7 dias</strong>
+            <span>Aceda a todas as funcionalidades sem cartão de crédito.</span>
+          </div>
+
+          <button
+            className="btn btn-primary btn-lg"
+            type="submit"
+            disabled={loading}
+            style={{ width: '100%', justifyContent: 'center' }}
+          >
+            {loading ? 'A criar conta…' : 'Criar conta'}
           </button>
         </form>
 
-        <div className="login-divider">{t('has_account')}</div>
+        <div className="login-divider">Já tem conta?</div>
         <Link to="/login" className="btn btn-ghost btn-lg" style={{ width: '100%', justifyContent: 'center' }}>
-          {t('login')}
+          Entrar
         </Link>
       </div>
     </div>

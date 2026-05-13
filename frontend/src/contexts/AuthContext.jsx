@@ -124,7 +124,17 @@ export function AuthProvider({ children }) {
       // Busca dados da família e módulos persistentes
       if (profileRow.family_id) {
         const { data: familyData } = await supabase.from('families').select('*').eq('id', profileRow.family_id).single();
-        setFamily(familyData);
+        let resolvedFamily = familyData;
+
+        // Auto-expira o trial no cliente se a data já passou
+        if (resolvedFamily?.subscription_status === 'trial' && resolvedFamily?.trial_ends_at) {
+          const ends = new Date(resolvedFamily.trial_ends_at).getTime();
+          if (Number.isFinite(ends) && ends < Date.now()) {
+            await supabase.from('families').update({ subscription_status: 'expired' }).eq('id', profileRow.family_id);
+            resolvedFamily = { ...resolvedFamily, subscription_status: 'expired' };
+          }
+        }
+        setFamily(resolvedFamily);
 
         const defaultMods = { tasks: true, calendar: true, routines: true, medals: true, reports: true, shopping: true, mural: true, family_shop: true, allowance: true, piggy_bank: true, goals: true, notifications: true, health: true };
         const { data: fmRows } = await supabase.from('family_modules').select('module_key, is_enabled').eq('family_id', profileRow.family_id);
@@ -162,23 +172,49 @@ export function AuthProvider({ children }) {
   };
 
   const register = async (formData) => {
+    const email = String(formData.email || '').trim().toLowerCase();
+    const password = String(formData.password || '');
+    const familyName = formData.familyName || null;
+    const name = formData.name || null;
+    const profileType = (formData.profileType || 'pai').toLowerCase();
+
+    // 1. signUp em Auth
     const { data, error } = await supabase.auth.signUp({
-      email: formData.email,
-      password: formData.password,
+      email,
+      password,
       options: {
-        data: { name: formData.name, family_name: formData.familyName },
+        data: { name, family_name: familyName, profile_type: profileType },
       },
     });
     if (error) throw new Error(error.message);
-    if (data.session?.user) {
-      const { error: rpcErr } = await supabase.rpc('register_family_and_user', {
-        p_family_name: formData.familyName || null,
-        p_user_name: formData.name || null,
-      });
-      if (rpcErr) throw new Error(rpcErr.message);
-      await loadUserProfile(data.user.id, formData.email);
+
+    // 2. Se Supabase exige confirmação de email, não há sessão -> tentar login
+    let session = data.session;
+    if (!session) {
+      const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+      if (signInError) {
+        // Provavelmente "Email not confirmed". Devolver erro amigável.
+        throw new Error(
+          'Conta criada, mas o Supabase pede confirmação por email. ' +
+          'No Supabase Dashboard → Authentication → Settings, desative "Enable email confirmations" ' +
+          'para permitir login imediato.'
+        );
+      }
+      session = signInData.session;
     }
-    return data;
+    if (!session?.user?.id) throw new Error('Não foi possível iniciar sessão após o registo.');
+
+    // 3. RPC para criar família com trial e perfil
+    const { error: rpcErr } = await supabase.rpc('register_family_and_user', {
+      p_family_name:  familyName,
+      p_user_name:    name,
+      p_profile_type: profileType,
+    });
+    if (rpcErr) throw new Error(rpcErr.message);
+
+    // 4. Recarregar perfil
+    await loadUserProfile(session.user.id, email);
+    return { ...data, session };
   };
 
   const logout = async () => {

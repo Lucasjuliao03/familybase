@@ -6,6 +6,7 @@ import api, { publicAssetUrl } from '../../services/api';
 import { PRESET_AVATARS } from '../../components/AvatarPicker';
 import { anyModuleAllowed, moduleAllowed } from '../../lib/familyModules';
 import MobileNav from './MobileNav';
+import TrialBanner from '../TrialBanner';
 
 const NAV_SECTIONS = [
   {
@@ -245,6 +246,7 @@ export default function ParentLayout() {
           </div>
         </header>
 
+        <TrialBanner />
         <div className="app-content">
           <Outlet />
         </div>

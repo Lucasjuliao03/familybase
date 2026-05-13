@@ -41,6 +41,7 @@ const MyCalendar     = lazy(() => import('./pages/child/MyCalendar'));
 const HealthCenter     = lazy(() => import('./pages/HealthCenter'));
 const MuralBoard       = lazy(() => import('./pages/MuralBoard'));
 const MasterDashboard  = lazy(() => import('./pages/master/MasterDashboard'));
+const SubscribePage    = lazy(() => import('./pages/SubscribePage'));
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Spinner inline para os guards (antes de qualquer chunk carregar)
@@ -51,10 +52,24 @@ const Spinner = () => (
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
+function isTrialExpired(family) {
+  if (!family) return false;
+  if (family.subscription_status === 'active') return false;
+  if (family.subscription_status === 'expired') return true;
+  if (family.subscription_status === 'trial' && family.trial_ends_at) {
+    return new Date(family.trial_ends_at).getTime() < Date.now();
+  }
+  return false;
+}
+
 function ProtectedRoute({ children, allowedRoles }) {
-  const { user, loading } = useAuth();
+  const { user, family, loading } = useAuth();
   if (loading) return <Spinner />;
   if (!user) return <Navigate to="/login" replace />;
+  // Master nunca bloqueado; restantes redirecionados para /subscribe quando trial expira
+  if (user.role !== 'master' && isTrialExpired(family)) {
+    return <Navigate to="/subscribe" replace />;
+  }
   if (allowedRoles && !allowedRoles.includes(user.role)) {
     if (user.role === 'master') return <Navigate to="/master" replace />;
     if (user.role === 'child')  return <Navigate to="/child"  replace />;
@@ -101,6 +116,13 @@ function AppRoutes() {
     <Routes>
       <Route path="/login"    element={user ? <Navigate to={defaultPath()} /> : <LoginPage />} />
       <Route path="/register" element={user ? <Navigate to="/parent" />      : <RegisterPage />} />
+
+      {/* ── Assinatura (acessível também durante o trial) ──────────────── */}
+      <Route path="/subscribe" element={
+        user
+          ? <Suspense fallback={<PageLoader />}><SubscribePage /></Suspense>
+          : <Navigate to="/login" replace />
+      } />
 
       {/* ── PARENT & RELATIVE ──────────────────────────────────────────── */}
       <Route path="/parent" element={
