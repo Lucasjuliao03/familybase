@@ -56,7 +56,7 @@ const ChildCard = memo(function ChildCard({ child, t }) {
       </div>
     </div>
   );
-}
+});
 
 const QuickAction = memo(function QuickAction({ to, icon, label, color }) {
   return (
