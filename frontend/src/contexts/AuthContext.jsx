@@ -15,20 +15,34 @@ export function AuthProvider({ children }) {
     // 1. Ouvinte global de mudanças de sessão do Supabase
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
-        if (session?.user) {
-          await loadUserProfile(session.user.id, session.user.email);
-        } else {
+        try {
+          if (session?.user) {
+            await loadUserProfile(session.user.id, session.user.email);
+          } else {
+            clearState();
+          }
+        } catch (e) {
+          console.error('Auth state + perfil:', e);
+          await supabase.auth.signOut();
           clearState();
+        } finally {
           setLoading(false);
         }
-      }
+      },
     );
 
     // 2. Busca inicial
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session?.user) {
-        loadUserProfile(session.user.id, session.user.email);
-      } else {
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      try {
+        if (session?.user) {
+          await loadUserProfile(session.user.id, session.user.email);
+        } else {
+          setLoading(false);
+        }
+      } catch (e) {
+        console.error('Sessão inicial + perfil:', e);
+        await supabase.auth.signOut();
+        clearState();
         setLoading(false);
       }
     });
@@ -48,31 +62,53 @@ export function AuthProvider({ children }) {
 
   const loadUserProfile = async (userId, email) => {
     try {
-      // Busca o perfil do usuário
       const { data: profile, error } = await supabase
         .from('users')
         .select('*')
         .eq('id', userId)
         .single();
 
-      if (error || !profile) {
-        // Se o auth user existe mas não tem na tabela users, precisamos criar
-        console.warn('Perfil não encontrado para o usuário:', email);
+      let profileRow = profile;
+
+      if (error?.code === 'PGRST116') {
+        const { error: rpcErr } = await supabase.rpc('register_family_and_user', {
+          p_family_name: null,
+          p_user_name: null,
+        });
+        const retry = await supabase.from('users').select('*').eq('id', userId).single();
+        if (!rpcErr && !retry.error && retry.data) {
+          profileRow = retry.data;
+        } else {
+          console.warn('Sem linha em public.users para:', email, rpcErr?.message || retry.error?.message || '');
+          clearState();
+          setLoading(false);
+          return;
+        }
+      } else if (error) {
+        console.error('Erro ao carregar public.users:', error.code, error.message, error.details);
+        await supabase.auth.signOut();
+        throw new Error(
+          'Não foi possível ler o perfil na base de dados (erro do servidor). ' +
+          'No Supabase, execute o script supabase_fix_users_rls_recursion.sql (função get_current_user_family_id com SECURITY DEFINER).',
+        );
+      }
+
+      if (!profileRow) {
         clearState();
         setLoading(false);
         return;
       }
 
-      setUser({ ...profile, email });
-      setMustChangePassword(!!profile.must_change_password);
+      setUser({ ...profileRow, email });
+      setMustChangePassword(!!profileRow.must_change_password);
 
       // Busca dados da família e módulos persistentes
-      if (profile.family_id) {
-        const { data: familyData } = await supabase.from('families').select('*').eq('id', profile.family_id).single();
+      if (profileRow.family_id) {
+        const { data: familyData } = await supabase.from('families').select('*').eq('id', profileRow.family_id).single();
         setFamily(familyData);
 
         const defaultMods = { tasks: true, calendar: true, routines: true, medals: true, reports: true, shopping: true, mural: true, family_shop: true, allowance: true, piggy_bank: true, goals: true, notifications: true, health: true };
-        const { data: fmRows } = await supabase.from('family_modules').select('module_key, is_enabled').eq('family_id', profile.family_id);
+        const { data: fmRows } = await supabase.from('family_modules').select('module_key, is_enabled').eq('family_id', profileRow.family_id);
         if (!fmRows?.length) {
           setModules(defaultMods);
         } else {
@@ -85,7 +121,7 @@ export function AuthProvider({ children }) {
       }
 
       // Se for criança, busca o perfil de child
-      if (profile.role === 'child') {
+      if (profileRow.role === 'child') {
         const { data: cData } = await supabase.from('children').select('*').eq('user_id', userId).single();
         setChildProfile(cData);
       } else {
@@ -93,6 +129,7 @@ export function AuthProvider({ children }) {
       }
     } catch (err) {
       console.error('Erro ao carregar perfil:', err);
+      throw err;
     } finally {
       setLoading(false);
     }

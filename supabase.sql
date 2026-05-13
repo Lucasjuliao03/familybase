@@ -304,11 +304,20 @@ CREATE TABLE IF NOT EXISTS public.family_modules (
 -- ROW LEVEL SECURITY (RLS)
 -- ==========================================
 
--- Função auxiliar para obter a family_id do usuário logado
+-- Função auxiliar para obter a family_id do usuário logado (SECURITY DEFINER evita recursão RLS)
 CREATE OR REPLACE FUNCTION public.get_current_user_family_id()
-RETURNS UUID AS $$
-    SELECT family_id FROM public.users WHERE id = auth.uid() LIMIT 1;
-$$ LANGUAGE sql STABLE;
+RETURNS uuid
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT family_id FROM public.users WHERE id = auth.uid() LIMIT 1;
+$$;
+
+REVOKE ALL ON FUNCTION public.get_current_user_family_id() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.get_current_user_family_id() TO authenticated;
+GRANT EXECUTE ON FUNCTION public.get_current_user_family_id() TO service_role;
 
 -- Habilitar RLS em todas as tabelas
 ALTER TABLE public.families ENABLE ROW LEVEL SECURITY;
