@@ -210,7 +210,7 @@ export default function ShoppingList() {
   }, [items.history, viewMode]);
 
   return (
-    <div className="animate-fade-in">
+    <div className="animate-fade-in" style={{ maxWidth: '100%', overflowX: 'hidden' }}>
       <div className="flex-between mb-24" style={{ flexWrap: 'wrap', gap: 12 }}>
         <div>
           <h1 className="page-title">🛒 Lista e Contabilidade</h1>
@@ -222,8 +222,8 @@ export default function ShoppingList() {
       </div>
 
       {/* TABS E FILTROS */}
-      <div className="flex gap-12 mb-24" style={{ flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div className="tabs tabs-scroll" style={{ margin: 0 }}>
+      <div className="mb-24" style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center', justifyContent: 'space-between' }}>
+        <div className="tabs tabs-scroll" style={{ margin: 0, flexShrink: 0 }}>
           <button type="button" className={`tab ${viewMode === 'pending' ? 'active' : ''}`} onClick={() => setViewMode('pending')}>
             📋 Para Comprar ({items.pending.length})
           </button>
@@ -254,143 +254,97 @@ export default function ShoppingList() {
       {isLoading ? (
         <div className="flex-center py-24"><div className="w-8 h-8 border-4 border-primary-500 border-t-transparent rounded-full animate-spin"></div></div>
       ) : viewMode === 'pending' ? (
-        <div className="space-y-6">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           {sortedEstablishments.length === 0 ? (
-            <div className="table-container">
-              <table>
-                <tbody>
-                  <tr>
-                    <td style={{ textAlign: 'center', padding: 40, color: 'var(--text-light)' }}>
-                      Nenhum item pendente. Clique em "Adicionar Item" para começar.
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
+            <div className="card" style={{ textAlign: 'center', padding: 40, color: 'var(--text-light)' }}>
+              Nenhum item pendente. Clique em "Adicionar Item" para começar.
             </div>
           ) : (
             sortedEstablishments.map((est) => (
               <div key={est} className="card" style={{ padding: 0, overflow: 'hidden' }}>
-                <div style={{ background: 'var(--bg-card)', padding: '12px 20px', borderBottom: '1px solid var(--border)', fontWeight: 600, color: 'var(--primary)', display: 'flex', alignItems: 'center', gap: 8 }}>
-                  🏪 {est} ({groupedPending[est].length})
+                <div style={{ background: 'var(--bg-card)', padding: '12px 16px', borderBottom: '1px solid var(--border)', fontWeight: 600, color: 'var(--primary)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                  🏪 {est} <span style={{ fontWeight: 400, fontSize: '0.85rem', color: 'var(--text-light)' }}>({groupedPending[est].length} {groupedPending[est].length === 1 ? 'item' : 'itens'})</span>
                 </div>
-                <div className="table-container" style={{ border: 'none', borderRadius: 0 }}>
-                  <table style={{ margin: 0 }}>
-                    <thead>
-                      <tr>
-                        <th style={{ width: '40px' }}></th>
-                        <th style={{ width: '30%' }}>Item</th>
-                        <th>Qtd</th>
-                        <th>Status</th>
-                        <th>Detalhes</th>
-                        <th style={{ width: '100px', textAlign: 'right' }}>Ações</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {groupedPending[est].map((item) => (
-                        <tr key={item.id} style={{ background: item.is_urgent ? 'rgba(255, 107, 107, 0.05)' : 'transparent' }}>
-                          <td>
-                            <button 
-                              className="btn btn-sm"
-                              style={{ width: '28px', height: '28px', padding: 0, borderRadius: '6px', border: '2px solid var(--border)', background: 'transparent' }}
-                              onClick={() => handleBuyClick(item)}
-                              title="Marcar como comprado"
-                            ></button>
-                          </td>
-                          <td>
-                            <strong style={{ color: item.is_urgent ? 'var(--danger)' : 'var(--text)' }}>
-                              {item.name}
-                            </strong>
-                          </td>
-                          <td>
-                            {item.quantity ? <span style={{ fontWeight: 500 }}>{item.quantity}</span> : <span style={{ color: 'var(--text-light)' }}>-</span>}
-                          </td>
-                          <td>
-                            {item.is_urgent ? <span className="badge badge-danger">⚠️ Urgente</span> : <span className="badge badge-info">Normal</span>}
-                          </td>
-                          <td>
-                            <div style={{ fontSize: '0.8rem', color: 'var(--text-light)' }}>
-                              {item.description && <div>📝 {item.description}</div>}
-                              <div>👤 {item.registered_by_name} em {new Date(item.created_at).toLocaleDateString()}</div>
-                            </div>
-                          </td>
-                          <td style={{ textAlign: 'right' }}>
-                            <div className="flex justify-end gap-4">
-                              <button className="btn btn-sm btn-ghost" onClick={() => openEditModal(item)} title="Editar">✏️</button>
-                              <button className="btn btn-sm btn-ghost text-danger" onClick={() => handleDelete(item.id)} title="Excluir">🗑️</button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                <div style={{ padding: '8px 0' }}>
+                  {groupedPending[est].map((item) => (
+                    <div key={item.id} style={{
+                      display: 'flex', alignItems: 'center', gap: 12, padding: '10px 16px',
+                      borderBottom: '1px solid var(--border)', flexWrap: 'nowrap',
+                      background: item.is_urgent ? 'rgba(255,107,107,0.05)' : 'transparent',
+                    }}>
+                      {/* Botão comprar */}
+                      <button
+                        className="btn btn-sm"
+                        style={{ width: 32, height: 32, minWidth: 32, padding: 0, borderRadius: 8, border: '2px solid var(--border)', background: 'transparent', flexShrink: 0 }}
+                        onClick={() => handleBuyClick(item)}
+                        title="Marcar como comprado"
+                      />
+                      {/* Nome + meta */}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 600, color: item.is_urgent ? 'var(--danger)' : 'var(--text)', display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                          {item.is_urgent && <span style={{ fontSize: '0.75rem', color: 'var(--danger)' }}>⚠️</span>}
+                          <span style={{ wordBreak: 'break-word' }}>{item.name}</span>
+                          {item.quantity && <span style={{ fontWeight: 400, fontSize: '0.82rem', color: 'var(--text-light)' }}>× {item.quantity}</span>}
+                        </div>
+                        {item.description && (
+                          <div style={{ fontSize: '0.78rem', color: 'var(--text-light)', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {item.description}
+                          </div>
+                        )}
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-light)', marginTop: 2 }}>
+                          👤 {item.registered_by_name} · {new Date(item.created_at).toLocaleDateString()}
+                        </div>
+                      </div>
+                      {/* Ações */}
+                      <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                        <button className="btn btn-sm btn-ghost" onClick={() => openEditModal(item)} title="Editar">✏️</button>
+                        <button className="btn btn-sm btn-ghost" style={{ color: 'var(--danger)' }} onClick={() => handleDelete(item.id)} title="Excluir">🗑️</button>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
             ))
           )}
         </div>
       ) : viewMode === 'history' ? (
-        <div className="table-container">
-          <table>
-            <thead>
-              <tr>
-                <th style={{ width: '40px' }}></th>
-                <th>Item</th>
-                <th>Qtd</th>
-                <th>Local</th>
-                <th>Valor</th>
-                <th>Comprado por</th>
-                <th>Ações</th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.history.length === 0 ? (
-                <tr>
-                  <td colSpan={7} style={{ textAlign: 'center', padding: 40, color: 'var(--text-light)' }}>
-                    Nenhum item no histórico.
-                  </td>
-                </tr>
-              ) : items.history.map((item) => (
-                <tr key={item.id} style={{ opacity: 0.9 }}>
-                  <td>
-                    <button 
-                      className="btn btn-sm"
-                      style={{ width: '28px', height: '28px', borderRadius: '6px', background: 'var(--success)', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px', border: 'none', padding: 0 }}
-                      onClick={() => handleUnbuy(item.id)}
-                      title="Desfazer compra (Voltar para Pendente)"
-                    >↩️</button>
-                  </td>
-                  <td>
-                    <strong style={{ color: 'var(--text)' }}>{item.name}</strong>
-                  </td>
-                  <td style={{ color: 'var(--text-light)' }}>{item.quantity || '-'}</td>
-                  <td style={{ color: 'var(--text-light)' }}>{item.establishment || 'Geral'}</td>
-                  <td>
-                    {item.price > 0 ? (
-                      <span className="badge badge-primary">R$ {item.price.toFixed(2)}</span>
-                    ) : (
-                      <span className="badge badge-ghost">-</span>
-                    )}
-                  </td>
-                  <td>
-                    <div style={{ fontSize: '0.85rem' }}>
-                      {item.bought_by_name}<br/>
-                      <span style={{ color: 'var(--text-light)', fontSize: '0.75rem' }}>{new Date(item.bought_at).toLocaleDateString()}</span>
-                    </div>
-                  </td>
-                  <td>
-                    <div className="flex gap-4">
-                      <button className="btn btn-sm btn-ghost" onClick={() => openEditModal(item)} title="Editar (Inserir valor)">✏️</button>
-                      <button className="btn btn-sm btn-ghost text-danger" onClick={() => handleDelete(item.id)} title="Excluir do histórico">🗑️</button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {items.history.length === 0 ? (
+            <div className="card" style={{ textAlign: 'center', padding: 40, color: 'var(--text-light)' }}>
+              Nenhum item no histórico.
+            </div>
+          ) : items.history.map((item) => (
+            <div key={item.id} className="card" style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'nowrap' }}>
+              <button
+                className="btn btn-sm"
+                style={{ width: 32, height: 32, minWidth: 32, padding: 0, borderRadius: 8, background: 'var(--success)', color: 'white', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
+                onClick={() => handleUnbuy(item.id)}
+                title="Desfazer compra"
+              >↩️</button>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 600, color: 'var(--text)', wordBreak: 'break-word' }}>
+                  {item.name}
+                  {item.quantity && <span style={{ fontWeight: 400, fontSize: '0.82rem', color: 'var(--text-light)', marginLeft: 6 }}>× {item.quantity}</span>}
+                </div>
+                <div style={{ fontSize: '0.78rem', color: 'var(--text-light)', marginTop: 2, display: 'flex', flexWrap: 'wrap', gap: '4px 12px' }}>
+                  {item.establishment && <span>🏪 {item.establishment}</span>}
+                  <span>👤 {item.bought_by_name}</span>
+                  <span>📅 {new Date(item.bought_at).toLocaleDateString()}</span>
+                </div>
+              </div>
+              {item.price > 0 && (
+                <span className="badge badge-primary" style={{ flexShrink: 0 }}>R$ {item.price.toFixed(2)}</span>
+              )}
+              <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                <button className="btn btn-sm btn-ghost" onClick={() => openEditModal(item)} title="Editar">✏️</button>
+                <button className="btn btn-sm btn-ghost" style={{ color: 'var(--danger)' }} onClick={() => handleDelete(item.id)} title="Excluir">🗑️</button>
+              </div>
+            </div>
+          ))}
         </div>
       ) : viewMode === 'dashboard' && canSeeDashboard ? (
         /* DASHBOARD VIEW */
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '20px', alignItems: 'flex-start' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(320px, 100%), 1fr))', gap: '16px', alignItems: 'flex-start', maxWidth: '100%' }}>
           
           {/* CARDS */}
           <div className="card flex-center flex-col" style={{ gridColumn: '1/-1', backgroundColor: 'var(--primary)', backgroundImage: 'linear-gradient(135deg, var(--primary), #2c3e50)', color: '#ffffff', padding: '30px', border: 'none', boxShadow: '0 10px 20px rgba(0,0,0,0.1)' }}>

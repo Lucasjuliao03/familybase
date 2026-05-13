@@ -91,17 +91,33 @@ export default function HealthCenter() {
   const [logModal, setLogModal] = useState(null);
   const [hcContext, setHcContext] = useState(null);
   const [healthScope, setHealthScope] = useState('mine');
+  // ID do registo na tabela children para o utilizador child atual
+  const [myChildId, setMyChildId] = useState(null);
 
   const isChild = user?.role === 'child';
   const canManage = user?.role === 'parent' || user?.role === 'relative';
   const isParent = user?.role === 'parent';
   const isGestor = isParent && (user.access_profile ?? user.accessProfile ?? 'gestor') === 'gestor';
 
+  // Carrega o ID do registo children para crianças autenticadas
+  useEffect(() => {
+    if (!isChild || !user?.id) return;
+    api.get('/families/children').then((r) => {
+      const me = (r.data || []).find((c) => c.user_id === user.id || c.id === user.id);
+      if (me) setMyChildId(me.id);
+    }).catch(() => {});
+  }, [isChild, user?.id]);
+
   const applyPatientScopeParams = useCallback((q) => {
-    if (user?.role === 'child') return;
+    if (user?.role === 'child') {
+      // Criança só vê os seus próprios dados
+      if (myChildId) q.set('child_id', myChildId);
+      else if (user?.id) q.set('patient_user_id', user.id);
+      return;
+    }
     if (healthScope === 'mine' && user?.id) q.set('patient_user_id', user.id);
     else if (healthScope === 'children' && filters.child_id) q.set('child_id', filters.child_id);
-  }, [user?.role, user?.id, healthScope, filters.child_id]);
+  }, [user?.role, user?.id, healthScope, filters.child_id, myChildId]);
 
   const loadOverview = useCallback(async () => {
     try {
@@ -185,6 +201,15 @@ export default function HealthCenter() {
   useEffect(() => {
     loadOverview();
   }, [loadOverview]);
+
+  // Para crianças: recarrega dados quando myChildId fica disponível
+  useEffect(() => {
+    if (!isChild || !myChildId) return;
+    loadOverview();
+    if (tab === 'records') loadRecords();
+    if (tab === 'appointments') loadAppointments();
+    if (tab === 'medications') loadMedications();
+  }, [myChildId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (tab === 'records') loadRecords();
