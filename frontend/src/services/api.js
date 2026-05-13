@@ -45,15 +45,117 @@ function omitUndefined(obj) {
   return out;
 }
 
+/** Remove null e undefined (útil para colunas opcionais que ainda não existem na BD). */
+function omitNullish(obj) {
+  const out = { ...obj };
+  Object.keys(out).forEach((k) => {
+    if (out[k] === undefined || out[k] === null) delete out[k];
+  });
+  return out;
+}
+
+function toYMDLocal(d = new Date()) {
+  const y = d.getFullYear();
+  const m = d.getMonth() + 1;
+  const day = d.getDate();
+  return `${y}-${String(m).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+function normalizeDbDate(val) {
+  if (val == null || val === '') return null;
+  const s = String(val);
+  if (s.length >= 10 && s[4] === '-') return s.slice(0, 10);
+  const t = Date.parse(s);
+  if (!Number.isNaN(t)) return toYMDLocal(new Date(t));
+  return s;
+}
+
+function normalizeTimeForDb(t) {
+  if (t == null || t === '') return null;
+  const s = String(t).trim();
+  if (!s) return null;
+  if (/^\d{2}:\d{2}:\d{2}/.test(s)) return s.slice(0, 8);
+  if (/^\d{2}:\d{2}$/.test(s)) return `${s}:00`;
+  return s;
+}
+
+function mapCalendarEventFromDb(d) {
+  if (!d) return d;
+  return {
+    ...d,
+    date: normalizeDbDate(d.date),
+    end_date: d.end_date != null ? normalizeDbDate(d.end_date) : d.end_date,
+    time: d.time != null ? String(d.time).slice(0, 8) : d.time,
+    child_name: d.children?.name,
+    child_color: d.children?.color,
+  };
+}
+
+/** Gera ocorrências após criar tarefa (sem cron no Supabase). */
+function computeOccurrenceDatesForTask(task) {
+  const out = [];
+  const add = (s) => {
+    const n = normalizeDbDate(s);
+    if (n && !out.includes(n)) out.push(n);
+  };
+  const parseLocal = (s) => {
+    if (!s || typeof s !== 'string') return new Date();
+    const [y, m, d] = s.split('-').map(Number);
+    if (!y || !m || !d) return new Date();
+    return new Date(y, m - 1, d);
+  };
+  const startStr = task.start_date || toYMDLocal();
+  const start = parseLocal(startStr);
+  const endStr = task.end_date;
+  const end = endStr ? parseLocal(endStr) : new Date(start.getTime() + 120 * 86400000);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const freq = task.frequency || 'once';
+  const recurrence = String(task.recurrence_days || '')
+    .split(',')
+    .map((x) => parseInt(x.trim(), 10))
+    .filter((n) => !Number.isNaN(n));
+
+  if (freq === 'once' || !task.is_recurring) {
+    add(startStr);
+    return out;
+  }
+
+  let iter = new Date(Math.min(start.getTime(), today.getTime()));
+  const limit = new Date(Math.max(today.getTime(), start.getTime()) + 45 * 86400000);
+  const endCap = new Date(Math.min(end.getTime(), limit.getTime()));
+
+  while (iter <= endCap) {
+    const ds = toYMDLocal(iter);
+    if (iter >= start) {
+      if (freq === 'daily') add(ds);
+      else if (freq === 'weekly') {
+        const days = recurrence.length ? recurrence : [start.getDay()];
+        if (days.includes(iter.getDay())) add(ds);
+      } else if (freq === 'monthly') {
+        if (iter.getDate() === start.getDate()) add(ds);
+      } else add(ds);
+    }
+    iter.setDate(iter.getDate() + 1);
+  }
+  if (!out.length) add(startStr);
+  return out.sort();
+}
+
 /** Notas escolares: tabela `grades` usa score, max_score, observation, concept (supabase_missing_tables). */
 function normalizeGradeRow(body, familyId, idOverride) {
   const id = idOverride || body.id || uuidv4();
+  const gradeTypeMap = { homework: 'assignment', project: 'other', participation: 'other', concept: 'test' };
+  let gtype = body.type || 'test';
+  if (gradeTypeMap[gtype]) gtype = gradeTypeMap[gtype];
+  const allowedGrade = new Set(['test', 'assignment', 'exam', 'quiz', 'other']);
+  if (!allowedGrade.has(gtype)) gtype = 'test';
   const row = omitUndefined({
     id,
     family_id: familyId,
     subject: body.subject,
-    type: body.type || 'test',
-    date: body.date,
+    type: gtype,
+    date: normalizeDbDate(body.date) || toYMDLocal(),
     child_id: body.child_id,
     score: body.score != null ? Number(body.score) : body.grade_value != null ? Number(body.grade_value) : null,
     max_score: body.max_score != null ? Number(body.max_score) : body.max_value != null ? Number(body.max_value) : 10,
@@ -85,16 +187,20 @@ function pickCalendarRow(body, familyId, userId, withId) {
   CAL_EVENT_FIELDS.forEach((k) => {
     if (body[k] !== undefined) row[k] = body[k];
   });
+  if (row.type === 'child') row.type = 'activity';
+  row.date = normalizeDbDate(row.date ?? body.date);
   if (row.child_id === '' || row.child_id === undefined) row.child_id = null;
-  if (row.time === '' || row.time == null) {
+  const rawTime = row.time !== undefined ? row.time : body.time;
+  row.time = normalizeTimeForDb(rawTime);
+  if (row.time == null) {
     const st = body.start_time;
-    if (st != null && st !== '') row.time = st;
-    else row.time = null;
+    if (st != null && st !== '') row.time = normalizeTimeForDb(st);
   }
-  if (row.end_date === '') row.end_date = null;
-  if (body.end_date != null && row.end_date == null && body.end_date !== '') row.end_date = body.end_date;
+  if (row.end_date === '' || row.end_date === undefined) row.end_date = null;
+  else row.end_date = normalizeDbDate(row.end_date);
+  if (body.end_date != null && row.end_date == null && body.end_date !== '') row.end_date = normalizeDbDate(body.end_date);
   row.family_id = familyId;
-  row.created_by = userId;
+  row.created_by = userId || null;
   if (withId) row.id = body.id || uuidv4();
   const allowedTypes = new Set(['family', 'school', 'medical', 'birthday', 'activity', 'task', 'reminder', 'other']);
   if (row.type != null && !allowedTypes.has(row.type)) row.type = 'family';
@@ -180,8 +286,12 @@ function buildHealthRecordInsert(body, familyId, userId) {
   });
   if (row.child_id === '') row.child_id = null;
   if (row.patient_user_id === '') row.patient_user_id = null;
+  row.record_date = normalizeDbDate(row.record_date);
+  if (!row.record_date) throw new Error('Data do registo é obrigatória.');
+  if (row.record_time === '' || row.record_time === undefined) row.record_time = null;
+  else row.record_time = normalizeTimeForDb(row.record_time);
   if (Array.isArray(row.attachment_urls)) row.attachment_urls = JSON.stringify(row.attachment_urls);
-  return omitUndefined(row);
+  return omitNullish(omitUndefined(row));
 }
 
 const MEDICATION_FIELDS = [
@@ -198,24 +308,26 @@ function buildMedicationInsert(body, familyId, userId) {
   if (row.patient_user_id === '') row.patient_user_id = null;
   if (Array.isArray(row.scheduled_times)) row.scheduled_times = JSON.stringify(row.scheduled_times);
   if (Array.isArray(row.attachment_urls)) row.attachment_urls = JSON.stringify(row.attachment_urls);
-  return omitUndefined(row);
+  return omitNullish(omitUndefined(row));
 }
 
 function buildAppointmentInsert(body, familyId) {
-  return omitUndefined({
+  const date = normalizeDbDate(body.appointment_date ?? body.date);
+  const time = normalizeTimeForDb(body.appointment_time ?? body.time);
+  return omitNullish(omitUndefined({
     id: uuidv4(),
     family_id: familyId,
-    child_id: body.child_id === '' ? null : body.child_id ?? null,
-    patient_user_id: body.patient_user_id === '' ? null : body.patient_user_id ?? null,
+    child_id: body.child_id === '' ? undefined : body.child_id ?? undefined,
+    patient_user_id: body.patient_user_id === '' ? undefined : body.patient_user_id ?? undefined,
     title: (body.reason && String(body.reason).slice(0, 200)) || body.specialty || 'Consulta',
     doctor_name: body.professional_name || null,
     specialty: body.specialty || null,
-    date: body.appointment_date,
-    time: body.appointment_time || null,
+    date,
+    time,
     location: body.location || null,
     notes: apptNotesSerialize(body),
     status: body.status || 'scheduled',
-  });
+  }));
 }
 
 function buildAppointmentUpdate(body) {
@@ -357,8 +469,20 @@ const api = {
     }
     
     if (path.startsWith('/calendar')) {
-      const { data } = await supabase.from('calendar_events').select('*, children:child_id(name, color)').eq('family_id', familyId);
-      return { data: (data || []).map(d => ({ ...d, child_name: d.children?.name, child_color: d.children?.color })) };
+      const params = config.params || {};
+      const y = params.year != null ? parseInt(String(params.year), 10) : null;
+      const m = params.month != null ? parseInt(String(params.month), 10) : null;
+      let q = supabase.from('calendar_events').select('*, children:child_id(name, color)').eq('family_id', familyId).order('date', { ascending: true });
+      if (y && m >= 1 && m <= 12) {
+        const pad = (n) => String(n).padStart(2, '0');
+        const startM = `${y}-${pad(m)}-01`;
+        const lastDay = new Date(y, m, 0).getDate();
+        const endM = `${y}-${pad(m)}-${String(lastDay).padStart(2, '0')}`;
+        q = q.gte('date', startM).lte('date', endM);
+      }
+      const { data, error } = await q;
+      if (error) throw new Error(error.message);
+      return { data: (data || []).map(mapCalendarEventFromDb) };
     }
 
     if (path.startsWith('/shopping')) {
@@ -367,8 +491,43 @@ const api = {
     }
 
     if (path.startsWith('/tasks/occurrences')) {
-      const { data } = await supabase.from('task_occurrences').select('*, tasks(*)').eq('family_id', familyId);
-      return { data: data || [] };
+      let q = supabase.from('task_occurrences').select('*, tasks(*)').eq('family_id', familyId);
+      const d = config.params?.date || config.params?.occurrence_date;
+      if (d) q = q.eq('occurrence_date', String(d).slice(0, 10));
+      const childId = config.params?.child_id;
+      if (childId) q = q.eq('child_id', childId);
+      const { data, error } = await q.order('occurrence_date', { ascending: true });
+      if (error) throw new Error(error.message);
+      const mapOcc = (o) => {
+        const t = o.tasks || {};
+        return {
+          ...o,
+          occurrence_date: normalizeDbDate(o.occurrence_date),
+          title: t.title,
+          description: t.description,
+          type: t.type,
+          frequency: t.frequency,
+          points: t.points,
+          coins: t.coins,
+          is_recurring: t.is_recurring,
+          due_time: t.due_time,
+          is_health_reminder: t.is_health_reminder,
+        };
+      };
+      const rows = (data || []).map(mapOcc);
+      const childIds = [...new Set(rows.map((r) => r.child_id).filter(Boolean))];
+      let colors = {};
+      if (childIds.length) {
+        const { data: ch } = await supabase.from('children').select('id, name, color').in('id', childIds);
+        (ch || []).forEach((c) => { colors[c.id] = { name: c.name, color: c.color }; });
+      }
+      return {
+        data: rows.map((r) => ({
+          ...r,
+          child_name: colors[r.child_id]?.name,
+          child_color: colors[r.child_id]?.color,
+        })),
+      };
     }
 
     if (path.startsWith('/tasks')) {
@@ -498,6 +657,7 @@ const api = {
 
     if (path.startsWith('/reports/dashboard')) {
       const { data: children } = await supabase.from('children').select('*').eq('family_id', familyId);
+      const todayStr = toYMDLocal();
       const { count: pending } = await supabase.from('task_occurrences').select('*', { count: 'exact', head: true }).eq('family_id', familyId).eq('status', 'pending');
       const { count: completed } = await supabase.from('task_occurrences').select('*', { count: 'exact', head: true }).eq('family_id', familyId).eq('status', 'completed');
       const { count: approved } = await supabase.from('task_occurrences').select('*', { count: 'exact', head: true }).eq('family_id', familyId).eq('status', 'approved');
@@ -510,26 +670,66 @@ const api = {
           pendingRedemptions = res.count || 0;
         }
       } catch {}
-      
-      const { data: upcomingEvents } = await supabase.from('calendar_events')
+
+      const { data: upcomingRaw } = await supabase.from('calendar_events')
         .select('*, children:child_id(name, color)')
         .eq('family_id', familyId)
-        .gte('date', new Date().toISOString())
+        .gte('date', todayStr)
         .order('date', { ascending: true })
-        .limit(5);
-        
-      return { 
+        .limit(8);
+
+      let recentHistory = [];
+      try {
+        const { data: hist } = await supabase
+          .from('history')
+          .select('*, children:child_id(name, color, avatar_url, avatar_preset)')
+          .eq('family_id', familyId)
+          .order('created_at', { ascending: false })
+          .limit(14);
+        recentHistory = (hist || []).map((h) => ({
+          id: h.id,
+          event: h.event,
+          points: h.points || 0,
+          child_name: h.children?.name || '',
+          child_color: h.children?.color,
+          avatar_url: h.children?.avatar_url,
+          avatar_preset: h.children?.avatar_preset,
+        }));
+      } catch {
+        recentHistory = [];
+      }
+
+      if (!recentHistory.length) {
+        const { data: occDone } = await supabase
+          .from('task_occurrences')
+          .select('id, points_awarded, tasks(title), children:child_id(name, color, avatar_url, avatar_preset)')
+          .eq('family_id', familyId)
+          .in('status', ['approved', 'completed'])
+          .order('updated_at', { ascending: false })
+          .limit(12);
+        recentHistory = (occDone || []).map((o) => ({
+          id: o.id,
+          event: o.tasks?.title ? `Tarefa: ${o.tasks.title}` : 'Tarefa concluída',
+          points: o.points_awarded || 0,
+          child_name: o.children?.name || '',
+          child_color: o.children?.color,
+          avatar_url: o.children?.avatar_url,
+          avatar_preset: o.children?.avatar_preset,
+        }));
+      }
+
+      return {
         data: {
-          stats: { 
-            pending: pending || 0, 
-            completed: completed || 0, 
-            approved: approved || 0, 
-            pendingRedemptions: pendingRedemptions || 0 
+          stats: {
+            pending: pending || 0,
+            completed: completed || 0,
+            approved: approved || 0,
+            pendingRedemptions: pendingRedemptions || 0,
           },
           children: children || [],
-          upcomingEvents: (upcomingEvents || []).map(e => ({ ...e, child_name: e.children?.name, child_color: e.children?.color })),
-          recentHistory: []
-        }
+          upcomingEvents: (upcomingRaw || []).map(mapCalendarEventFromDb),
+          recentHistory,
+        },
       };
     }
 
@@ -724,9 +924,10 @@ const api = {
 
     if (path.startsWith('/calendar')) {
       const row = pickCalendarRow(body, familyId, userId, true);
+      if (!row.date) throw new Error('Indique a data do evento.');
       const { data, error } = await supabase.from('calendar_events').insert([row]).select('*, children:child_id(name, color)').single();
       if (error) throw new Error(error.message);
-      return { data: { ...data, child_name: data.children?.name, child_color: data.children?.color } };
+      return { data: mapCalendarEventFromDb(data) };
     }
 
     if (path === '/shopping' || path === '/shopping/') {
@@ -758,7 +959,13 @@ const api = {
     }
 
     if (path === '/health/records') {
-      const ins = buildHealthRecordInsert(body, familyId, userId);
+      let payload = { ...body };
+      delete payload.kind;
+      if ((!payload.child_id || payload.child_id === '') && !payload.patient_user_id && userId) {
+        const { data: ch } = await supabase.from('children').select('id').eq('user_id', userId).maybeSingle();
+        if (ch?.id) payload = { ...payload, child_id: ch.id };
+      }
+      const ins = buildHealthRecordInsert(payload, familyId, userId);
       const { data, error } = await supabase.from('health_records').insert([ins]).select().single();
       if (error) throw new Error(error.message);
       return { data };
@@ -766,6 +973,7 @@ const api = {
 
     if (path === '/health/appointments') {
       const ins = buildAppointmentInsert(body, familyId);
+      if (!ins.date) throw new Error('Data da consulta é obrigatória.');
       const { data, error } = await supabase.from('health_appointments').insert([ins]).select().single();
       if (error) throw new Error(error.message);
       return { data: mapAppointmentFromDb(data, null) };
@@ -800,16 +1008,36 @@ const api = {
       return { data };
     }
     
-    if (path.startsWith('/tasks')) {
+    if (path.startsWith('/tasks') && !path.startsWith('/tasks/occurrences')) {
       const safeBody = { ...body };
       delete safeBody.allowance_rule;
       if (safeBody.end_date === '') safeBody.end_date = null;
       if (safeBody.due_time === '') safeBody.due_time = null;
       if (safeBody.start_date === '') safeBody.start_date = null;
+      safeBody.start_date = normalizeDbDate(safeBody.start_date) || toYMDLocal();
+      if (safeBody.end_date) safeBody.end_date = normalizeDbDate(safeBody.end_date);
 
-      const { data, error } = await supabase.from('tasks').insert([{ ...safeBody, family_id: familyId, created_by: userId, id: uuidv4() }]).select().single();
+      const { data: taskRow, error } = await supabase
+        .from('tasks')
+        .insert([{ ...safeBody, family_id: familyId, created_by: userId, id: uuidv4() }])
+        .select()
+        .single();
       if (error) throw new Error(error.message);
-      return { data };
+
+      const occDates = computeOccurrenceDatesForTask(taskRow);
+      if (occDates.length && taskRow.child_id) {
+        const occRows = occDates.map((od) => ({
+          id: uuidv4(),
+          task_id: taskRow.id,
+          family_id: familyId,
+          child_id: taskRow.child_id,
+          occurrence_date: od,
+          status: 'pending',
+        }));
+        const { error: ocErr } = await supabase.from('task_occurrences').insert(occRows);
+        if (ocErr) console.warn('[tasks] ocorrências:', ocErr.message);
+      }
+      return { data: taskRow };
     }
 
     if (path === '/allowance/rewards') {

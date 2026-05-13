@@ -223,8 +223,8 @@ export default function ShoppingList() {
 
       {/* TABS E FILTROS */}
       <div className="flex gap-12 mb-24" style={{ flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div className="tabs" style={{ margin: 0 }}>
-          <button className={`tab ${viewMode === 'pending' ? 'active' : ''}`} onClick={() => setViewMode('pending')}>
+        <div className="tabs tabs-scroll" style={{ margin: 0 }}>
+          <button type="button" className={`tab ${viewMode === 'pending' ? 'active' : ''}`} onClick={() => setViewMode('pending')}>
             📋 Para Comprar ({items.pending.length})
           </button>
           <button className={`tab ${viewMode === 'history' ? 'active' : ''}`} onClick={() => setViewMode('history')}>

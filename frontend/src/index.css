@@ -243,6 +243,28 @@ tr:hover td { background: rgba(108,92,231,0.03); }
 .tab:hover { color: var(--primary); }
 .tab.active { color: var(--primary); border-bottom-color: var(--primary); }
 
+/* Abas horizontais em ecrãs pequenos */
+.tabs-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  flex-wrap: nowrap;
+  gap: 2px;
+  scrollbar-width: thin;
+}
+.tabs-scroll .tab {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  padding: 8px 14px;
+  font-size: 0.82rem;
+}
+
+/* Calendário mensal: scroll horizontal em telemóveis em vez de estourar a largura */
+.calendar-grid-wrapper {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
 /* Toast */
 .toast-container { position: fixed; top: 20px; right: 20px; z-index: 9999; display: flex; flex-direction: column; gap: 8px; }
 .toast {
@@ -413,9 +435,14 @@ tr:hover td { background: rgba(108,92,231,0.03); }
     from { transform: translateY(100%); opacity: 0; }
     to   { transform: translateY(0);    opacity: 1; }
   }
-  .mobile-menu-btn { display: none !important; }
-  .hide-mobile { display: none !important; }
-}
+  .calendar-grid {
+    min-width: 0;
+    width: max(100%, 520px);
+    gap: 1px;
+  }
+  .calendar-cell { min-height: 64px; padding: 4px; }
+  .calendar-day { font-size: 0.72rem; }
+  .calendar-event { font-size: 0.62rem; padding: 1px 4px; }
 
 /* ── Bottom Navigation Bar (mobile) ──────────────────────── */
 .mobile-bottom-bar {

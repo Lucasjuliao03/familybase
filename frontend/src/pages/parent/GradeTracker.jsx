@@ -103,8 +103,8 @@ export default function GradeTracker() {
         </div>
       )}
 
-      <div className="flex gap-12 mb-16">
-        <select className="form-select" style={{width:'auto'}} value={filterChild} onChange={e => setFilterChild(e.target.value)}>
+      <div className="flex gap-12 mb-16 flex-wrap" style={{ alignItems: 'center' }}>
+        <select className="form-select" style={{ width: 'auto', maxWidth: '100%', minWidth: 0, flex: '1 1 200px' }} value={filterChild} onChange={e => setFilterChild(e.target.value)}>
           <option value="">{t('all')} {t('children')}</option>
           {children.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>

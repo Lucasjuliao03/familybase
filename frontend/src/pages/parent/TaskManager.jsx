@@ -33,9 +33,11 @@ export default function TaskManager() {
       const params = {};
       if (filter.child_id) params.child_id = filter.child_id;
       if (filter.type) params.type = filter.type;
+      const d = new Date();
+      const todayStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
       const [rTasks, rOcc] = await Promise.all([
         api.get('/tasks', { params }),
-        api.get('/tasks/occurrences', { params }),
+        api.get('/tasks/occurrences', { params: { ...params, date: todayStr } }),
       ]);
       setTasks(rTasks.data);
       setOccurrences(rOcc.data);
@@ -137,11 +139,11 @@ export default function TaskManager() {
 
       {/* FILTERS */}
       <div className="flex gap-12 mb-24" style={{ flexWrap: 'wrap', alignItems: 'center' }}>
-        <div className="tabs" style={{ margin: 0 }}>
-          <button className={`tab ${viewMode === 'occurrences' ? 'active' : ''}`} onClick={() => setViewMode('occurrences')}>📅 Hoje</button>
-          <button className={`tab ${viewMode === 'templates' ? 'active' : ''}`} onClick={() => setViewMode('templates')}>🗂️ Modelos</button>
+        <div className="tabs tabs-scroll" style={{ margin: 0 }}>
+          <button type="button" className={`tab ${viewMode === 'occurrences' ? 'active' : ''}`} onClick={() => setViewMode('occurrences')}>📅 Hoje</button>
+          <button type="button" className={`tab ${viewMode === 'templates' ? 'active' : ''}`} onClick={() => setViewMode('templates')}>🗂️ Modelos</button>
         </div>
-        <select className="form-select" style={{ width: 'auto' }} value={filter.child_id} onChange={e => setFilter(p => ({ ...p, child_id: e.target.value }))}>
+        <select className="form-select" style={{ width: 'auto', maxWidth: '100%', minWidth: 0 }} value={filter.child_id} onChange={e => setFilter(p => ({ ...p, child_id: e.target.value }))}>
           <option value="">{t('all')} {t('children')}</option>
           {children.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>

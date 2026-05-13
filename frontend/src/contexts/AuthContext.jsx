@@ -23,7 +23,7 @@ export function AuthProvider({ children }) {
           }
         } catch (e) {
           console.error('Auth state + perfil:', e);
-          await supabase.auth.signOut();
+          await supabase.auth.signOut({ scope: 'local' }).catch(() => {});
           clearState();
         } finally {
           setLoading(false);
@@ -41,7 +41,7 @@ export function AuthProvider({ children }) {
         }
       } catch (e) {
         console.error('Sessão inicial + perfil:', e);
-        await supabase.auth.signOut();
+        await supabase.auth.signOut({ scope: 'local' }).catch(() => {});
         clearState();
         setLoading(false);
       }
@@ -86,7 +86,7 @@ export function AuthProvider({ children }) {
         }
       } else if (error) {
         console.error('Erro ao carregar public.users:', error.code, error.message, error.details);
-        await supabase.auth.signOut();
+        await supabase.auth.signOut({ scope: 'local' }).catch(() => {});
         throw new Error(
           'Não foi possível ler o perfil na base de dados (erro do servidor). ' +
           'No Supabase, execute o script supabase_baas_complete_fix.sql no SQL Editor.',
@@ -182,7 +182,11 @@ export function AuthProvider({ children }) {
   };
 
   const logout = async () => {
-    await supabase.auth.signOut();
+    try {
+      await supabase.auth.signOut({ scope: 'local' });
+    } catch {
+      /* 403 em logout global: scope local limpa sessão na mesma */
+    }
     clearState();
   };
 

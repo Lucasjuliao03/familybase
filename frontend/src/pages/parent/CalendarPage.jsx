@@ -131,19 +131,20 @@ export default function CalendarPage() {
         <button className="btn btn-primary" onClick={() => { setForm({ id: null, title: '', description: '', date: '', type: 'family', child_id: '', visible_to_child: true, color: defaultEventColor }); setShowModal(true); }}>+ {t('add_event')}</button>
       </div>
 
-      <div className="tabs mb-24">
-        <button className={`tab ${tab==='calendar'?'active':''}`} onClick={() => setTab('calendar')}>📅 Visão Mensal</button>
-        <button className={`tab ${tab==='history'?'active':''}`} onClick={() => setTab('history')}>🔍 Histórico / Pesquisa</button>
+      <div className="tabs tabs-scroll mb-24">
+        <button type="button" className={`tab ${tab==='calendar'?'active':''}`} onClick={() => setTab('calendar')}>📅 Visão Mensal</button>
+        <button type="button" className={`tab ${tab==='history'?'active':''}`} onClick={() => setTab('history')}>🔍 Histórico / Pesquisa</button>
       </div>
 
       {tab === 'calendar' && (
       <div className="card">
         <div className="flex-between mb-16">
-          <button className="btn btn-ghost" onClick={prevMonth}>◀</button>
+          <button type="button" className="btn btn-ghost" onClick={prevMonth}>◀</button>
           <h2 style={{fontWeight:700}}>{monthNames[month]} {year}</h2>
-          <button className="btn btn-ghost" onClick={nextMonth}>▶</button>
+          <button type="button" className="btn btn-ghost" onClick={nextMonth}>▶</button>
         </div>
 
+        <div className="calendar-grid-wrapper">
         <div className="calendar-grid">
           {days.map(d => <div key={d} className="calendar-header-cell">{d}</div>)}
           {cells.map((cell, i) => (
@@ -159,6 +160,7 @@ export default function CalendarPage() {
               {cell.events?.length > 3 && <div style={{fontSize:'0.65rem',color:'var(--text-light)'}}>+{cell.events.length - 3}</div>}
             </div>
           ))}
+        </div>
         </div>
 
         {/* Legend */}
@@ -228,7 +230,7 @@ export default function CalendarPage() {
                     <option value="family">{t('family_event')}</option>
                     <option value="school">{t('school_event')}</option>
                     <option value="activity">{t('activity')}</option>
-                    <option value="child">{t('child_event')}</option>
+                    <option value="other">{t('child_event')}</option>
                   </select></div>
               </div>
               <div className="form-group"><label className="form-label">{t('select_child')}</label>
