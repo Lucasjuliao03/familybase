@@ -96,7 +96,22 @@ function pickCalendarRow(body, familyId, userId, withId) {
   row.family_id = familyId;
   row.created_by = userId;
   if (withId) row.id = body.id || uuidv4();
+  const allowedTypes = new Set(['family', 'school', 'medical', 'birthday', 'activity', 'task', 'reminder', 'other']);
+  if (row.type != null && !allowedTypes.has(row.type)) row.type = 'family';
   return omitUndefined(row);
+}
+
+const FAMILY_PATCH_KEYS = new Set([
+  'name', 'language', 'plan', 'status', 'contact_email', 'contact_phone', 'emoji', 'primary_color', 'secondary_color', 'logo_url',
+]);
+
+function pickFamilyPatch(body) {
+  const out = {};
+  if (!body || typeof body !== 'object') return out;
+  FAMILY_PATCH_KEYS.forEach((k) => {
+    if (body[k] !== undefined) out[k] = body[k];
+  });
+  return out;
 }
 
 function apptExtraFromNotes(notes) {
@@ -668,15 +683,16 @@ const api = {
       };
     }
 
+    if (healthPath === '/health' || healthPath === '/health/') {
+      return { data: [] };
+    }
+
     // Generic fallback
     let table = path.split('/')[1];
-    if (table === 'calendar') table = 'calendar_events';
     if (table === 'health') {
-      if (path.includes('appointments')) table = 'health_appointments';
-      else if (path.includes('medication-logs')) table = 'health_medication_logs';
-      else if (path.includes('medications')) table = 'medications';
-      else if (path.includes('records')) table = 'health_records';
+      return { data: [] };
     }
+    if (table === 'calendar') table = 'calendar_events';
     
     try {
       const { data } = await supabase.from(table).select('*').eq('family_id', familyId);
@@ -697,6 +713,7 @@ const api = {
     if (!familyId) throw new Error('Not authenticated');
     const { data: { session } } = await supabase.auth.getSession();
     const userId = session?.user?.id;
+    if (path.startsWith('/calendar') && !userId) throw new Error('Sessão inválida: inicie sessão novamente.');
 
     if (path.startsWith('/grades')) {
       const row = normalizeGradeRow(body, familyId);
@@ -964,9 +981,9 @@ const api = {
       if (insErr) throw new Error(insErr.message);
 
       const delta = body.type === 'credit' ? amt : -amt;
-      const { data: cycle } = await supabase.from('allowance_cycles').select('manual_adjustments').eq('id', body.cycle_id).single();
+      const { data: cycle } = await supabase.from('allowance_cycles').select('manual_adjustments').eq('id', body.cycle_id).eq('family_id', familyId).single();
       const currentAdj = Number(cycle?.manual_adjustments || 0);
-      await supabase.from('allowance_cycles').update({ manual_adjustments: currentAdj + delta }).eq('id', body.cycle_id);
+      await supabase.from('allowance_cycles').update({ manual_adjustments: currentAdj + delta }).eq('id', body.cycle_id).eq('family_id', familyId);
 
       return { data: inserted || {} };
     }
@@ -986,21 +1003,23 @@ const api = {
     let table = path.split('/')[1];
     let safeBody = { ...body };
     if (table === 'calendar') table = 'calendar_events';
+    if (table === 'shopping') {
+      table = 'shopping_list';
+      if (!safeBody.registered_by && userId) safeBody.registered_by = userId;
+    }
     if (table === 'health') {
       if (path.includes('appointments')) table = 'health_appointments';
       else if (path.includes('medication-logs')) table = 'health_medication_logs';
       else if (path.includes('medications')) table = 'medications';
       else if (path.includes('records')) table = 'health_records';
-      
+      else throw new Error('Use rotas /health/records, /health/appointments, etc. (cliente atualizado).');
+
       Object.keys(safeBody).forEach(k => { if (safeBody[k] === '') safeBody[k] = null; });
     }
 
-    try {
-      const { data } = await supabase.from(table).insert([{ ...safeBody, family_id: familyId, id: uuidv4() }]).select().single();
-      return { data };
-    } catch {
-      return { data: { ok: true } };
-    }
+    const { data, error } = await supabase.from(table).insert([{ ...safeBody, family_id: familyId, id: uuidv4() }]).select().single();
+    if (error) throw new Error(error.message);
+    return { data };
   },
 
   async put(url, body, config = {}) {
@@ -1109,8 +1128,143 @@ const api = {
     }
 
     if (path === '/families' || path === '/families/') {
-      const { data, error } = await supabase.from('families').update({ ...body }).eq('id', familyId).select().single();
+      const patch = pickFamilyPatch(body);
+      const { data, error } = await supabase.from('families').update(patch).eq('id', familyId).select().single();
       if (error) throw new Error(error.message);
+      return { data };
+    }
+
+    const memberAvatarMatch = path.match(/^\/families\/members\/([^/]+)\/avatar$/);
+    if (memberAvatarMatch) {
+      const targetUserId = memberAvatarMatch[1];
+      const role = await getUserRole();
+      if (role !== 'parent') throw new Error('Apenas responsáveis podem alterar o avatar de outros membros.');
+      const { data: target } = await supabase.from('users').select('id').eq('id', targetUserId).eq('family_id', familyId).maybeSingle();
+      if (!target) throw new Error('Utilizador não encontrado na família.');
+      const bucket = 'avatars';
+      if (body instanceof FormData) {
+        const preset = body.get('avatar_preset');
+        const file = body.get('avatar');
+        if (file && typeof file === 'object' && file.size > 0) {
+          const ext = (file.name && String(file.name).split('.').pop()) || 'jpg';
+          const filePath = `${familyId}/user-${targetUserId}-${Date.now()}.${ext}`;
+          const { error: upErr } = await supabase.storage.from(bucket).upload(filePath, file, { upsert: true, contentType: file.type || undefined });
+          if (upErr) throw new Error(upErr.message);
+          const rel = `${bucket}/${filePath}`;
+          await supabase.from('users').update({ avatar_url: rel, avatar_preset: null }).eq('id', targetUserId).eq('family_id', familyId);
+          return { data: { avatar_url: rel, avatar_preset: preset || null } };
+        }
+        if (preset) {
+          await supabase.from('users').update({ avatar_preset: preset, avatar_url: null }).eq('id', targetUserId).eq('family_id', familyId);
+          return { data: { avatar_preset: preset } };
+        }
+      } else if (body && body.avatar_preset) {
+        await supabase.from('users').update({ avatar_preset: body.avatar_preset }).eq('id', targetUserId).eq('family_id', familyId);
+        return { data: { avatar_preset: body.avatar_preset } };
+      }
+      throw new Error('Envie avatar (ficheiro) ou avatar_preset');
+    }
+
+    const childPwMatch = path.match(/^\/families\/children\/([^/]+)\/password$/);
+    if (childPwMatch) {
+      const childId = childPwMatch[1];
+      const { data: ch } = await supabase.from('children').select('user_id').eq('id', childId).eq('family_id', familyId).maybeSingle();
+      if (!ch?.user_id) throw new Error('Esta criança não tem conta de login. Defina email ao criar ou use convite.');
+      const targetUid = ch.user_id;
+      const pwd = body?.password;
+      const must = !!body?.must_change_password;
+      if (pwd && String(pwd).length >= 4 && targetUid === userId) {
+        const { error } = await supabase.auth.updateUser({ password: String(pwd) });
+        if (error) throw new Error(error.message);
+      } else if (pwd && String(pwd).length >= 4) {
+        throw new Error('Alterar a palavra-passe de outro utilizador requer uma Edge Function com privilégios de administração (Supabase).');
+      }
+      const { error: uErr } = await supabase.from('users').update({ must_change_password: must }).eq('id', targetUid).eq('family_id', familyId);
+      if (uErr) throw new Error(uErr.message);
+      return { data: { ok: true } };
+    }
+
+    const memberPwMatch = path.match(/^\/families\/members\/([^/]+)\/password$/);
+    if (memberPwMatch) {
+      const targetUid = memberPwMatch[1];
+      const pwd = body?.password;
+      const must = !!body?.must_change_password;
+      const { data: tgt } = await supabase.from('users').select('id').eq('id', targetUid).eq('family_id', familyId).maybeSingle();
+      if (!tgt) throw new Error('Membro não encontrado.');
+      if (pwd && String(pwd).length >= 4 && targetUid === userId) {
+        const { error } = await supabase.auth.updateUser({ password: String(pwd) });
+        if (error) throw new Error(error.message);
+      } else if (pwd && String(pwd).length >= 4) {
+        throw new Error('Alterar a palavra-passe de outro utilizador requer uma Edge Function com privilégios de administração (Supabase).');
+      }
+      const { error: uErr } = await supabase.from('users').update({ must_change_password: must }).eq('id', targetUid).eq('family_id', familyId);
+      if (uErr) throw new Error(uErr.message);
+      return { data: { ok: true } };
+    }
+
+    const childPutMatch = path.match(/^\/families\/children\/([^/]+)$/);
+    if (childPutMatch) {
+      const childId = childPutMatch[1];
+      const patch = omitUndefined({
+        name: body.name,
+        nickname: body.nickname,
+        age: body.age === '' || body.age === undefined ? null : Number(body.age),
+        color: body.color,
+        emoji: body.emoji,
+        notes: body.notes,
+        birthday: body.birthday === '' ? null : body.birthday,
+        avatar_preset: body.avatar_preset,
+      });
+      const { data, error } = await supabase.from('children').update(patch).eq('id', childId).eq('family_id', familyId).select().single();
+      if (error) throw new Error(error.message);
+      return { data };
+    }
+
+    const memberPutMatch = path.match(/^\/families\/members\/([^/]+)$/);
+    if (memberPutMatch) {
+      const uid = memberPutMatch[1];
+      const patch = omitUndefined({
+        name: body.name,
+        phone: body.phone,
+        emoji: body.emoji,
+        display_color: body.display_color,
+        access_profile: body.access_profile,
+      });
+      if (body.email !== undefined) patch.email = body.email;
+      const { data, error } = await supabase.from('users').update(patch).eq('id', uid).eq('family_id', familyId).not('role', 'eq', 'master').select().single();
+      if (error) throw new Error(error.message);
+      return { data };
+    }
+
+    const relativePutMatch = path.match(/^\/families\/relatives\/([^/]+)$/);
+    if (relativePutMatch) {
+      const uid = relativePutMatch[1];
+      const patch = omitUndefined({
+        name: body.name,
+        phone: body.phone,
+        emoji: body.emoji,
+        display_color: body.display_color,
+        access_profile: body.access_profile,
+      });
+      if (body.email !== undefined) patch.email = body.email;
+      const { data, error } = await supabase.from('users').update(patch).eq('id', uid).eq('family_id', familyId).eq('role', 'relative').select().single();
+      if (error) throw new Error(error.message);
+      if (body.relationship != null) {
+        await supabase.from('family_members').upsert(
+          { family_id: familyId, user_id: uid, relationship: body.relationship },
+          { onConflict: 'family_id,user_id' },
+        ).catch(() => {});
+      }
+      if (Array.isArray(body.linked_child_ids)) {
+        await supabase.from('relative_children').delete().eq('relative_user_id', uid).eq('family_id', familyId);
+        const rows = body.linked_child_ids.map((cid) => ({
+          id: uuidv4(),
+          relative_user_id: uid,
+          child_id: cid,
+          family_id: familyId,
+        }));
+        if (rows.length) await supabase.from('relative_children').insert(rows).catch(() => {});
+      }
       return { data };
     }
 
@@ -1280,6 +1434,10 @@ const api = {
       const { data, error } = await supabase.from('task_occurrences').update({ ...body }).eq('id', occId).eq('family_id', familyId).select().single();
       if (error) throw new Error(error.message);
       return { data };
+    }
+
+    if (table === 'families' && id) {
+      throw new Error('Rota inválida: use PUT /families para a família ou PUT /families/children/:id, /families/members/:id, /families/relatives/:id.');
     }
 
     const safeBody = { ...body };
