@@ -272,8 +272,8 @@ export default function MuralBoard() {
               </div>
               <span style={{ fontSize: '0.8rem', color: 'var(--text-light)' }}>{n.due_datetime ? `${t('mural_due')}: ${n.due_datetime}` : ''}</span>
             </div>
-            <h3 style={{ fontWeight: 700, marginBottom: 8 }}>{n.title}</h3>
-            <p style={{ color: 'var(--text-light)', whiteSpace: 'pre-wrap' }}>{n.description}</p>
+            <h3 style={{ fontWeight: 700, marginBottom: 8, wordBreak: 'break-word', minWidth: 0 }}>{n.title}</h3>
+            <p style={{ color: 'var(--text-light)', whiteSpace: 'pre-wrap', wordBreak: 'break-word', minWidth: 0 }}>{n.description}</p>
             <div style={{ fontSize: '0.8rem', marginTop: 12 }}>{t('mural_author')}: {n.author_name || '—'}</div>
             {n.requires_read_confirmation && (
               <div className="mt-12">
@@ -284,7 +284,7 @@ export default function MuralBoard() {
                 )}
               </div>
             )}
-            <div className="flex gap-8 mt-16 flex-wrap">
+            <div className="mural-card__actions">
               {n.status === 'active' && (
                 (user?.role === 'child' && n.type === 'quick_task') ||
                 user?.role === 'parent'

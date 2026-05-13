@@ -216,7 +216,10 @@ export default function HealthCenter() {
   useEffect(() => {
     if (tab === 'records') loadRecords();
     if (tab === 'appointments') loadAppointments();
-    if (tab === 'medications') loadMedications();
+    if (tab === 'medications') {
+      loadMedications();
+      loadLogs();
+    }
     if (tab === 'history') {
       loadRecords();
       loadLogs();
@@ -230,8 +233,11 @@ export default function HealthCenter() {
   }, [tab, loadRecords, loadAppointments, loadMedications, loadLogs]);
 
   useEffect(() => {
-    if (tab === 'medications') loadMedications();
-  }, [filters.med_status, filters.child_id, tab, loadMedications]);
+    if (tab === 'medications') {
+      loadMedications();
+      loadLogs();
+    }
+  }, [filters.med_status, filters.child_id, tab, loadMedications, loadLogs]);
 
   const buildRecordPayload = (m) => {
     const { kind: _k, ...rest } = m;
@@ -596,11 +602,13 @@ export default function HealthCenter() {
             </div>
           )}
           <div className="grid grid-2">
-            {medications.map((m) => (
-              <div key={m.id} className="card">
-                <div className="flex-between mb-8">
-                  <strong>{m.name}</strong>
-                  <span className="badge badge-info">{t(`health_med_status_${m.status}`)}</span>
+            {medications.map((m) => {
+              const medLogs = logs.filter((l) => l.medication_id === m.id);
+              return (
+              <div key={m.id} className="card health-med-card">
+                <div className="flex-between mb-8 flex-wrap gap-8" style={{ alignItems: 'flex-start' }}>
+                  <strong style={{ minWidth: 0, wordBreak: 'break-word' }}>{m.name}</strong>
+                  <span className="badge badge-info" style={{ flexShrink: 0 }}>{t(`health_med_status_${m.status}`)}</span>
                 </div>
                 <div style={{ fontSize: '0.95rem', fontWeight: 500, color: 'var(--text)' }}>👤 {m.child_name}</div>
                 <div style={{ fontSize: '0.85rem', marginTop: 8, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
@@ -623,32 +631,39 @@ export default function HealthCenter() {
                     <img key={url} src={publicAssetUrl(url)} alt="Anexo" style={{ height: 60, width: 60, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--border)' }} />
                   ))}
                 </div>
-                {/* Linha do tempo das últimas doses */}
-                {logs.filter(l => l.medication_id === m.id).length > 0 && (
-                  <div style={{ marginTop: 12, borderTop: '1px solid var(--border)', paddingTop: 10 }}>
-                    <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-light)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                      📋 Últimas doses
-                    </div>
+                <div style={{ marginTop: 12, borderTop: '1px solid var(--border)', paddingTop: 10 }}>
+                  <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-light)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                    📋 {t('health_recent_doses_heading')}
+                  </div>
+                  {medLogs.length === 0 ? (
+                    <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', margin: 0, lineHeight: 1.4 }}>{t('health_no_recent_doses')}</p>
+                  ) : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                      {logs.filter(l => l.medication_id === m.id).slice(0, 5).map(l => (
-                        <div key={l.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.82rem' }}>
+                      {medLogs.slice(0, 5).map((l) => (
+                        <div key={l.id} style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, fontSize: '0.82rem', rowGap: 4 }}>
                           <span style={{ width: 8, height: 8, borderRadius: '50%', background: l.status === 'taken' ? 'var(--success)' : l.status === 'skipped' ? 'var(--danger)' : 'var(--warning)', flexShrink: 0 }} />
                           <span style={{ color: 'var(--text-light)' }}>{l.taken_at ? new Date(l.taken_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—'}</span>
                           <span className={`badge badge-${l.status === 'taken' ? 'success' : 'danger'}`} style={{ fontSize: '0.7rem', padding: '1px 6px' }}>{l.status === 'taken' ? 'Tomado' : 'Não tomado'}</span>
-                          {l.logged_by_name && <span style={{ color: 'var(--text-light)', marginLeft: 'auto' }}>por {l.logged_by_name}</span>}
+                          {l.logged_by_name && (
+                            <span style={{ color: 'var(--text-light)', fontSize: '0.78rem', width: '100%', marginLeft: 0 }}>
+                              {t('health_logged_by')} {l.logged_by_name}
+                            </span>
+                          )}
                         </div>
                       ))}
                     </div>
-                  </div>
-                )}
+                  )}
+                </div>
                 {(canManage || isChild) && (
-                  <div className="flex gap-8 mt-12 flex-wrap">
-                    {canManage && isParent && <button type="button" className="btn btn-sm btn-ghost" onClick={() => setModal({
-                      kind: 'med',
-                      ...m,
-                      attachment_urls: imgList(m.attachment_urls),
-                    })}
-                    >{t('edit')}</button>}
+                  <div className="health-med-actions">
+                    {canManage && isParent && (
+                      <button type="button" className="btn btn-sm btn-ghost" onClick={() => setModal({
+                        kind: 'med',
+                        ...m,
+                        attachment_urls: imgList(m.attachment_urls),
+                      })}
+                      >{t('edit')}</button>
+                    )}
                     <button type="button" className="btn btn-sm btn-primary" onClick={() => setLogModal({
                       medication_id: m.id,
                       medication_name: m.name,
@@ -667,6 +682,7 @@ export default function HealthCenter() {
                           toast.success(t('fam_admin_saved'));
                           loadMedications();
                           loadOverview();
+                          loadLogs();
                         } catch {
                           toast.error(t('error_occurred'));
                         }
@@ -676,7 +692,8 @@ export default function HealthCenter() {
                   </div>
                 )}
               </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
