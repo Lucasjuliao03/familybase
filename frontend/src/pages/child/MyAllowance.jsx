@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useToast } from '../../contexts/ToastContext';
 import api from '../../services/api';
+import useAutoRefresh from '../../hooks/useAutoRefresh';
 
 export default function MyAllowance() {
   const { childProfile } = useAuth();
@@ -22,7 +23,7 @@ export default function MyAllowance() {
   const [showGoalModal, setShowGoalModal] = useState(false);
   const [goalForm, setGoalForm] = useState({ title: '', target_amount: '' });
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     try {
       const goalParams = childProfile?.id ? { params: { child_id: childProfile.id } } : {};
       const [rSet, rTrans, rGoals] = await Promise.all([
@@ -45,11 +46,10 @@ export default function MyAllowance() {
     } catch (e) {
       console.error(e);
     }
-  };
+  }, [childProfile?.id]);
 
-  useEffect(() => {
-    if (childProfile) fetchData();
-  }, [childProfile]);
+  useEffect(() => { if (childProfile) fetchData(); }, [childProfile, fetchData]);
+  useAutoRefresh(fetchData);
 
   const handleSaveGoal = async (e) => {
     e.preventDefault();

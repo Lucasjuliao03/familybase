@@ -429,6 +429,7 @@ CREATE POLICY "Authenticated users can delete avatars"
 --     A lógica está no frontend (api.js /allowance/piggy-requests/:id/review)
 --     Alternativa mais robusta: criar uma RPC para garantir atomicidade
 -- -----------------------------------------------------------------------------
+DROP FUNCTION IF EXISTS public.approve_piggy_request(UUID, UUID);
 CREATE OR REPLACE FUNCTION public.approve_piggy_request(
   p_request_id   UUID,
   p_family_id    UUID
@@ -439,12 +440,14 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 DECLARE
-  v_req       piggy_requests%ROWTYPE;
-  v_goal      savings_goals%ROWTYPE;
-  v_cycle_id  UUID;
-  v_adj       NUMERIC;
+  v_req         piggy_requests%ROWTYPE;
+  v_goal_id     UUID;
+  v_goal_cur    NUMERIC;
+  v_goal_tgt    NUMERIC;
+  v_cycle_id    UUID;
+  v_adj         NUMERIC;
 BEGIN
-  -- Buscar pedido
+  -- Buscar pedido (apenas pendente)
   SELECT * INTO v_req
     FROM piggy_requests
    WHERE id = p_request_id AND family_id = p_family_id AND status = 'pending';
@@ -453,55 +456,53 @@ BEGIN
     RETURN jsonb_build_object('ok', false, 'error', 'Pedido não encontrado ou já processado');
   END IF;
 
-  -- Actualizar status do pedido
-  UPDATE piggy_requests
-     SET status = 'approved', updated_at = now()
-   WHERE id = p_request_id;
+  -- Actualizar status
+  UPDATE piggy_requests SET status = 'approved' WHERE id = p_request_id;
 
-  -- Creditar na meta do cofrinho (procura por child_id + title)
-  SELECT * INTO v_goal
+  -- Creditar a meta (procurar por child_id + título, case-insensitive)
+  SELECT id, current_amount, target_amount
+    INTO v_goal_id, v_goal_cur, v_goal_tgt
     FROM savings_goals
    WHERE child_id = v_req.child_id
      AND family_id = p_family_id
-     AND lower(title) = lower(v_req.goal_title)
+     AND lower(title) = lower(COALESCE(v_req.goal_title, ''))
    LIMIT 1;
 
-  IF FOUND THEN
+  IF v_goal_id IS NOT NULL THEN
     UPDATE savings_goals
-       SET current_amount = COALESCE(current_amount, 0) + v_req.requested_amount,
+       SET current_amount = COALESCE(v_goal_cur, 0) + v_req.requested_amount,
            status = CASE
-             WHEN COALESCE(current_amount, 0) + v_req.requested_amount >= target_amount THEN 'completed'
-             ELSE status
-           END,
-           updated_at = now()
-     WHERE id = v_goal.id;
+             WHEN v_goal_tgt IS NOT NULL
+              AND COALESCE(v_goal_cur, 0) + v_req.requested_amount >= v_goal_tgt
+             THEN 'completed'
+             ELSE COALESCE((SELECT status FROM savings_goals WHERE id = v_goal_id), 'active')
+           END
+     WHERE id = v_goal_id;
   END IF;
 
-  -- Debitar do ciclo de mesada aberto
+  -- Debitar do ciclo de mesada aberto (ordenar por year/month — NÃO period_start)
   SELECT id, manual_adjustments INTO v_cycle_id, v_adj
     FROM allowance_cycles
    WHERE child_id = v_req.child_id
      AND family_id = p_family_id
      AND status = 'open'
-   ORDER BY period_start DESC
+   ORDER BY year DESC, month DESC
    LIMIT 1;
 
   IF v_cycle_id IS NOT NULL THEN
     UPDATE allowance_cycles
-       SET manual_adjustments = COALESCE(v_adj, 0) - v_req.requested_amount,
-           updated_at = now()
+       SET manual_adjustments = COALESCE(v_adj, 0) - v_req.requested_amount
      WHERE id = v_cycle_id;
   END IF;
 
-  -- Registar transacção
-  INSERT INTO allowance_transactions (id, family_id, child_id, type, amount, description, created_at)
-  VALUES (gen_random_uuid(), p_family_id, v_req.child_id, 'deduction',
-          -v_req.requested_amount,
+  -- Registar transacção (type 'debit' — não 'deduction')
+  INSERT INTO allowance_transactions (id, family_id, child_id, cycle_id, type, amount, description, created_at)
+  VALUES (gen_random_uuid(), p_family_id, v_req.child_id, v_cycle_id, 'debit',
+          ABS(v_req.requested_amount),
           'Cofrinho: ' || COALESCE(v_req.goal_title, 'Meta'),
-          now())
-  ON CONFLICT DO NOTHING;
+          now());
 
-  RETURN jsonb_build_object('ok', true);
+  RETURN jsonb_build_object('ok', true, 'cycle_id', v_cycle_id, 'goal_id', v_goal_id);
 END;
 $$;
 

@@ -1,8 +1,9 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useToast } from '../../contexts/ToastContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { shoppingApi } from '../../services/shoppingApi';
+import useAutoRefresh from '../../hooks/useAutoRefresh';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, AreaChart, Area, Legend } from 'recharts';
 
 const COMMON_SUGGESTIONS = [
@@ -11,7 +12,7 @@ const COMMON_SUGGESTIONS = [
   'Café', 'Papel Higiênico', 'Sabonete', 'Detergente'
 ];
 
-const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#ffc658'];
+const COLORS = ['#6366F1', '#10B981', '#F97316', '#3B82F6', '#8B5CF6', '#EC4899', '#14B8A6', '#F59E0B'];
 
 export default function ShoppingList() {
   const { t } = useLanguage();
@@ -32,21 +33,20 @@ export default function ShoppingList() {
   
   const [isLoading, setIsLoading] = useState(true);
 
-  const fetchData = async () => {
-    setIsLoading(true);
+  const fetchData = useCallback(async ({ silent } = {}) => {
+    if (!silent) setIsLoading(true);
     try {
       const data = await shoppingApi.getShoppingList();
       setItems(data);
     } catch (error) {
-      toast.error('Erro ao carregar lista de compras');
+      if (!silent) toast.error('Erro ao carregar lista de compras');
     } finally {
-      setIsLoading(false);
+      if (!silent) setIsLoading(false);
     }
-  };
+  }, [toast]);
 
-  useEffect(() => {
-    fetchData();
-  }, []);
+  useEffect(() => { fetchData(); }, [fetchData]);
+  useAutoRefresh(useCallback(() => fetchData({ silent: true }), [fetchData]));
 
   const handleCreateOrEdit = async (e) => {
     e.preventDefault();
@@ -151,6 +151,12 @@ export default function ShoppingList() {
   // Dashboard calculations
   const dashboardData = useMemo(() => {
     if (viewMode !== 'dashboard') return null;
+    // Estatísticas adicionais
+    let urgentCount = 0;
+    let totalItemsMonth = 0;
+    let avgTicket = 0;
+    let mostBoughtItem = { name: '-', count: 0 };
+    const itemCount = {};
 
     const currentMonthStr = filterMonth; // YYYY-MM
     const currentYearStr = filterMonth.slice(0, 4); // YYYY
@@ -168,18 +174,15 @@ export default function ShoppingList() {
       const dateObj = new Date(item.bought_at || item.created_at);
       const month = dateObj.toISOString().slice(0, 7);
       const year = dateObj.toISOString().slice(0, 4);
-      
-      // Evolução de gastos
+
       if (!monthlySpending[month]) monthlySpending[month] = 0;
       monthlySpending[month] += price;
 
-      if (year === currentYearStr) {
-        totalSpentYear += price;
-      }
+      if (year === currentYearStr) totalSpentYear += price;
 
-      // Estatísticas do mês atual
       if (month === currentMonthStr) {
         totalSpentMonth += price;
+        totalItemsMonth += 1;
         const est = item.establishment ? item.establishment.trim() : 'Outros';
         if (!estTotals[est]) estTotals[est] = 0;
         estTotals[est] += price;
@@ -191,8 +194,16 @@ export default function ShoppingList() {
         const prodName = item.name;
         if (!productTotals[prodName]) productTotals[prodName] = 0;
         productTotals[prodName] += price;
+
+        if (!itemCount[prodName]) itemCount[prodName] = 0;
+        itemCount[prodName] += 1;
+        if (itemCount[prodName] > mostBoughtItem.count) {
+          mostBoughtItem = { name: prodName, count: itemCount[prodName] };
+        }
       }
     });
+    urgentCount = (items.pending || []).filter(i => i.is_urgent).length;
+    avgTicket = totalItemsMonth > 0 ? totalSpentMonth / totalItemsMonth : 0;
 
     const pieData = Object.keys(estTotals).map(k => ({ name: k, value: estTotals[k] })).sort((a, b) => b.value - a.value);
     const userPieData = Object.keys(userTotals).map(k => ({ name: k, value: userTotals[k] })).sort((a, b) => b.value - a.value);
@@ -206,8 +217,12 @@ export default function ShoppingList() {
       return { month: `${mm}/${yyyy}`, Total: monthlySpending[m] };
     });
 
-    return { totalSpentMonth, totalSpentYear, pieData, userPieData, topProducts, areaData };
-  }, [items.history, viewMode]);
+    return {
+      totalSpentMonth, totalSpentYear, pieData, userPieData,
+      topProducts, areaData,
+      urgentCount, totalItemsMonth, avgTicket, mostBoughtItem,
+    };
+  }, [items.history, items.pending, viewMode, filterMonth]);
 
   return (
     <div className="animate-fade-in" style={{ maxWidth: '100%', overflowX: 'hidden' }}>
@@ -343,108 +358,159 @@ export default function ShoppingList() {
           ))}
         </div>
       ) : viewMode === 'dashboard' && canSeeDashboard ? (
-        /* DASHBOARD VIEW */
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(320px, 100%), 1fr))', gap: '16px', alignItems: 'flex-start', maxWidth: '100%' }}>
-          
-          {/* CARDS */}
-          <div className="card flex-center flex-col" style={{ gridColumn: '1/-1', backgroundColor: 'var(--primary)', backgroundImage: 'linear-gradient(135deg, var(--primary), #2c3e50)', color: '#ffffff', padding: '30px', border: 'none', boxShadow: '0 10px 20px rgba(0,0,0,0.1)' }}>
-            <h3 style={{ margin: 0, fontSize: '1.2rem', opacity: 0.9, color: '#ffffff' }}>Total Gasto em {filterMonth.split('-').reverse().join('/')}</h3>
-            <div style={{ fontSize: '3.5rem', fontWeight: 800, margin: '15px 0', textShadow: '0 2px 10px rgba(0,0,0,0.2)' }}>
-              R$ {dashboardData.totalSpentMonth.toFixed(2)}
+        /* ──────────── DASHBOARD VIEW (novo design) ──────────── */
+        <div className="shop-dash">
+
+          {/* 1. Hero banner com gasto do mês */}
+          <div className="shop-dash__hero">
+            <div className="shop-dash__hero-left">
+              <span className="shop-dash__hero-label">Total gasto em {filterMonth.split('-').reverse().join('/')}</span>
+              <div className="shop-dash__hero-value">
+                R$ {dashboardData.totalSpentMonth.toFixed(2)}
+              </div>
+              <div className="shop-dash__hero-pills">
+                <div className="shop-dash__hero-pill">
+                  📅 Acumulado no ano: <strong>R$ {dashboardData.totalSpentYear.toFixed(2)}</strong>
+                </div>
+                <div className="shop-dash__hero-pill">
+                  🧾 {dashboardData.totalItemsMonth} itens este mês
+                </div>
+              </div>
             </div>
-            <div style={{ display: 'flex', gap: '15px', marginTop: '10px' }}>
-              <div style={{ background: 'rgba(255,255,255,0.2)', padding: '6px 16px', borderRadius: '20px', fontSize: '0.9rem', backdropFilter: 'blur(4px)' }}>
-                Acumulado no Ano: <strong>R$ {dashboardData.totalSpentYear.toFixed(2)}</strong>
+            <div className="shop-dash__hero-icon">🛒</div>
+          </div>
+
+          {/* 2. KPI cards coloridos */}
+          <div className="shop-dash__kpis">
+            <div className="stat-card grad-purple">
+              <div className="stat-icon" style={{ background: 'rgba(255,255,255,0.2)' }}>🧾</div>
+              <div className="stat-info">
+                <h3>{dashboardData.totalItemsMonth}</h3>
+                <p>Itens comprados</p>
+              </div>
+            </div>
+            <div className="stat-card grad-orange">
+              <div className="stat-icon" style={{ background: 'rgba(255,255,255,0.2)' }}>🚨</div>
+              <div className="stat-info">
+                <h3>{dashboardData.urgentCount}</h3>
+                <p>Itens urgentes</p>
+              </div>
+            </div>
+            <div className="stat-card grad-blue">
+              <div className="stat-icon" style={{ background: 'rgba(255,255,255,0.2)' }}>💰</div>
+              <div className="stat-info">
+                <h3>R$ {dashboardData.avgTicket.toFixed(2)}</h3>
+                <p>Ticket médio</p>
+              </div>
+            </div>
+            <div className="stat-card grad-green">
+              <div className="stat-icon" style={{ background: 'rgba(255,255,255,0.2)' }}>⭐</div>
+              <div className="stat-info">
+                <h3 style={{ fontSize: '1rem' }}>{dashboardData.mostBoughtItem.name}</h3>
+                <p>Item mais comprado</p>
               </div>
             </div>
           </div>
 
-          <div className="card">
-            <h3 className="mb-16">📈 Evolução de Gastos Mensais</h3>
-            <div style={{ height: 250 }}>
-              {dashboardData.areaData.length > 0 ? (
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={dashboardData.areaData}>
-                    <defs>
-                      <linearGradient id="colorTotal" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="var(--primary)" stopOpacity={0.8}/>
-                        <stop offset="95%" stopColor="var(--primary)" stopOpacity={0}/>
-                      </linearGradient>
-                    </defs>
-                    <XAxis dataKey="month" stroke="var(--text-light)" fontSize={12} tickLine={false} axisLine={false} />
-                    <YAxis stroke="var(--text-light)" fontSize={12} tickFormatter={(val) => `R$${val}`} tickLine={false} axisLine={false} />
-                    <Tooltip cursor={{ strokeDasharray: '3 3' }} formatter={(value) => `R$ ${parseFloat(value).toFixed(2)}`} />
-                    <Area type="monotone" dataKey="Total" stroke="var(--primary)" strokeWidth={3} fillOpacity={1} fill="url(#colorTotal)" />
-                  </AreaChart>
-                </ResponsiveContainer>
-              ) : (
-                <div className="flex-center" style={{ height: '100%', color: 'var(--text-light)' }}>Nenhum histórico disponível.</div>
-              )}
+          {/* 3. Linha de gráficos: evolução + estabelecimento */}
+          <div className="shop-dash__row">
+            <div className="card shop-dash__chart-card">
+              <div className="card-header">
+                <h3 className="card-title">📈 Evolução de Gastos</h3>
+                <span className="badge badge-info">Histórico</span>
+              </div>
+              <div className="shop-dash__chart">
+                {dashboardData.areaData.length > 0 ? (
+                  <ResponsiveContainer width="99%" height="100%" minWidth={0}>
+                    <AreaChart data={dashboardData.areaData} margin={{ top: 5, right: 8, left: -10, bottom: 5 }}>
+                      <defs>
+                        <linearGradient id="colorTotal" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#6366F1" stopOpacity={0.4}/>
+                          <stop offset="95%" stopColor="#6366F1" stopOpacity={0}/>
+                        </linearGradient>
+                      </defs>
+                      <XAxis dataKey="month" stroke="var(--text-light)" fontSize={11} tickLine={false} axisLine={false} />
+                      <YAxis stroke="var(--text-light)" fontSize={11} tickFormatter={(v) => `R$${v}`} tickLine={false} axisLine={false} />
+                      <Tooltip cursor={{ strokeDasharray: '3 3' }} formatter={(v) => `R$ ${parseFloat(v).toFixed(2)}`} />
+                      <Area type="monotone" dataKey="Total" stroke="#6366F1" strokeWidth={2.5} fillOpacity={1} fill="url(#colorTotal)" />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="shop-dash__empty">📭 Sem histórico disponível</div>
+                )}
+              </div>
+            </div>
+
+            <div className="card shop-dash__chart-card">
+              <div className="card-header">
+                <h3 className="card-title">🏬 Por estabelecimento</h3>
+                <span className="badge badge-primary">Mês</span>
+              </div>
+              <div className="shop-dash__chart">
+                {dashboardData.pieData.length > 0 ? (
+                  <ResponsiveContainer width="99%" height="100%" minWidth={0}>
+                    <PieChart>
+                      <Pie data={dashboardData.pieData} cx="50%" cy="50%" innerRadius={55} outerRadius={85} paddingAngle={3} dataKey="value"
+                           label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}>
+                        {dashboardData.pieData.map((_, i) => (<Cell key={i} fill={COLORS[i % COLORS.length]} />))}
+                      </Pie>
+                      <Tooltip formatter={(v) => `R$ ${parseFloat(v).toFixed(2)}`} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="shop-dash__empty">📭 Sem gastos este mês</div>
+                )}
+              </div>
             </div>
           </div>
 
-          <div className="card">
-            <h3 className="mb-16">🏬 Gastos por Estabelecimento (Mês)</h3>
-            <div style={{ height: 250 }}>
-              {dashboardData.pieData.length > 0 ? (
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie data={dashboardData.pieData} cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value" label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}>
-                      {dashboardData.pieData.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                      ))}
-                    </Pie>
-                    <Tooltip formatter={(value) => `R$ ${parseFloat(value).toFixed(2)}`} />
-                  </PieChart>
-                </ResponsiveContainer>
-              ) : (
-                <div className="flex-center" style={{ height: '100%', color: 'var(--text-light)' }}>Nenhum gasto registrado este mês.</div>
-              )}
+          {/* 4. Linha: usuário + top produtos */}
+          <div className="shop-dash__row">
+            <div className="card shop-dash__chart-card">
+              <div className="card-header">
+                <h3 className="card-title">👤 Por usuário</h3>
+                <span className="badge badge-success">Mês</span>
+              </div>
+              <div className="shop-dash__chart">
+                {dashboardData.userPieData.length > 0 ? (
+                  <ResponsiveContainer width="99%" height="100%" minWidth={0}>
+                    <PieChart>
+                      <Pie data={dashboardData.userPieData} cx="50%" cy="50%" innerRadius={40} outerRadius={85} paddingAngle={2} dataKey="value"
+                           label={({ name }) => name}>
+                        {dashboardData.userPieData.map((_, i) => (<Cell key={i} fill={COLORS[(i + 3) % COLORS.length]} />))}
+                      </Pie>
+                      <Tooltip formatter={(v) => `R$ ${parseFloat(v).toFixed(2)}`} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="shop-dash__empty">📭 Sem dados</div>
+                )}
+              </div>
+            </div>
+
+            <div className="card shop-dash__chart-card">
+              <div className="card-header">
+                <h3 className="card-title">🏆 Top 5 produtos mais caros</h3>
+                <span className="badge badge-warning">Mês</span>
+              </div>
+              <div className="shop-dash__chart">
+                {dashboardData.topProducts.length > 0 ? (
+                  <ResponsiveContainer width="99%" height="100%" minWidth={0}>
+                    <BarChart data={dashboardData.topProducts} layout="vertical" margin={{ top: 5, right: 16, left: 0, bottom: 5 }}>
+                      <XAxis type="number" stroke="var(--text-light)" fontSize={11} tickFormatter={(v) => `R$${v}`} />
+                      <YAxis dataKey="name" type="category" stroke="var(--text-light)" fontSize={11} width={110} tickLine={false} axisLine={false} />
+                      <Tooltip cursor={{ fill: 'var(--bg-hover)' }} formatter={(v) => `R$ ${parseFloat(v).toFixed(2)}`} />
+                      <Bar dataKey="Total" radius={[0, 6, 6, 0]} barSize={22}>
+                        {dashboardData.topProducts.map((_, i) => (<Cell key={i} fill={COLORS[i % COLORS.length]} />))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="shop-dash__empty">📭 Sem produtos registados</div>
+                )}
+              </div>
             </div>
           </div>
-
-          <div className="card">
-            <h3 className="mb-16">👤 Gastos por Usuário (Mês)</h3>
-            <div style={{ height: 250 }}>
-              {dashboardData.userPieData.length > 0 ? (
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie data={dashboardData.userPieData} cx="50%" cy="50%" innerRadius={40} outerRadius={80} paddingAngle={2} dataKey="value" label={({ name, value }) => `${name}`}>
-                      {dashboardData.userPieData.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={COLORS[(index + 3) % COLORS.length]} />
-                      ))}
-                    </Pie>
-                    <Tooltip formatter={(value) => `R$ ${parseFloat(value).toFixed(2)}`} />
-                  </PieChart>
-                </ResponsiveContainer>
-              ) : (
-                <div className="flex-center" style={{ height: '100%', color: 'var(--text-light)' }}>Nenhum gasto registrado este mês.</div>
-              )}
-            </div>
-          </div>
-
-          <div className="card" style={{ gridColumn: '1/-1' }}>
-            <h3 className="mb-16">🏆 Top 5 Produtos Mais Caros no Mês</h3>
-            <div style={{ height: 280 }}>
-              {dashboardData.topProducts.length > 0 ? (
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={dashboardData.topProducts} layout="vertical" margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
-                    <XAxis type="number" stroke="var(--text-light)" fontSize={12} tickFormatter={(val) => `R$${val}`} />
-                    <YAxis dataKey="name" type="category" stroke="var(--text-light)" fontSize={12} width={120} tickLine={false} axisLine={false} />
-                    <Tooltip cursor={{ fill: 'var(--bg-hover)' }} formatter={(value) => `R$ ${parseFloat(value).toFixed(2)}`} />
-                    <Bar dataKey="Total" radius={[0, 4, 4, 0]} barSize={30}>
-                      {dashboardData.topProducts.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                      ))}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              ) : (
-                <div className="flex-center" style={{ height: '100%', color: 'var(--text-light)' }}>Nenhum produto com valor registrado neste mês.</div>
-              )}
-            </div>
-          </div>
-
         </div>
       ) : null}
 

@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useToast } from '../../contexts/ToastContext';
 import api from '../../services/api';
+import useAutoRefresh from '../../hooks/useAutoRefresh';
 
 export default function AllowanceManager() {
   const { t } = useLanguage();
@@ -19,7 +20,7 @@ export default function AllowanceManager() {
   const [showAdjustModal, setShowAdjustModal] = useState(false);
   const [adjustForm, setAdjustForm] = useState({ child_id: '', cycle_id: '', type: 'credit', amount: '', description: '' });
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     try {
       const [rSets, rCycles, rCh] = await Promise.all([
         api.get('/allowance/settings').catch(() => ({ data: [] })),
@@ -32,24 +33,25 @@ export default function AllowanceManager() {
     } catch (e) {
       console.error(e);
     }
-  };
-
-  useEffect(() => {
-    fetchData();
   }, []);
 
-  const fetchPiggy = async () => {
+  const fetchPiggy = useCallback(async () => {
     try {
       const { data } = await api.get('/allowance/piggy-requests');
       setPiggyRequests(data || []);
     } catch {
       setPiggyRequests([]);
     }
-  };
+  }, []);
 
-  useEffect(() => {
+  useEffect(() => { fetchData(); }, [fetchData]);
+  useEffect(() => { if (tab === 'piggy') fetchPiggy(); }, [tab, fetchPiggy]);
+
+  // Auto-refresh: ao voltar à página ou trocar de aba, recarrega tudo
+  useAutoRefresh(useCallback(() => {
+    fetchData();
     if (tab === 'piggy') fetchPiggy();
-  }, [tab]);
+  }, [fetchData, fetchPiggy, tab]));
 
   const reviewPiggy = async (id, approved, note) => {
     try {

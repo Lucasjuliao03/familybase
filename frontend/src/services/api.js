@@ -2103,6 +2103,8 @@ const api = {
         } catch (_) { /* não bloqueia se meta não encontrada */ }
 
         // 3b. Debitar da mesada: ajustar o ciclo aberto da criança
+        // NOTA: a tabela allowance_cycles tem (month, year), não period_start
+        let openCycleId = null;
         try {
           const { data: openCycle } = await supabase
             .from('allowance_cycles')
@@ -2110,33 +2112,35 @@ const api = {
             .eq('child_id', reqRow.child_id)
             .eq('family_id', familyId)
             .eq('status', 'open')
-            .order('period_start', { ascending: false })
+            .order('year', { ascending: false })
+            .order('month', { ascending: false })
             .limit(1)
             .maybeSingle();
 
           if (openCycle) {
-            // Reduz manual_adjustments (equivale a subtrair do saldo)
+            openCycleId = openCycle.id;
             await supabase
               .from('allowance_cycles')
               .update({ manual_adjustments: Number(openCycle.manual_adjustments || 0) - amount })
               .eq('id', openCycle.id);
           }
+        } catch (_) { /* não bloqueia */ }
 
-          // 3c. Registar transacção para histórico
+        // 3c. Registar transacção para histórico (type: 'debit' — não 'deduction')
+        try {
           await supabase
             .from('allowance_transactions')
             .insert([{
               id: uuidv4(),
               family_id: familyId,
               child_id: reqRow.child_id,
-              type: 'deduction',
-              amount: -Math.abs(amount),
+              cycle_id: openCycleId,
+              type: 'debit',
+              amount: Math.abs(amount),
               description: `Cofrinho: ${reqRow.goal_title || 'Meta'}`,
               created_at: new Date().toISOString(),
-            }])
-            .select()
-            .maybeSingle();
-        } catch (_) { /* não bloqueia se ciclo/transacção falhar */ }
+            }]);
+        } catch (_) { /* não bloqueia */ }
       }
 
       return { data: updatedReq };

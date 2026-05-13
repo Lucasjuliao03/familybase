@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useLanguage } from '../../contexts/LanguageContext';
 import api from '../../services/api';
+import useAutoRefresh from '../../hooks/useAutoRefresh';
 
 export default function ChildDashboard() {
   const { user, childProfile } = useAuth();
@@ -9,12 +10,15 @@ export default function ChildDashboard() {
   const [profile, setProfile] = useState(null);
   const [occurrences, setOccurrences] = useState([]);
 
-  useEffect(() => {
-    if (childProfile?.id) {
-      api.get(`/gamification/profile/${childProfile.id}`).then(r => setProfile(r.data)).catch(() => {});
-      api.get('/tasks/occurrences', { params: { status: 'pending', child_id: childProfile.id } }).then(r => setOccurrences(r.data.slice(0, 5))).catch(() => {});
-    }
-  }, [childProfile]);
+  const fetchAll = useCallback(() => {
+    if (!childProfile?.id) return;
+    api.get(`/gamification/profile/${childProfile.id}`).then(r => setProfile(r.data)).catch(() => {});
+    api.get('/tasks/occurrences', { params: { status: 'pending', child_id: childProfile.id } })
+      .then(r => setOccurrences((r.data || []).slice(0, 5))).catch(() => {});
+  }, [childProfile?.id]);
+
+  useEffect(() => { fetchAll(); }, [fetchAll]);
+  useAutoRefresh(fetchAll);
 
   const child = profile?.child || childProfile;
   if (!child) return <div className="flex-center" style={{padding:60,fontSize:'2rem'}}>⏳</div>;

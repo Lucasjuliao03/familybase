@@ -5,6 +5,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { moduleAllowed } from '../../lib/familyModules';
 import api, { publicAssetUrl } from '../../services/api';
 import { PRESET_AVATARS } from '../../components/AvatarPicker';
+import useAutoRefresh from '../../hooks/useAutoRefresh';
 
 const ChildCard = memo(function ChildCard({ child, t }) {
   const xpPct = child.xp_next_level > 0 ? Math.min((child.xp / child.xp_next_level) * 100, 100) : 0;
@@ -86,6 +87,7 @@ export default function ParentDashboard() {
   }, []);
 
   useEffect(() => { fetchDashboard(); }, [fetchDashboard]);
+  useAutoRefresh(fetchDashboard);
 
   // IMPORTANTE: todos os hooks têm de vir ANTES de qualquer return (Rules of Hooks).
   const stats    = useMemo(() => data?.stats           || {}, [data]);
