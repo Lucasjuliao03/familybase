@@ -161,3 +161,6 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
     device_name VARCHAR(255),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Correção de constraint para permitir consultas de adultos sem filhos associados
+ALTER TABLE public.health_appointments ALTER COLUMN child_id DROP NOT NULL;

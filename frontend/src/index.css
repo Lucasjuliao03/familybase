@@ -443,6 +443,7 @@ tr:hover td { background: rgba(108,92,231,0.03); }
   .calendar-cell { min-height: 64px; padding: 4px; }
   .calendar-day { font-size: 0.72rem; }
   .calendar-event { font-size: 0.62rem; padding: 1px 4px; }
+}
 
 /* ── Bottom Navigation Bar (mobile) ──────────────────────── */
 .mobile-bottom-bar {
