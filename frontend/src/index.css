@@ -334,6 +334,7 @@ tr:hover td { background: rgba(108,92,231,0.03); }
   margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   color: #fff; font-weight: 500;
 }
+.calendar-holiday { font-size: 0.62rem; color: var(--danger); font-weight: 600; text-overflow: ellipsis; overflow: hidden; white-space: nowrap; margin-top: -2px; }
 .calendar-views { display: flex; gap: 4px; }
 .calendar-view-btn { padding: 6px 14px; border: 1px solid var(--border); background: var(--bg-card); border-radius: 8px; cursor: pointer; font-size: 0.8rem; font-weight: 500; transition: var(--transition); }
 .calendar-view-btn.active { background: var(--primary); color: #fff; border-color: var(--primary); }

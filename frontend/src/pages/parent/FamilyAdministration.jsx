@@ -1084,7 +1084,7 @@ function GuardianUserModal({ initial, onClose, onSaved, t, toast, familyPrimary,
       toast.success(t('fam_admin_saved'));
       onSaved();
     } catch (err) {
-      toast.error(err.response?.data?.error || t('error_occurred'));
+      toast.error(err.response?.data?.error || err.message || t('error_occurred'));
     }
   };
 
@@ -1199,7 +1199,7 @@ function ChildModalForm({ initial, t, toast, onClose, onSaved }) {
       toast.success(t('fam_admin_saved'));
       onSaved();
     } catch (err) {
-      toast.error(err.response?.data?.error || t('error_occurred'));
+      toast.error(err.response?.data?.error || err.message || t('error_occurred'));
     }
   };
 
@@ -1366,7 +1366,7 @@ function RelativeModalForm({ initial, childrenList, t, toast, onClose, onSaved, 
       toast.success(t('fam_admin_saved'));
       onSaved();
     } catch (err) {
-      toast.error(err.response?.data?.error || t('error_occurred'));
+      toast.error(err.response?.data?.error || err.message || t('error_occurred'));
     }
   };
 

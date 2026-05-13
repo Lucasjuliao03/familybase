@@ -471,7 +471,10 @@ const api = {
     }
 
     if (path.startsWith('/grades')) {
-      const { data } = await supabase.from('grades').select('*, children:child_id(name, color, avatar_url, avatar_preset)').eq('family_id', familyId).order('date', { ascending: false });
+      let q = supabase.from('grades').select('*, children:child_id(name, color, avatar_url, avatar_preset)').eq('family_id', familyId);
+      const childIdParam = config.params?.child_id;
+      if (childIdParam) q = q.eq('child_id', childIdParam);
+      const { data } = await q.order('date', { ascending: false });
       return { data: (data || []).map(mapGradeFromDb) };
     }
     
@@ -554,8 +557,28 @@ const api = {
     }
 
     if (path === '/families/relatives') {
-      const { data } = await supabase.from('users').select('*').eq('family_id', familyId).eq('role', 'relative');
-      return { data: data || [] };
+      const { data: relUsers } = await supabase.from('users').select('*').eq('family_id', familyId).eq('role', 'relative');
+      const users = relUsers || [];
+      if (users.length) {
+        const uids = users.map((u) => u.id);
+        const { data: rcRows } = await supabase.from('relative_children').select('relative_user_id, child_id').in('relative_user_id', uids).eq('family_id', familyId);
+        const { data: fmRows } = await supabase.from('family_members').select('user_id, relationship').in('user_id', uids).eq('family_id', familyId);
+        const childMap = {};
+        (rcRows || []).forEach((r) => {
+          if (!childMap[r.relative_user_id]) childMap[r.relative_user_id] = [];
+          childMap[r.relative_user_id].push(r.child_id);
+        });
+        const relMap = {};
+        (fmRows || []).forEach((r) => { relMap[r.user_id] = r.relationship; });
+        return {
+          data: users.map((u) => ({
+            ...u,
+            linked_child_ids: childMap[u.id] || [],
+            relationship: relMap[u.id] || u.relationship || null,
+          })),
+        };
+      }
+      return { data: [] };
     }
 
     if (path === '/gamification/medals') {
@@ -1084,14 +1107,46 @@ const api = {
     }
 
     if (path === '/families/children') {
-      if (body?.email && String(body.email).trim()) {
-        throw new Error('Criar criança com email de login requer Edge Function (service role). Crie sem email ou convide pelo Supabase Dashboard.');
+      const email = body?.email && String(body.email).trim() ? String(body.email).trim().toLowerCase() : null;
+      let newUserId = null;
+
+      if (email) {
+        if (!supabaseSecondary) throw new Error('Configuração do Supabase secundário em falta.');
+        const password = String(body.password || '').trim() || '123456';
+        const { data: signUpData, error: signUpError } = await supabaseSecondary.auth.signUp({
+          email,
+          password,
+          options: { data: { name: body.name || email.split('@')[0] } },
+        });
+        if (signUpError) throw new Error(signUpError.message);
+        if (!signUpData?.user?.id) {
+          throw new Error(
+            'Não foi possível criar a conta de acesso. ' +
+            'No Supabase Dashboard → Authentication → Settings, desative "Enable email confirmations".',
+          );
+        }
+        newUserId = signUpData.user.id;
+
+        // Aguarda um tick para o trigger on_auth_user_created concluir
+        await new Promise((r) => setTimeout(r, 400));
+
+        const { error: rpcErr } = await supabase.rpc('add_member_to_family', {
+          p_target_user_id: newUserId,
+          p_family_id: familyId,
+          p_role: 'child',
+          p_name: body.name || email.split('@')[0],
+          p_must_change_password: !!body.must_change_password,
+        });
+        if (rpcErr) throw new Error(rpcErr.message);
       }
+
+      const childId = uuidv4();
       const { data, error } = await supabase
         .from('children')
         .insert([{
+          id: childId,
           name: body.name,
-          age: body.age ?? null,
+          age: body.age != null && body.age !== '' ? Number(body.age) : null,
           birthday: body.birthday || null,
           color: body.color || '#6C5CE7',
           avatar_preset: body.avatar_preset || 'explorer',
@@ -1099,7 +1154,7 @@ const api = {
           emoji: body.emoji || null,
           notes: body.notes || null,
           family_id: familyId,
-          id: uuidv4(),
+          user_id: newUserId || null,
         }])
         .select()
         .single();
@@ -1107,8 +1162,96 @@ const api = {
       return { data };
     }
 
-    if (path === '/families/members' || path === '/families/relatives') {
-      throw new Error('Convite de utilizadores com email requer Edge Function ou Supabase Dashboard (Auth).');
+    if (path === '/families/relatives') {
+      const email = String(body?.email || '').trim().toLowerCase();
+      if (!email) throw new Error('Email é obrigatório para criar um parente/auxiliar.');
+      if (!supabaseSecondary) throw new Error('Configuração do Supabase secundário em falta.');
+
+      const password = String(body.password || '').trim() || '123456';
+      const { data: signUpData, error: signUpError } = await supabaseSecondary.auth.signUp({
+        email,
+        password,
+        options: { data: { name: body.name || email.split('@')[0] } },
+      });
+      if (signUpError) throw new Error(signUpError.message);
+      if (!signUpData?.user?.id) {
+        throw new Error(
+          'Não foi possível criar a conta. ' +
+          'No Supabase Dashboard → Authentication → Settings, desative "Enable email confirmations".',
+        );
+      }
+      const newUserId = signUpData.user.id;
+
+      await new Promise((r) => setTimeout(r, 400));
+
+      const { error: rpcErr } = await supabase.rpc('add_member_to_family', {
+        p_target_user_id: newUserId,
+        p_family_id: familyId,
+        p_role: 'relative',
+        p_name: body.name || email.split('@')[0],
+        p_must_change_password: !!body.must_change_password,
+        p_relationship: body.relationship || null,
+        p_access_profile: body.access_profile || null,
+        p_phone: body.phone || null,
+        p_emoji: body.emoji || null,
+        p_display_color: body.display_color || null,
+      });
+      if (rpcErr) throw new Error(rpcErr.message);
+
+      if (Array.isArray(body.linked_child_ids) && body.linked_child_ids.length) {
+        const rows = body.linked_child_ids.map((cid) => ({
+          id: uuidv4(),
+          relative_user_id: newUserId,
+          child_id: cid,
+          family_id: familyId,
+        }));
+        await supabase.from('relative_children').insert(rows).catch(() => {});
+      }
+
+      await new Promise((r) => setTimeout(r, 200));
+      const { data: newUser } = await supabase.from('users').select('*').eq('id', newUserId).maybeSingle();
+      return { data: newUser || { id: newUserId, name: body.name, email, role: 'relative', family_id: familyId } };
+    }
+
+    if (path === '/families/members') {
+      const email = String(body?.email || '').trim().toLowerCase();
+      if (!email) throw new Error('Email é obrigatório para criar um responsável.');
+      if (!supabaseSecondary) throw new Error('Configuração do Supabase secundário em falta.');
+
+      const password = String(body.password || '').trim() || '123456';
+      const { data: signUpData, error: signUpError } = await supabaseSecondary.auth.signUp({
+        email,
+        password,
+        options: { data: { name: body.name || email.split('@')[0] } },
+      });
+      if (signUpError) throw new Error(signUpError.message);
+      if (!signUpData?.user?.id) {
+        throw new Error(
+          'Não foi possível criar a conta. ' +
+          'No Supabase Dashboard → Authentication → Settings, desative "Enable email confirmations".',
+        );
+      }
+      const newUserId = signUpData.user.id;
+
+      await new Promise((r) => setTimeout(r, 400));
+
+      const memberRole = ['parent', 'relative'].includes(body.role) ? body.role : 'parent';
+      const { error: rpcErr } = await supabase.rpc('add_member_to_family', {
+        p_target_user_id: newUserId,
+        p_family_id: familyId,
+        p_role: memberRole,
+        p_name: body.name || email.split('@')[0],
+        p_must_change_password: !!body.must_change_password,
+        p_access_profile: body.access_profile || null,
+        p_phone: body.phone || null,
+        p_emoji: body.emoji || null,
+        p_display_color: body.display_color || null,
+      });
+      if (rpcErr) throw new Error(rpcErr.message);
+
+      await new Promise((r) => setTimeout(r, 200));
+      const { data: newUser } = await supabase.from('users').select('*').eq('id', newUserId).maybeSingle();
+      return { data: newUser || { id: newUserId, name: body.name, email, role: memberRole, family_id: familyId } };
     }
 
     if (path === '/gamification/medals') {
