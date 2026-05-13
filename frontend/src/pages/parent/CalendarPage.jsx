@@ -181,7 +181,7 @@ export default function CalendarPage() {
         <div className="card">
           <div className="mb-16"><input type="text" className="form-input" placeholder="Pesquisar eventos..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} /></div>
           <div className="table-container">
-            <table><thead><tr><th>Data</th><th>Título</th><th>Filho</th><th>Tipo</th><th>Ações</th></tr></thead>
+            <table className="table-stack-md"><thead><tr><th>Data</th><th>Título</th><th>Filho</th><th>Tipo</th><th>Ações</th></tr></thead>
             <tbody>
               {events.filter(e => {
                 const q = searchTerm.toLowerCase().trim();
@@ -201,11 +201,11 @@ export default function CalendarPage() {
                 const data = p.length === 3 ? `${p[2]}/${p[1]}/${p[0]}` : ev.date || '';
                 return (
                 <tr key={ev.id}>
-                  <td>{data}{ev.time && ` às ${ev.time}`}</td>
-                  <td><div className="flex gap-8" style={{alignItems:'center'}}><div style={{width:12,height:12,borderRadius:3,background:calendarEventAccentColor(ev),flexShrink:0}}></div>{ev.title}</div></td>
-                  <td>{ev.child_name || '-'}</td>
-                  <td><span className="badge badge-info">{t(ev.type)}</span></td>
-                  <td>
+                  <td data-label="Data">{data}{ev.time && ` às ${ev.time}`}</td>
+                  <td data-label="Título"><div className="flex gap-8" style={{alignItems:'center'}}><div style={{width:12,height:12,borderRadius:3,background:calendarEventAccentColor(ev),flexShrink:0}}></div>{ev.title}</div></td>
+                  <td data-label="Filho">{ev.child_name || '-'}</td>
+                  <td data-label="Tipo"><span className="badge badge-info">{t(ev.type)}</span></td>
+                  <td data-label="Ações">
                     <button className="btn-icon btn-ghost" onClick={() => { setForm(ev); setShowModal(true); }}>✏️</button>
                     <button className="btn-icon btn-ghost" onClick={() => handleDelete(ev.id)}>🗑️</button>
                   </td>

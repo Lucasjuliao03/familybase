@@ -159,7 +159,7 @@ export default function TaskManager() {
       {/* OCCURRENCES VIEW (TODAY) */}
       {viewMode === 'occurrences' && (
         <div className="table-container">
-          <table>
+          <table className="table-stack-md">
             <thead><tr><th>Tarefa</th><th>Filho</th><th>Horário</th><th>Tipo</th><th>Pontos</th><th>Status</th><th>Ações</th></tr></thead>
             <tbody>
               {occurrences.length === 0 ? (
@@ -168,17 +168,17 @@ export default function TaskManager() {
                 </td></tr>
               ) : occurrences.map(occ => (
                 <tr key={occ.id}>
-                  <td>
+                  <td data-label="Tarefa">
                     <strong>{occ.title}</strong>
                     {occ.is_recurring && <span className="badge badge-info ml-8" style={{ marginLeft: 6, fontSize: '0.7rem' }}>🔄 {occ.frequency}</span>}
                     {occ.description && <div style={{ fontSize: '0.78rem', color: 'var(--text-light)' }}>{occ.description}</div>}
                   </td>
-                  <td><div className="flex gap-8" style={{ alignItems: 'center' }}><div style={{ width: 8, height: 8, borderRadius: '50%', background: occ.child_color || 'var(--border)' }}></div>{occ.assignee_name || occ.child_name}</div></td>
-                  <td>{occ.due_time || '—'}</td>
-                  <td><span className="badge badge-info">{t(occ.type)}</span></td>
-                  <td>{Number(occ.is_health_reminder) === 1 ? '—' : <span className="badge badge-primary">⭐{occ.points}</span>}</td>
-                  <td><span className={`badge badge-${statusColor[occ.status] || 'info'}`}>{statusLabel[occ.status] || occ.status}</span></td>
-                  <td>
+                  <td data-label="Filho"><div className="flex gap-8" style={{ alignItems: 'center' }}><div style={{ width: 8, height: 8, borderRadius: '50%', background: occ.child_color || 'var(--border)' }}></div>{occ.assignee_name || occ.child_name}</div></td>
+                  <td data-label="Horário">{occ.due_time || '—'}</td>
+                  <td data-label="Tipo"><span className="badge badge-info">{t(occ.type)}</span></td>
+                  <td data-label="Pontos">{Number(occ.is_health_reminder) === 1 ? '—' : <span className="badge badge-primary">⭐{occ.points}</span>}</td>
+                  <td data-label="Status"><span className={`badge badge-${statusColor[occ.status] || 'info'}`}>{statusLabel[occ.status] || occ.status}</span></td>
+                  <td data-label="Ações">
                     {Number(occ.is_health_reminder) === 1 && ['pending', 'in_progress', 'delayed'].includes(occ.status) ? (
                       <div className="flex gap-8 flex-wrap">
                         <button type="button" className="btn btn-sm btn-primary" onClick={() => handleHealthOcc(occ.id, 'taken')}>Tomado</button>
@@ -201,24 +201,24 @@ export default function TaskManager() {
       {/* TEMPLATES VIEW */}
       {viewMode === 'templates' && (
         <div className="table-container">
-          <table>
+          <table className="table-stack-md">
             <thead><tr><th>{t('task_title')}</th><th>{t('select_child')}</th><th>Recorrência</th><th>Horário</th><th>{t('points')}</th><th>Status</th><th>Ações</th></tr></thead>
             <tbody>
               {tasks.length === 0 ? (
                 <tr><td colSpan={7} style={{ textAlign: 'center', padding: 40, color: 'var(--text-light)' }}>{t('no_tasks')}</td></tr>
               ) : tasks.map(task => (
                 <tr key={task.id}>
-                  <td>
+                  <td data-label={t('task_title')}>
                     <strong>{task.title}</strong>
                     {task.is_recurring && <span className="badge badge-warning" style={{ marginLeft: 6, fontSize: '0.7rem' }}>🔄</span>}
                     {task.description && <div style={{ fontSize: '0.78rem', color: 'var(--text-light)' }}>{task.description}</div>}
                   </td>
-                  <td><div className="flex gap-8" style={{ alignItems: 'center' }}><div style={{ width: 8, height: 8, borderRadius: '50%', background: task.child_color }}></div>{task.child_name}</div></td>
-                  <td>{task.is_recurring ? <span className="badge badge-primary">{task.frequency}</span> : <span className="badge badge-ghost">única</span>}</td>
-                  <td>{task.due_time || '—'}</td>
-                  <td><span className="badge badge-primary">⭐{task.points}</span></td>
-                  <td><span className={`badge badge-${task.status === 'active' ? 'success' : task.status === 'completed' ? 'info' : task.status === 'approved' ? 'success' : 'danger'}`}>{task.status}</span></td>
-                  <td>
+                  <td data-label={t('select_child')}><div className="flex gap-8" style={{ alignItems: 'center' }}><div style={{ width: 8, height: 8, borderRadius: '50%', background: task.child_color }}></div>{task.child_name}</div></td>
+                  <td data-label="Recorrência">{task.is_recurring ? <span className="badge badge-primary">{task.frequency}</span> : <span className="badge badge-ghost">única</span>}</td>
+                  <td data-label="Horário">{task.due_time || '—'}</td>
+                  <td data-label={t('points')}><span className="badge badge-primary">⭐{task.points}</span></td>
+                  <td data-label="Status"><span className={`badge badge-${task.status === 'active' ? 'success' : task.status === 'completed' ? 'info' : task.status === 'approved' ? 'success' : 'danger'}`}>{task.status}</span></td>
+                  <td data-label="Ações">
                     <div className="flex gap-8">
                       {task.status === 'completed' && <button className="btn btn-sm btn-primary" onClick={() => handleApproveTask(task.id, true)}>✅</button>}
                       {task.status === 'completed' && <button className="btn btn-sm btn-danger" onClick={() => handleApproveTask(task.id, false)}>❌</button>}

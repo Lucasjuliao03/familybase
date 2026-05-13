@@ -118,7 +118,7 @@ export default function AllowanceManager() {
     <div className="animate-fade-in">
       <div className="page-header"><h1 className="page-title">💰 {t('allowance_management')}</h1></div>
 
-      <div className="tabs mb-24" style={{ flexWrap: 'wrap', gap: 8 }}>
+      <div className="tabs tabs-scroll mb-24" style={{ flexWrap: 'nowrap', gap: 8 }}>
         <button type="button" className={`tab ${tab === 'allowance' ? 'active' : ''}`} onClick={() => setTab('allowance')}>💰 Mesadas</button>
         <button type="button" className={`tab ${tab === 'settings' ? 'active' : ''}`} onClick={() => setTab('settings')}>⚙️ Configurações</button>
         <button type="button" className={`tab ${tab === 'piggy' ? 'active' : ''}`} onClick={() => setTab('piggy')}>🐷 {t('piggy_requests_tab')}</button>
@@ -183,16 +183,16 @@ export default function AllowanceManager() {
 
           <h3 className="mt-32 mb-16">Histórico de Ciclos</h3>
           <div className="table-container">
-            <table>
+            <table className="table-stack-md">
               <thead><tr><th>Filho</th><th>Mês/Ano</th><th>Status</th><th>Saldo Final</th><th>Ações</th></tr></thead>
               <tbody>
                 {cycles.filter((c) => c.status !== 'open').slice(0, 10).map((c) => (
                   <tr key={c.id}>
-                    <td>{c.child_name}</td>
-                    <td>{c.month}/{c.year}</td>
-                    <td><span className={`badge badge-${c.status === 'closed' ? 'warning' : 'success'}`}>{c.status === 'closed' ? 'Fechado' : 'Pago'}</span></td>
-                    <td style={{ fontWeight: 700 }}>R$ {c.final_amount.toFixed(2)}</td>
-                    <td>
+                    <td data-label="Filho">{c.child_name}</td>
+                    <td data-label="Mês/Ano">{c.month}/{c.year}</td>
+                    <td data-label="Status"><span className={`badge badge-${c.status === 'closed' ? 'warning' : 'success'}`}>{c.status === 'closed' ? 'Fechado' : 'Pago'}</span></td>
+                    <td data-label="Saldo final" style={{ fontWeight: 700 }}>R$ {c.final_amount.toFixed(2)}</td>
+                    <td data-label="Ações">
                       {c.status === 'closed' && <button type="button" className="btn-icon btn-ghost" onClick={() => handlePayCycle(c.id)}>💸 Pagar</button>}
                     </td>
                   </tr>

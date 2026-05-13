@@ -428,7 +428,7 @@ export default function FamilyAdministration() {
 
           <h3 className="fam-admin-subh">{t('fam_admin_guardians')}</h3>
           <div className="table-container mb-24">
-            <table>
+            <table className="table-stack-md">
               <thead>
                 <tr>
                   <th>{t('name')}</th>
@@ -441,19 +441,19 @@ export default function FamilyAdministration() {
               <tbody>
                 {parentsList.map((m) => (
                   <tr key={m.id}>
-                    <td>
+                    <td data-label={t('name')}>
                       <div className="flex gap-8" style={{ alignItems: 'center' }}>
                         <MemberAvatarCell member={m} onRefresh={() => { loadAll(); fetchMe(); }} />
                         {m.name}
                         {m.id === user?.id ? ` (${t('fam_admin_you')})` : ''}
                       </div>
                     </td>
-                    <td>{m.email}</td>
-                    <td>{t(m.access_profile === 'auxiliar' ? 'fam_prof_aux_short' : 'fam_prof_gestor_short')}</td>
-                    <td>
+                    <td data-label={t('email')}>{m.email}</td>
+                    <td data-label={t('fam_admin_access_profile')}>{t(m.access_profile === 'auxiliar' ? 'fam_prof_aux_short' : 'fam_prof_gestor_short')}</td>
+                    <td data-label={t('fam_admin_table_status')}>
                       <span className={`badge badge-${m.status === 'active' ? 'success' : 'warning'}`}>{m.status}</span>
                     </td>
-                    <td>
+                    <td data-label={t('fam_admin_actions')}>
                       <div className="flex gap-8">
                         <button type="button" className="btn btn-sm btn-ghost" onClick={() => setUserModal({ ...m, kind: 'parent' })}>
                           {t('edit')}
@@ -471,7 +471,7 @@ export default function FamilyAdministration() {
 
           <h3 className="fam-admin-subh">{t('fam_admin_relatives')}</h3>
           <div className="table-container mb-24">
-            <table>
+            <table className="table-stack-md">
               <thead>
                 <tr>
                   <th>{t('name')}</th>
@@ -484,16 +484,16 @@ export default function FamilyAdministration() {
               <tbody>
                 {relatives.map((r) => (
                   <tr key={r.id}>
-                    <td>
+                    <td data-label={t('name')}>
                       <div className="flex gap-8" style={{ alignItems: 'center' }}>
                         <MemberAvatarCell member={r} onRefresh={() => { loadAll(); fetchMe(); }} />
                         {r.name}
                       </div>
                     </td>
-                    <td>{r.email}</td>
-                    <td>{r.relationship}</td>
-                    <td>{t(r.access_profile === 'auxiliar' ? 'fam_prof_rel_aux_short' : 'fam_prof_parente_short')}</td>
-                    <td>
+                    <td data-label={t('email')}>{r.email}</td>
+                    <td data-label={t('fam_admin_relationship')}>{r.relationship}</td>
+                    <td data-label={t('fam_admin_access_profile')}>{t(r.access_profile === 'auxiliar' ? 'fam_prof_rel_aux_short' : 'fam_prof_parente_short')}</td>
+                    <td data-label={t('fam_admin_actions')}>
                       <div className="flex gap-8">
                         <button type="button" className="btn btn-sm btn-ghost" onClick={() => setRelModal({ ...r, linked_child_ids: (r.linked_child_ids || '').split(',').filter(Boolean) })}>
                           {t('edit')}
@@ -945,7 +945,7 @@ export default function FamilyAdministration() {
         .fam-admin-emoji { font-size: 1.4rem; }
         .fam-admin-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 24px; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
         .fam-admin-tabs .tab { border-radius: var(--radius) var(--radius) 0 0; }
-        .fam-modules-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 20px; }
+        .fam-modules-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr)); gap: 20px; }
         .fam-module-card { padding: 20px; border: 1px solid var(--border); border-radius: var(--radius); text-align: left; transition: box-shadow 0.2s; }
         .fam-module-card--on { border-color: color-mix(in srgb, var(--primary) 45%, var(--border)); box-shadow: 0 4px 20px rgba(108, 92, 231, 0.08); }
         .fam-module-card__head { display: flex; gap: 14px; align-items: flex-start; margin-bottom: 12px; }

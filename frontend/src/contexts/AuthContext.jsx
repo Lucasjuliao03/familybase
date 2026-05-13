@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
-import { supabase } from '../lib/supabase';
+import { supabase, mapAuthNetworkError } from '../lib/supabase';
 
 const AuthContext = createContext(null);
 
@@ -193,10 +193,14 @@ export function AuthProvider({ children }) {
   }, [loadUserProfile, clearState]);
 
   const login = async (email, password) => {
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) throw new Error(error.message);
-    await loadUserProfile(data.user.id, email);
-    return { user: data.user };
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) throw new Error(error.message);
+      await loadUserProfile(data.user.id, email);
+      return { user: data.user };
+    } catch (e) {
+      throw mapAuthNetworkError(e);
+    }
   };
 
   const register = async (formData) => {
@@ -207,38 +211,47 @@ export function AuthProvider({ children }) {
     const profileType = (formData.profileType || 'pai').toLowerCase();
 
     // 1. signUp em Auth
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: { name, family_name: familyName, profile_type: profileType },
-      },
-    });
-    if (error) {
-      let hint = '';
-      if (error.message?.includes('already registered') || error.code === 'user_already_exists') {
-        hint = ' Este email já tem conta — faça login ou use outro email.';
-      } else if (/invalid/i.test(error.message || '') && /email/i.test(error.message || '')) {
-        hint =
-          ' O Supabase pode rejeitar alguns domínios (DNS/MX). Experimente Gmail/Outlook ou confira ' +
-          'Authentication → Providers → Email no painel Supabase.';
+    let data;
+    try {
+      const { data: signUpData, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: { name, family_name: familyName, profile_type: profileType },
+        },
+      });
+      data = signUpData;
+      if (error) {
+        let hint = '';
+        if (error.message?.includes('already registered') || error.code === 'user_already_exists') {
+          hint = ' Este email já tem conta — faça login ou use outro email.';
+        } else if (/invalid/i.test(error.message || '') && /email/i.test(error.message || '')) {
+          hint =
+            ' O Supabase pode rejeitar alguns domínios (DNS/MX). Experimente Gmail/Outlook ou confira ' +
+            'Authentication → Providers → Email no painel Supabase.';
+        }
+        throw new Error(`${error.message}${hint}`);
       }
-      throw new Error(`${error.message}${hint}`);
+    } catch (e) {
+      throw mapAuthNetworkError(e);
     }
 
     // 2. Se Supabase exige confirmação de email, não há sessão -> tentar login
     let session = data.session;
     if (!session) {
-      const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({ email, password });
-      if (signInError) {
-        // Provavelmente "Email not confirmed". Devolver erro amigável.
-        throw new Error(
-          'Conta criada, mas o Supabase pede confirmação por email. ' +
-          'No Supabase Dashboard → Authentication → Settings, desative "Enable email confirmations" ' +
-          'para permitir login imediato.'
-        );
+      try {
+        const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+        if (signInError) {
+          throw new Error(
+            'Conta criada, mas o Supabase pede confirmação por email. ' +
+              'No Supabase Dashboard → Authentication → Settings, desative "Enable email confirmations" ' +
+              'para permitir login imediato.',
+          );
+        }
+        session = signInData.session;
+      } catch (e) {
+        throw mapAuthNetworkError(e);
       }
-      session = signInData.session;
     }
     if (!session?.user?.id) throw new Error('Não foi possível iniciar sessão após o registo.');
 

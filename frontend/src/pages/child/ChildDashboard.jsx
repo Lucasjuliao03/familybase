@@ -27,15 +27,15 @@ export default function ChildDashboard() {
 
   return (
     <div className="animate-fade-in">
-      <div className="page-header" style={{textAlign:'center'}}>
-        <h1 className="page-title" style={{fontSize:'2.2rem'}}>{t('child_dashboard_title')}, {child.name}! 🎉</h1>
-        <p className="page-subtitle" style={{fontSize:'1.1rem'}}>{t('keep_going')}</p>
+      <div className="page-header" style={{ textAlign: 'center' }}>
+        <h1 className="page-title" style={{ fontSize: 'clamp(1.25rem, 5vw, 2.2rem)', wordBreak: 'break-word', lineHeight: 1.2 }}>{t('child_dashboard_title')}, {child.name}! 🎉</h1>
+        <p className="page-subtitle" style={{ fontSize: 'clamp(0.95rem, 3.5vw, 1.1rem)' }}>{t('keep_going')}</p>
       </div>
 
       {/* Level & XP */}
       <div className="card mb-24" style={{textAlign:'center', background:`linear-gradient(135deg, ${child.color}25, ${child.color}05)`, border:'none', boxShadow:`0 10px 30px ${child.color}20`}}>
         <div className="level-badge" style={{fontSize:'1.3rem', padding:'12px 30px', marginBottom:16, background: child.color, color: '#fff', display: 'inline-block', borderRadius: 50, fontWeight: 800}}>⭐ {t('level')} {child.level}</div>
-        <div className="xp-bar" style={{height:28, maxWidth:500, margin:'0 auto', background: 'rgba(255,255,255,0.5)', border: '2px solid rgba(0,0,0,0.05)'}}>
+        <div className="xp-bar" style={{ height: 28, maxWidth: 'min(500px, 100%)', margin: '0 auto', width: '100%', background: 'rgba(255,255,255,0.5)', border: '2px solid rgba(0,0,0,0.05)' }}>
           <div className="xp-fill" style={{width:`${xpPercent}%`, background: `linear-gradient(90deg, ${child.color}, #fff)`}}></div>
           <div className="xp-text" style={{fontSize:'0.85rem', fontWeight: 700, color: '#2d3436'}}>{child.xp} / {child.xp_next_level} XP</div>
         </div>
@@ -61,7 +61,7 @@ export default function ChildDashboard() {
         </div>
       </div>
 
-      <div className="grid grid-2">
+      <div className="grid grid-2" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 320px), 1fr))' }}>
         {/* Today's Tasks */}
         <div className="card">
           <div className="flex-between mb-16">
@@ -71,15 +71,15 @@ export default function ChildDashboard() {
           {occurrences.length === 0 ? (
             <div className="empty-state" style={{padding: '20px 0'}}><div className="empty-icon" style={{fontSize:'2.5rem'}}>🌈</div><h3>Tudo pronto por hoje!</h3><p style={{fontSize:'0.9rem', color:'var(--text-light)'}}>Aproveite seu tempo livre!</p></div>
           ) : occurrences.map(occ => (
-            <div key={occ.id} className="flex-between" style={{padding:'12px 0',borderBottom:'1px solid var(--border)'}}>
-              <div style={{display:'flex', alignItems:'center', gap: 12}}>
-                <div style={{width:10, height:10, borderRadius:'50%', background: occ.status === 'delayed' ? 'var(--danger)' : 'var(--primary)'}}></div>
-                <div>
-                  <div style={{fontWeight:700,fontSize:'0.95rem'}}>{occ.title}</div>
-                  <div style={{fontSize:'0.75rem', color:'var(--text-light)'}}>{occ.due_time ? `🕒 até ${occ.due_time}` : 'Qualquer hora'} • {t(occ.type)}</div>
+            <div key={occ.id} className="flex-between" style={{ padding: '12px 0', borderBottom: '1px solid var(--border)', flexWrap: 'wrap', gap: 10, alignItems: 'flex-start' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0, flex: '1 1 200px' }}>
+                <div style={{ width: 10, height: 10, borderRadius: '50%', background: occ.status === 'delayed' ? 'var(--danger)' : 'var(--primary)', flexShrink: 0 }}></div>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontWeight: 700, fontSize: '0.95rem', wordBreak: 'break-word' }}>{occ.title}</div>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-light)' }}>{occ.due_time ? `🕒 até ${occ.due_time}` : 'Qualquer hora'} • {t(occ.type)}</div>
                 </div>
               </div>
-              <div style={{textAlign:'right'}}>
+              <div style={{ textAlign: 'right', flexShrink: 0 }}>
                 <div style={{fontWeight:800,color:'var(--primary)'}}>⭐ {occ.points}</div>
                 {occ.coins > 0 && <div style={{fontSize:'0.8rem', color:'#E67E22', fontWeight:600}}>🪙 {occ.coins}</div>}
               </div>
@@ -90,7 +90,7 @@ export default function ChildDashboard() {
         {/* Recent Medals */}
         <div className="card">
           <h3 className="card-title mb-16">🏅 {t('medals')} Recentes</h3>
-          <div className="grid grid-3" style={{gap:12}}>
+          <div className="grid grid-3" style={{ gap: 12, gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 96px), 1fr))' }}>
             {(profile?.medals || []).slice(0, 6).map(m => (
               <div key={m.id} className="medal-card earned" style={{padding: '12px 8px'}}>
                 <div className="medal-icon" style={{fontSize:'2rem'}}>{m.icon}</div>

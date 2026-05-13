@@ -114,15 +114,15 @@ export default function ChildLayout() {
 
       <div className="app-main">
         <header className="app-header">
-          <button className="mobile-menu-btn" onClick={() => setMobileOpen(true)}>☰</button>
+          <button className="mobile-menu-btn" type="button" onClick={() => setMobileOpen(true)}>☰</button>
           
           {family?.name && (
-            <div style={{ fontWeight: 600, color: 'var(--primary)', marginLeft: 16 }} className="header-family-name">
+            <div className="header-family-name" style={{ fontWeight: 600, color: 'var(--primary)' }}>
               {family.name}
             </div>
           )}
 
-          <div className="flex gap-16" style={{alignItems:'center',marginLeft:'auto'}}>
+          <div className="flex gap-16" style={{ alignItems: 'center', marginLeft: 'auto', flexWrap: 'wrap', rowGap: 8 }}>
             <div className="lang-switch">
               <button className={`lang-btn ${lang==='pt'?'active':''}`} onClick={() => switchLanguage('pt')}>🇧🇷</button>
               <button className={`lang-btn ${lang==='en'?'active':''}`} onClick={() => switchLanguage('en')}>🇺🇸</button>
@@ -132,7 +132,7 @@ export default function ChildLayout() {
               <span style={{fontSize:'1.3rem',cursor:'pointer'}}>🔔</span>
               {notifCount > 0 && <span className="notif-count">{notifCount}</span>}
               {notifOpen && (
-                <div onClick={(e) => e.stopPropagation()} style={{position:'absolute',right:0,top:'100%',marginTop:8,width:340,background:'var(--bg-card)',borderRadius:'var(--radius)',boxShadow:'var(--shadow-lg)',border:'1px solid var(--border)',zIndex:200,maxHeight:400,overflow:'auto'}}>
+                <div onClick={(e) => e.stopPropagation()} style={{position:'absolute',right:0,top:'100%',marginTop:8,width:'min(340px, calc(100vw - 24px))',background:'var(--bg-card)',borderRadius:'var(--radius)',boxShadow:'var(--shadow-lg)',border:'1px solid var(--border)',zIndex:200,maxHeight:400,overflow:'auto'}}>
                   <div className="flex-between" style={{padding:'12px 16px',borderBottom:'1px solid var(--border)'}}>
                     <strong style={{fontSize:'0.9rem',color:'var(--text)'}}>{t('notifications')}</strong>
                     <button className="btn btn-sm btn-ghost" onClick={markAllRead}>{t('mark_all_read')}</button>

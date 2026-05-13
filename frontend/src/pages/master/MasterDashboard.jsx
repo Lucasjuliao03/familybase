@@ -64,7 +64,7 @@ export default function MasterDashboard() {
   const planColors = { free: 'var(--text-light)', family: 'var(--primary)', premium: '#FDCB6E' };
 
   return (
-    <div className="animate-fade-in" style={{ padding: 24 }}>
+    <div className="animate-fade-in" style={{ padding: 'clamp(12px, 3vw, 24px)', width: '100%', minWidth: 0, boxSizing: 'border-box' }}>
       <div className="flex-between mb-24">
         <div>
           <h1 className="page-title" style={{ fontSize: '1.8rem' }}>🌐 Painel Master</h1>
@@ -91,33 +91,33 @@ export default function MasterDashboard() {
         ))}
       </div>
 
-      <div className="tabs mb-24" style={{ flexWrap: 'wrap', gap: 8 }}>
-        <button className={`tab ${tab === 'overview' ? 'active' : ''}`} onClick={() => setTab('overview')}>🏠 Famílias</button>
-        <button className={`tab ${tab === 'users' ? 'active' : ''}`} onClick={() => setTab('users')}>👤 Usuários</button>
-        <button className={`tab ${tab === 'subscriptions' ? 'active' : ''}`} onClick={() => setTab('subscriptions')}>💳 Assinaturas</button>
-        <button className={`tab ${tab === 'logs' ? 'active' : ''}`} onClick={() => setTab('logs')}>📋 Audit Logs</button>
+      <div className="tabs tabs-scroll mb-24" style={{ flexWrap: 'nowrap', gap: 8 }}>
+        <button type="button" className={`tab ${tab === 'overview' ? 'active' : ''}`} onClick={() => setTab('overview')}>🏠 Famílias</button>
+        <button type="button" className={`tab ${tab === 'users' ? 'active' : ''}`} onClick={() => setTab('users')}>👤 Usuários</button>
+        <button type="button" className={`tab ${tab === 'subscriptions' ? 'active' : ''}`} onClick={() => setTab('subscriptions')}>💳 Assinaturas</button>
+        <button type="button" className={`tab ${tab === 'logs' ? 'active' : ''}`} onClick={() => setTab('logs')}>📋 Audit Logs</button>
       </div>
 
       {loading && <div style={{ textAlign: 'center', padding: 40 }}>⏳ Carregando...</div>}
 
       {!loading && tab === 'overview' && (
         <div className="table-container">
-          <table>
+          <table className="table-stack-md">
             <thead><tr><th>Família</th><th>Plano</th><th>Pais</th><th>Filhos</th><th>Status</th><th>Criado em</th><th>Ações</th></tr></thead>
             <tbody>
               {families.map(f => (
                 <tr key={f.id}>
-                  <td><strong>{f.name}</strong></td>
-                  <td><span className="badge" style={{ color: planColors[f.plan] || '' }}>💳 {f.plan || 'free'}</span></td>
-                  <td>{f.parent_count}</td>
-                  <td>{f.children_count}</td>
-                  <td>
+                  <td data-label="Família"><strong>{f.name}</strong></td>
+                  <td data-label="Plano"><span className="badge" style={{ color: planColors[f.plan] || '' }}>💳 {f.plan || 'free'}</span></td>
+                  <td data-label="Pais">{f.parent_count}</td>
+                  <td data-label="Filhos">{f.children_count}</td>
+                  <td data-label="Status">
                     <span className={`badge badge-${f.status === 'active' ? 'success' : f.status === 'blocked' ? 'danger' : 'warning'}`}>
                       {f.status || 'active'}
                     </span>
                   </td>
-                  <td style={{ fontSize: '0.8rem', color: 'var(--text-light)' }}>{new Date(f.created_at).toLocaleDateString('pt-BR')}</td>
-                  <td>
+                  <td data-label="Criado em" style={{ fontSize: '0.8rem', color: 'var(--text-light)' }}>{new Date(f.created_at).toLocaleDateString('pt-BR')}</td>
+                  <td data-label="Ações">
                     <div className="flex gap-8">
                       {f.status !== 'blocked'
                         ? <button className="btn btn-sm btn-danger" onClick={() => handleFamilyStatus(f.id, 'blocked')}>🚫 Bloquear</button>
@@ -134,18 +134,18 @@ export default function MasterDashboard() {
 
       {!loading && tab === 'users' && (
         <div className="table-container">
-          <table>
+          <table className="table-stack-md">
             <thead><tr><th>Nome</th><th>Email</th><th>Perfil</th><th>Família</th><th>Status</th><th>Último Acesso</th><th>Ações</th></tr></thead>
             <tbody>
               {users.map(u => (
                 <tr key={u.id}>
-                  <td><strong>{u.name}</strong></td>
-                  <td style={{ fontSize: '0.85rem' }}>{u.email}</td>
-                  <td><span className={`badge badge-${u.role === 'parent' ? 'primary' : u.role === 'relative' ? 'info' : 'success'}`}>{u.role}</span></td>
-                  <td style={{ fontSize: '0.85rem', color: 'var(--text-light)' }}>{u.family_name}</td>
-                  <td><span className={`badge badge-${u.status === 'active' ? 'success' : 'danger'}`}>{u.status || 'active'}</span></td>
-                  <td style={{ fontSize: '0.8rem', color: 'var(--text-light)' }}>{u.last_login_at ? new Date(u.last_login_at).toLocaleString('pt-BR') : '—'}</td>
-                  <td>
+                  <td data-label="Nome"><strong>{u.name}</strong></td>
+                  <td data-label="Email" style={{ fontSize: '0.85rem' }}>{u.email}</td>
+                  <td data-label="Perfil"><span className={`badge badge-${u.role === 'parent' ? 'primary' : u.role === 'relative' ? 'info' : 'success'}`}>{u.role}</span></td>
+                  <td data-label="Família" style={{ fontSize: '0.85rem', color: 'var(--text-light)' }}>{u.family_name}</td>
+                  <td data-label="Status"><span className={`badge badge-${u.status === 'active' ? 'success' : 'danger'}`}>{u.status || 'active'}</span></td>
+                  <td data-label="Último acesso" style={{ fontSize: '0.8rem', color: 'var(--text-light)' }}>{u.last_login_at ? new Date(u.last_login_at).toLocaleString('pt-BR') : '—'}</td>
+                  <td data-label="Ações">
                     {u.status !== 'blocked'
                       ? <button className="btn btn-sm btn-danger" onClick={() => handleUserStatus(u.id, 'blocked')}>🚫</button>
                       : <button className="btn btn-sm btn-ghost" onClick={() => handleUserStatus(u.id, 'active')}>✅</button>
@@ -161,18 +161,18 @@ export default function MasterDashboard() {
       {!loading && tab === 'subscriptions' && (
         <div>
           <div className="table-container">
-            <table>
+            <table className="table-stack-md">
               <thead><tr><th>Família</th><th>Plano</th><th>Status</th><th>Expira em</th><th>Max Filhos</th><th>Max Parentes</th><th>Ações</th></tr></thead>
               <tbody>
                 {subscriptions.map(s => (
                   <tr key={s.id}>
-                    <td><strong>{s.family_name}</strong></td>
-                    <td><span className="badge badge-primary">{s.plan}</span></td>
-                    <td><span className={`badge badge-${s.status === 'active' ? 'success' : 'danger'}`}>{s.status}</span></td>
-                    <td>{s.expires_at ? new Date(s.expires_at).toLocaleDateString('pt-BR') : '∞'}</td>
-                    <td>{s.max_children}</td>
-                    <td>{s.max_relatives}</td>
-                    <td>
+                    <td data-label="Família"><strong>{s.family_name}</strong></td>
+                    <td data-label="Plano"><span className="badge badge-primary">{s.plan}</span></td>
+                    <td data-label="Status"><span className={`badge badge-${s.status === 'active' ? 'success' : 'danger'}`}>{s.status}</span></td>
+                    <td data-label="Expira em">{s.expires_at ? new Date(s.expires_at).toLocaleDateString('pt-BR') : '∞'}</td>
+                    <td data-label="Máx. filhos">{s.max_children}</td>
+                    <td data-label="Máx. parentes">{s.max_relatives}</td>
+                    <td data-label="Ações">
                       <button className="btn btn-sm btn-ghost" onClick={() => setSubModal({ ...s })}>✏️ Editar</button>
                     </td>
                   </tr>
@@ -185,17 +185,17 @@ export default function MasterDashboard() {
 
       {!loading && tab === 'logs' && (
         <div className="table-container">
-          <table>
+          <table className="table-stack-md">
             <thead><tr><th>Data</th><th>Usuário</th><th>Perfil</th><th>Módulo</th><th>Ação</th><th>Descrição</th></tr></thead>
             <tbody>
               {logs.map(l => (
                 <tr key={l.id}>
-                  <td style={{ fontSize: '0.8rem', color: 'var(--text-light)' }}>{new Date(l.created_at).toLocaleString('pt-BR')}</td>
-                  <td>{l.user_name || '—'}</td>
-                  <td><span className="badge badge-info">{l.role}</span></td>
-                  <td>{l.module}</td>
-                  <td><code style={{ fontSize: '0.8rem' }}>{l.action}</code></td>
-                  <td style={{ fontSize: '0.85rem' }}>{l.description}</td>
+                  <td data-label="Data" style={{ fontSize: '0.8rem', color: 'var(--text-light)' }}>{new Date(l.created_at).toLocaleString('pt-BR')}</td>
+                  <td data-label="Usuário">{l.user_name || '—'}</td>
+                  <td data-label="Perfil"><span className="badge badge-info">{l.role}</span></td>
+                  <td data-label="Módulo">{l.module}</td>
+                  <td data-label="Ação"><code style={{ fontSize: '0.8rem', wordBreak: 'break-all' }}>{l.action}</code></td>
+                  <td data-label="Descrição" style={{ fontSize: '0.85rem' }}>{l.description}</td>
                 </tr>
               ))}
             </tbody>

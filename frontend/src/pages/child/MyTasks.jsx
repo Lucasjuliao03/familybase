@@ -63,9 +63,9 @@ export default function MyTasks() {
 
   return (
     <div className="animate-fade-in">
-      <div className="flex-between mb-24">
-        <h1 className="page-title">✅ {t('my_tasks')}</h1>
-        <button className="btn btn-primary" onClick={() => setShowModal(true)}>+ Sugerir Tarefa</button>
+      <div className="flex-between mb-24" style={{ flexWrap: 'wrap', gap: 12, alignItems: 'center' }}>
+        <h1 className="page-title" style={{ minWidth: 0, flex: '1 1 auto' }}>✅ {t('my_tasks')}</h1>
+        <button type="button" className="btn btn-primary" style={{ flexShrink: 0 }} onClick={() => setShowModal(true)}>+ Sugerir Tarefa</button>
       </div>
 
       <div className="flex gap-8 mb-24" style={{ flexWrap: 'wrap' }}>
@@ -76,7 +76,7 @@ export default function MyTasks() {
         ))}
       </div>
 
-      <div className="grid grid-2">
+      <div className="grid grid-2" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 280px), 1fr))' }}>
         {occurrences.length === 0 ? (
           <div className="card empty-state" style={{ gridColumn: '1/-1' }}>
             <div className="empty-icon">🎉</div>
@@ -86,11 +86,13 @@ export default function MyTasks() {
         ) : occurrences.map(occ => (
           <div key={occ.id} className="card task-card" style={{ 
             borderLeft: `5px solid ${occ.status === 'approved' ? 'var(--success)' : occ.status === 'rejected' || occ.status === 'delayed' ? 'var(--danger)' : 'var(--primary)'}`,
-            position: 'relative'
+            position: 'relative',
+            minWidth: 0,
+            maxWidth: '100%',
           }}>
-            <div className="flex-between mb-8">
-              <h3 style={{ fontWeight: 700, fontSize: '1.1rem' }}>{statusEmoji[occ.status]} {occ.title}</h3>
-              <div style={{ textAlign: 'right' }}>
+            <div className="flex-between mb-8" style={{ flexWrap: 'wrap', gap: 10, alignItems: 'flex-start' }}>
+              <h3 style={{ fontWeight: 700, fontSize: '1.05rem', minWidth: 0, flex: '1 1 200px', wordBreak: 'break-word' }}>{statusEmoji[occ.status]} {occ.title}</h3>
+              <div style={{ textAlign: 'right', flexShrink: 0 }}>
                 {Number(occ.is_health_reminder) !== 1 && (
                   <>
                     <span style={{ fontWeight: 800, color: 'var(--primary)', fontSize: '1.2rem', display: 'block' }}>⭐ {occ.points}</span>

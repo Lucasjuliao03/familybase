@@ -77,12 +77,35 @@ if (!isVercel) {
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+const { supabaseProxyRouter } = require('./middleware/supabaseProxy');
+
+const extraCors = (process.env.CORS_EXTRA_ORIGINS || '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+
 // CORS — aceita o frontend na Vercel e localhost
 const allowedOrigins = [
   'http://localhost:5173',
+  'http://127.0.0.1:5173',
   'http://localhost:3000',
   process.env.FRONTEND_URL,
+  ...extraCors,
 ].filter(Boolean);
+
+const supabaseCorsHeaders = [
+  'Content-Type',
+  'Authorization',
+  'apikey',
+  'x-client-info',
+  'x-supabase-api-version',
+  'prefer',
+  'accept-profile',
+  'content-profile',
+  'accept',
+  'range',
+  'if-none-match',
+];
 
 app.use(cors({
   origin: (origin, callback) => {
@@ -94,9 +117,15 @@ app.use(cors({
     }
   },
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD'],
+  allowedHeaders: supabaseCorsHeaders,
 }));
+
+// Proxy Supabase antes de express.json() para não consumir o body (auth, storage, REST)
+app.use('/api/supabase', supabaseProxyRouter(process.env.SUPABASE_URL));
+if (process.env.SUPABASE_URL) {
+  console.log('↪ Proxy Supabase ativo em /api/supabase →', process.env.SUPABASE_URL.replace(/\/$/, ''));
+}
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));

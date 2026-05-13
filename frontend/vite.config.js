@@ -39,6 +39,11 @@ export default defineConfig({
             options: { cacheName: 'supabase-api', networkTimeoutSeconds: 10 },
           },
           {
+            urlPattern: /^https?:\/\/[^/]+\/api\/supabase\/.*/i,
+            handler: 'NetworkFirst',
+            options: { cacheName: 'supabase-api-proxy', networkTimeoutSeconds: 10 },
+          },
+          {
             urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
             handler: 'CacheFirst',
             options: { cacheName: 'google-fonts', expiration: { maxAgeSeconds: 60 * 60 * 24 * 365 } },
@@ -52,6 +57,12 @@ export default defineConfig({
 
   server: {
     port: 5173,
+    proxy: {
+      '/api/supabase': {
+        target: 'http://127.0.0.1:3001',
+        changeOrigin: true,
+      },
+    },
     hmr: {
       overlay: true, // exibe erros de compilação como overlay no browser
     },

@@ -58,9 +58,9 @@ export default function MyGrades() {
 
   return (
     <div className="animate-fade-in">
-      <div className="flex-between mb-24">
-        <h1 className="page-title">📚 {t('my_grades')}</h1>
-        <button className="btn btn-primary" onClick={() => setShowModal(true)}>+ Cadastrar Nota</button>
+      <div className="flex-between mb-24" style={{ flexWrap: 'wrap', gap: 12 }}>
+        <h1 className="page-title" style={{ minWidth: 0 }}>📚 {t('my_grades')}</h1>
+        <button type="button" className="btn btn-primary" onClick={() => setShowModal(true)}>+ Cadastrar Nota</button>
       </div>
 
       {Object.keys(bySubject).length === 0 ? (
@@ -74,25 +74,36 @@ export default function MyGrades() {
         const avg = scored.length > 0 ? scored.reduce((a, g) => a + g.score, 0) / scored.length : null;
         return (
           <div key={subj} className="card mb-16">
-            <div className="flex-between mb-16">
-              <h3 style={{ fontWeight: 700, fontSize: '1.1rem' }}>📖 {subj}</h3>
+            <div className="flex-between mb-16" style={{ flexWrap: 'wrap', gap: 10, alignItems: 'flex-start' }}>
+              <h3 style={{ fontWeight: 700, fontSize: '1.05rem', minWidth: 0, flex: '1 1 auto', wordBreak: 'break-word' }}>📖 {subj}</h3>
               {avg != null && (
                 <span style={{ fontWeight: 800, fontSize: '1.2rem', color: scoreColor(avg, 10) }}>
                   Média: {avg.toFixed(1)}
                 </span>
               )}
             </div>
-            <div className="flex gap-12" style={{ flexWrap: 'wrap' }}>
+            <div
+              className="grade-pill-grid"
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 140px), 1fr))',
+                gap: 12,
+              }}
+            >
               {gs.map(g => (
-                <div key={g.id} style={{ padding: '12px 16px', background: 'var(--bg)', borderRadius: 'var(--radius-sm)', textAlign: 'center', minWidth: 90, border: '1px solid var(--border)' }}>
+                <div key={g.id} style={{ padding: '12px 14px', background: 'var(--bg)', borderRadius: 'var(--radius-sm)', textAlign: 'center', border: '1px solid var(--border)', minWidth: 0 }}>
                   <div style={{ fontSize: '0.72rem', color: 'var(--text-light)', marginBottom: 4 }}>{typeLabels[g.type] || g.type}</div>
                   {g.score != null ? (
-                    <div style={{ fontWeight: 800, fontSize: '1.2rem', color: scoreColor(g.score, g.max_score) }}>{g.score}/{g.max_score}</div>
+                    <div style={{ fontWeight: 800, fontSize: '1.15rem', color: scoreColor(g.score, g.max_score) }}>{g.score}/{g.max_score}</div>
                   ) : (
-                    <div style={{ fontWeight: 800, fontSize: '1.2rem', color: 'var(--primary)' }}>{g.concept || '-'}</div>
+                    <div style={{ fontWeight: 800, fontSize: '1.15rem', color: 'var(--primary)' }}>{g.concept || '-'}</div>
                   )}
                   {g.date && <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: 4 }}>{new Date(g.date + 'T12:00:00').toLocaleDateString('pt-BR')}</div>}
-                  {g.observation && <div style={{ fontSize: '0.7rem', color: 'var(--text-light)', marginTop: 4, maxWidth: 80, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={g.observation}>{g.observation}</div>}
+                  {g.observation && (
+                    <div style={{ fontSize: '0.72rem', color: 'var(--text-light)', marginTop: 6, textAlign: 'left', wordBreak: 'break-word', lineHeight: 1.35 }} title={g.observation}>
+                      {g.observation}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

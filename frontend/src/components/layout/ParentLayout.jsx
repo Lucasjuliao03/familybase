@@ -190,7 +190,7 @@ export default function ParentLayout() {
                 {notifOpen && (
                   <div onClick={e => e.stopPropagation()} style={{
                     position: 'absolute', right: 0, top: 'calc(100% + 8px)',
-                    width: 340, background: 'var(--bg-card)', borderRadius: 'var(--radius)',
+                    width: 'min(340px, calc(100vw - 24px))', background: 'var(--bg-card)', borderRadius: 'var(--radius)',
                     boxShadow: 'var(--shadow-lg)', border: '1px solid var(--border)',
                     zIndex: 200, maxHeight: 400, overflow: 'auto',
                   }}>

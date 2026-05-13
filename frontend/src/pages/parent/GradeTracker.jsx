@@ -111,15 +111,15 @@ export default function GradeTracker() {
       </div>
 
       <div className="table-container">
-        <table>
+        <table className="table-stack-md">
           <thead><tr><th>{t('subject')}</th><th>{t('select_child')}</th><th>{t('grade_type')}</th><th>{t('score')}</th><th>{t('date')}</th><th>{t('observation')}</th></tr></thead>
           <tbody>
             {grades.length === 0 ? (
               <tr><td colSpan={6} style={{textAlign:'center',padding:40,color:'var(--text-light)'}}>{t('no_grades')}</td></tr>
             ) : grades.map(g => (
               <tr key={g.id}>
-                <td><strong>{g.subject}</strong></td>
-                <td>
+                <td data-label={t('subject')}><strong>{g.subject}</strong></td>
+                <td data-label={t('select_child')}>
                   <div className="flex gap-8" style={{alignItems:'center'}}>
                     <div style={{width:24,height:24,borderRadius:'50%',background:g.child_color,display:'flex',alignItems:'center',justifyContent:'center',overflow:'hidden',fontSize:'0.75rem'}}>
                       {g.avatar_url ? <img src={publicAssetUrl(g.avatar_url)} alt="" style={{width:'100%',height:'100%',objectFit:'cover'}} /> : (g.avatar_preset ? PRESET_AVATARS.find(a=>a.id===g.avatar_preset)?.emoji : g.child_name[0])}
@@ -127,10 +127,10 @@ export default function GradeTracker() {
                     {g.child_name}
                   </div>
                 </td>
-                <td><span className="badge badge-info">{t(g.type)}</span></td>
-                <td><span style={{fontWeight:700,color: g.score >= (g.max_score*0.7) ? 'var(--success)' : g.score >= (g.max_score*0.5) ? '#E67E22' : 'var(--danger)'}}>{g.score}/{g.max_score}</span></td>
-                <td>{g.date ? new Date(g.date+'T12:00:00').toLocaleDateString('pt-BR') : '-'}</td>
-                <td style={{fontSize:'0.8rem',color:'var(--text-light)',maxWidth:200,overflow:'hidden',textOverflow:'ellipsis'}}>{g.observation || '-'}</td>
+                <td data-label={t('grade_type')}><span className="badge badge-info">{t(g.type)}</span></td>
+                <td data-label={t('score')}><span style={{fontWeight:700,color: g.score >= (g.max_score*0.7) ? 'var(--success)' : g.score >= (g.max_score*0.5) ? '#E67E22' : 'var(--danger)'}}>{g.score}/{g.max_score}</span></td>
+                <td data-label={t('date')}>{g.date ? new Date(g.date+'T12:00:00').toLocaleDateString('pt-BR') : '-'}</td>
+                <td data-label={t('observation')} style={{fontSize:'0.8rem',color:'var(--text-light)',maxWidth:'none',overflow:'visible',textOverflow:'unset'}}>{g.observation || '-'}</td>
               </tr>
             ))}
           </tbody>
