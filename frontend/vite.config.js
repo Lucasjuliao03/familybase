@@ -64,37 +64,28 @@ export default defineConfig({
     // Divide o bundle em chunks por rota/módulo para carregamento mais rápido
     rollupOptions: {
       output: {
-        manualChunks: {
-          // Vendors estáveis em chunks separados (cached pelo browser)
-          'vendor-react':    ['react', 'react-dom', 'react-router-dom'],
-          'vendor-supabase': ['@supabase/supabase-js'],
-          // Páginas do pai agrupadas
-          'pages-parent': [
-            './src/pages/parent/ParentDashboard.jsx',
-            './src/pages/parent/TaskManager.jsx',
-            './src/pages/parent/GradeTracker.jsx',
-            './src/pages/parent/AllowanceManager.jsx',
-            './src/pages/parent/CalendarPage.jsx',
-            './src/pages/parent/ReportsPage.jsx',
-            './src/pages/parent/ShoppingList.jsx',
-            './src/pages/parent/FamilyShopManager.jsx',
-            './src/pages/parent/FamilyAdministration.jsx',
-          ],
-          // Páginas do filho agrupadas
-          'pages-child': [
-            './src/pages/child/ChildDashboard.jsx',
-            './src/pages/child/MyTasks.jsx',
-            './src/pages/child/MyGrades.jsx',
-            './src/pages/child/MyAllowance.jsx',
-            './src/pages/child/MyFamilyShop.jsx',
-            './src/pages/child/MyCalendar.jsx',
-          ],
-          // Módulos partilhados
-          'pages-shared': [
-            './src/pages/HealthCenter.jsx',
-            './src/pages/MuralBoard.jsx',
-            './src/pages/master/MasterDashboard.jsx',
-          ],
+        // manualChunks DEVE ser uma função (Rollup ≥ 4 / Vite ≥ 5 rejeitam objeto)
+        manualChunks(id) {
+          // Vendors React — cache longo, raramente muda
+          if (id.includes('node_modules/react') ||
+              id.includes('node_modules/react-dom') ||
+              id.includes('node_modules/react-router')) {
+            return 'vendor-react';
+          }
+          // Supabase — isolado para não misturar com o código da app
+          if (id.includes('node_modules/@supabase')) {
+            return 'vendor-supabase';
+          }
+          // Outros node_modules juntos
+          if (id.includes('node_modules')) {
+            return 'vendor-misc';
+          }
+          // Páginas do pai
+          if (id.includes('/pages/parent/')) return 'pages-parent';
+          // Páginas do filho
+          if (id.includes('/pages/child/'))  return 'pages-child';
+          // Outros módulos partilhados (Health, Mural, Master…)
+          if (id.includes('/pages/'))        return 'pages-shared';
         },
       },
     },

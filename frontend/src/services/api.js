@@ -1574,20 +1574,33 @@ const api = {
       if (!familyId) throw new Error('Not authenticated');
       const childMatch = path.match(/^\/auth\/avatar\/child\/([^/]+)$/);
       const childId = childMatch ? childMatch[1] : null;
-      const bucket = 'avatars';
+
       if (body instanceof FormData) {
         const preset = body.get('avatar_preset');
         const file = body.get('avatar');
         if (file && typeof file === 'object' && file.size > 0) {
           const ext = (file.name && String(file.name).split('.').pop()) || 'jpg';
-          const filePath = childId ? `${familyId}/child-${childId}-${Date.now()}.${ext}` : `${familyId}/user-${userId}-${Date.now()}.${ext}`;
-          const { error: upErr } = await supabase.storage.from(bucket).upload(filePath, file, { upsert: true, contentType: file.type || undefined });
-          if (upErr) throw new Error(upErr.message);
-          const rel = `${bucket}/${filePath}`;
+          const filePath = childId
+            ? `${familyId}/child-${childId}-${Date.now()}.${ext}`
+            : `${familyId}/user-${userId}-${Date.now()}.${ext}`;
+
+          // Tenta 'avatars' primeiro, cai em 'uploads' se não existir
+          let rel = null;
+          for (const bucket of ['avatars', 'uploads']) {
+            const { error: upErr } = await supabase.storage
+              .from(bucket)
+              .upload(filePath, file, { upsert: true, contentType: file.type || undefined });
+            if (!upErr) { rel = `${bucket}/${filePath}`; break; }
+            if (!upErr?.message?.includes('not found') && !upErr?.message?.includes('does not exist')) {
+              throw new Error(upErr.message);
+            }
+          }
+          if (!rel) throw new Error('Bucket de avatares não encontrado. Crie "avatars" ou "uploads" no Supabase Storage.');
+
           if (childId) {
             await supabase.from('children').update({ avatar_url: rel, avatar_preset: null }).eq('id', childId).eq('family_id', familyId);
           } else {
-            await supabase.from('users').update({ avatar_url: rel }).eq('id', userId);
+            await supabase.from('users').update({ avatar_url: rel, avatar_preset: null }).eq('id', userId);
           }
           return { data: { avatar_url: rel, avatar_preset: preset || null } };
         }
@@ -1595,15 +1608,15 @@ const api = {
           if (childId) {
             await supabase.from('children').update({ avatar_preset: preset, avatar_url: null }).eq('id', childId).eq('family_id', familyId);
           } else {
-            await supabase.from('users').update({ avatar_preset: preset }).eq('id', userId);
+            await supabase.from('users').update({ avatar_preset: preset, avatar_url: null }).eq('id', userId);
           }
           return { data: { avatar_preset: preset } };
         }
       } else if (body && body.avatar_preset) {
         if (childId) {
-          await supabase.from('children').update({ avatar_preset: body.avatar_preset }).eq('id', childId).eq('family_id', familyId);
+          await supabase.from('children').update({ avatar_preset: body.avatar_preset, avatar_url: null }).eq('id', childId).eq('family_id', familyId);
         } else {
-          await supabase.from('users').update({ avatar_preset: body.avatar_preset }).eq('id', userId);
+          await supabase.from('users').update({ avatar_preset: body.avatar_preset, avatar_url: null }).eq('id', userId);
         }
         return { data: { avatar_preset: body.avatar_preset } };
       }
@@ -1645,19 +1658,32 @@ const api = {
     if (memberAvatarMatch) {
       const targetUserId = memberAvatarMatch[1];
       const role = await getUserRole();
-      if (role !== 'parent') throw new Error('Apenas responsáveis podem alterar o avatar de outros membros.');
+      // Permite que o próprio utilizador altere o seu avatar
+      const isSelf = String(targetUserId) === String(userId);
+      if (!isSelf && role !== 'parent') throw new Error('Apenas responsáveis podem alterar o avatar de outros membros.');
       const { data: target } = await supabase.from('users').select('id').eq('id', targetUserId).eq('family_id', familyId).maybeSingle();
       if (!target) throw new Error('Utilizador não encontrado na família.');
-      const bucket = 'avatars';
+
       if (body instanceof FormData) {
         const preset = body.get('avatar_preset');
         const file = body.get('avatar');
         if (file && typeof file === 'object' && file.size > 0) {
           const ext = (file.name && String(file.name).split('.').pop()) || 'jpg';
           const filePath = `${familyId}/user-${targetUserId}-${Date.now()}.${ext}`;
-          const { error: upErr } = await supabase.storage.from(bucket).upload(filePath, file, { upsert: true, contentType: file.type || undefined });
-          if (upErr) throw new Error(upErr.message);
-          const rel = `${bucket}/${filePath}`;
+
+          // Tenta 'avatars' primeiro, cai em 'uploads' se não existir
+          let rel = null;
+          for (const bucket of ['avatars', 'uploads']) {
+            const { error: upErr } = await supabase.storage
+              .from(bucket)
+              .upload(filePath, file, { upsert: true, contentType: file.type || undefined });
+            if (!upErr) { rel = `${bucket}/${filePath}`; break; }
+            if (!upErr?.message?.includes('not found') && !upErr?.message?.includes('does not exist')) {
+              throw new Error(upErr.message);
+            }
+          }
+          if (!rel) throw new Error('Bucket de avatares não encontrado. Crie "avatars" ou "uploads" no Supabase Storage.');
+
           await supabase.from('users').update({ avatar_url: rel, avatar_preset: null }).eq('id', targetUserId).eq('family_id', familyId);
           return { data: { avatar_url: rel, avatar_preset: preset || null } };
         }
@@ -1666,7 +1692,7 @@ const api = {
           return { data: { avatar_preset: preset } };
         }
       } else if (body && body.avatar_preset) {
-        await supabase.from('users').update({ avatar_preset: body.avatar_preset }).eq('id', targetUserId).eq('family_id', familyId);
+        await supabase.from('users').update({ avatar_preset: body.avatar_preset, avatar_url: null }).eq('id', targetUserId).eq('family_id', familyId);
         return { data: { avatar_preset: body.avatar_preset } };
       }
       throw new Error('Envie avatar (ficheiro) ou avatar_preset');
@@ -2001,15 +2027,119 @@ const api = {
     if (path.startsWith('/allowance/piggy-requests/') && path.endsWith('/review')) {
       const segs = path.split('/').filter(Boolean);
       const reqId = segs[2];
-      const { data, error } = await supabase
+
+      // 1. Buscar o pedido actual para obter valores
+      const { data: reqRow, error: reqErr } = await supabase
         .from('piggy_requests')
-        .update({ status: body.approved ? 'approved' : 'rejected', review_note: body.review_note })
+        .select('*')
+        .eq('id', reqId)
+        .eq('family_id', familyId)
+        .single();
+      if (reqErr) throw new Error(reqErr.message);
+
+      const newStatus = body.approved ? 'approved' : 'rejected';
+
+      // 2. Se for rejeição: actualizar apenas o status e retornar
+      if (!body.approved) {
+        const { data: rejData, error: rejErr } = await supabase
+          .from('piggy_requests')
+          .update({ status: 'rejected', review_note: body.review_note ?? null })
+          .eq('id', reqId).eq('family_id', familyId).select().single();
+        if (rejErr) throw new Error(rejErr.message);
+        return { data: rejData };
+      }
+
+      // 3. Aprovação — tentar primeiro via RPC atómica
+      try {
+        const { data: rpcData, error: rpcErr } = await supabase
+          .rpc('approve_piggy_request', { p_request_id: reqId, p_family_id: familyId });
+        if (!rpcErr && rpcData?.ok) {
+          // Actualizar note de revisão se fornecida
+          if (body.review_note) {
+            await supabase.from('piggy_requests')
+              .update({ review_note: body.review_note })
+              .eq('id', reqId);
+          }
+          return { data: { ...reqRow, status: 'approved' } };
+        }
+      } catch (_) { /* RPC não existe ainda, continua com fallback */ }
+
+      // Fallback manual (caso a RPC ainda não tenha sido criada no Supabase)
+      const { data: updatedReq, error: updErr } = await supabase
+        .from('piggy_requests')
+        .update({ status: 'approved', review_note: body.review_note ?? null })
         .eq('id', reqId)
         .eq('family_id', familyId)
         .select()
         .single();
-      if (error) throw new Error(error.message);
-      return { data };
+      if (updErr) throw new Error(updErr.message);
+
+      // Se aprovado: creditar meta + debitar mesada
+      if (reqRow.child_id && reqRow.requested_amount > 0) {
+        const amount = Number(reqRow.requested_amount);
+
+        // 3a. Creditar a meta do cofrinho (procurar por child_id + title)
+        try {
+          const { data: goalRows } = await supabase
+            .from('savings_goals')
+            .select('id, current_amount, target_amount')
+            .eq('child_id', reqRow.child_id)
+            .eq('family_id', familyId)
+            .ilike('title', reqRow.goal_title ?? '')
+            .limit(1);
+
+          const goal = goalRows?.[0];
+          if (goal) {
+            const newCurrentAmount = Number(goal.current_amount || 0) + amount;
+            const reachedTarget = goal.target_amount && newCurrentAmount >= Number(goal.target_amount);
+            await supabase
+              .from('savings_goals')
+              .update({
+                current_amount: newCurrentAmount,
+                ...(reachedTarget ? { status: 'completed' } : {}),
+              })
+              .eq('id', goal.id);
+          }
+        } catch (_) { /* não bloqueia se meta não encontrada */ }
+
+        // 3b. Debitar da mesada: ajustar o ciclo aberto da criança
+        try {
+          const { data: openCycle } = await supabase
+            .from('allowance_cycles')
+            .select('id, manual_adjustments')
+            .eq('child_id', reqRow.child_id)
+            .eq('family_id', familyId)
+            .eq('status', 'open')
+            .order('period_start', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (openCycle) {
+            // Reduz manual_adjustments (equivale a subtrair do saldo)
+            await supabase
+              .from('allowance_cycles')
+              .update({ manual_adjustments: Number(openCycle.manual_adjustments || 0) - amount })
+              .eq('id', openCycle.id);
+          }
+
+          // 3c. Registar transacção para histórico
+          await supabase
+            .from('allowance_transactions')
+            .insert([{
+              id: uuidv4(),
+              family_id: familyId,
+              child_id: reqRow.child_id,
+              type: 'deduction',
+              amount: -Math.abs(amount),
+              description: `Cofrinho: ${reqRow.goal_title || 'Meta'}`,
+              created_at: new Date().toISOString(),
+            }])
+            .select()
+            .maybeSingle();
+        } catch (_) { /* não bloqueia se ciclo/transacção falhar */ }
+      }
+
+      return { data: updatedReq };
     }
 
     const occUpdateOnly = path.match(/^\/tasks\/occurrences\/([^/]+)$/);

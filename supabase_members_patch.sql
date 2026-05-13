@@ -393,3 +393,116 @@ CREATE POLICY "Parents manage piggy requests" ON public.piggy_requests
 --    No Supabase Dashboard: Authentication > Settings > desabilitar
 --    "Enable email confirmations" para que signUp retorne sessão imediatamente.
 -- -----------------------------------------------------------------------------
+
+-- -----------------------------------------------------------------------------
+-- 15) Bucket "avatars" para fotos de utilizadores
+--     Execute como service_role ou no Supabase Dashboard → Storage → New bucket
+--     Nome: avatars | Public: true
+-- -----------------------------------------------------------------------------
+INSERT INTO storage.buckets (id, name, public)
+VALUES ('avatars', 'avatars', true)
+ON CONFLICT (id) DO UPDATE SET public = true;
+
+DROP POLICY IF EXISTS "Authenticated users can upload avatars" ON storage.objects;
+CREATE POLICY "Authenticated users can upload avatars"
+  ON storage.objects FOR INSERT TO authenticated
+  WITH CHECK (bucket_id = 'avatars');
+
+DROP POLICY IF EXISTS "Public read avatars" ON storage.objects;
+CREATE POLICY "Public read avatars"
+  ON storage.objects FOR SELECT TO public
+  USING (bucket_id = 'avatars');
+
+DROP POLICY IF EXISTS "Authenticated users can update avatars" ON storage.objects;
+CREATE POLICY "Authenticated users can update avatars"
+  ON storage.objects FOR UPDATE TO authenticated
+  USING (bucket_id = 'avatars');
+
+DROP POLICY IF EXISTS "Authenticated users can delete avatars" ON storage.objects;
+CREATE POLICY "Authenticated users can delete avatars"
+  ON storage.objects FOR DELETE TO authenticated
+  USING (bucket_id = 'avatars');
+
+-- -----------------------------------------------------------------------------
+-- 16) Crédito na meta do cofrinho ao aprovar pedido
+--     A lógica está no frontend (api.js /allowance/piggy-requests/:id/review)
+--     Alternativa mais robusta: criar uma RPC para garantir atomicidade
+-- -----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.approve_piggy_request(
+  p_request_id   UUID,
+  p_family_id    UUID
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_req       piggy_requests%ROWTYPE;
+  v_goal      savings_goals%ROWTYPE;
+  v_cycle_id  UUID;
+  v_adj       NUMERIC;
+BEGIN
+  -- Buscar pedido
+  SELECT * INTO v_req
+    FROM piggy_requests
+   WHERE id = p_request_id AND family_id = p_family_id AND status = 'pending';
+
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'Pedido não encontrado ou já processado');
+  END IF;
+
+  -- Actualizar status do pedido
+  UPDATE piggy_requests
+     SET status = 'approved', updated_at = now()
+   WHERE id = p_request_id;
+
+  -- Creditar na meta do cofrinho (procura por child_id + title)
+  SELECT * INTO v_goal
+    FROM savings_goals
+   WHERE child_id = v_req.child_id
+     AND family_id = p_family_id
+     AND lower(title) = lower(v_req.goal_title)
+   LIMIT 1;
+
+  IF FOUND THEN
+    UPDATE savings_goals
+       SET current_amount = COALESCE(current_amount, 0) + v_req.requested_amount,
+           status = CASE
+             WHEN COALESCE(current_amount, 0) + v_req.requested_amount >= target_amount THEN 'completed'
+             ELSE status
+           END,
+           updated_at = now()
+     WHERE id = v_goal.id;
+  END IF;
+
+  -- Debitar do ciclo de mesada aberto
+  SELECT id, manual_adjustments INTO v_cycle_id, v_adj
+    FROM allowance_cycles
+   WHERE child_id = v_req.child_id
+     AND family_id = p_family_id
+     AND status = 'open'
+   ORDER BY period_start DESC
+   LIMIT 1;
+
+  IF v_cycle_id IS NOT NULL THEN
+    UPDATE allowance_cycles
+       SET manual_adjustments = COALESCE(v_adj, 0) - v_req.requested_amount,
+           updated_at = now()
+     WHERE id = v_cycle_id;
+  END IF;
+
+  -- Registar transacção
+  INSERT INTO allowance_transactions (id, family_id, child_id, type, amount, description, created_at)
+  VALUES (gen_random_uuid(), p_family_id, v_req.child_id, 'deduction',
+          -v_req.requested_amount,
+          'Cofrinho: ' || COALESCE(v_req.goal_title, 'Meta'),
+          now())
+  ON CONFLICT DO NOTHING;
+
+  RETURN jsonb_build_object('ok', true);
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.approve_piggy_request(UUID, UUID) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.approve_piggy_request(UUID, UUID) TO authenticated;
