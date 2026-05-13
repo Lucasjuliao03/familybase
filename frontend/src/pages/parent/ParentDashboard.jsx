@@ -1,16 +1,81 @@
 import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { moduleAllowed } from '../../lib/familyModules';
 import api, { publicAssetUrl } from '../../services/api';
 import { PRESET_AVATARS } from '../../components/AvatarPicker';
 
+function ChildCard({ child, t, settings }) {
+  const xpPct = child.xp_next_level > 0 ? Math.min((child.xp / child.xp_next_level) * 100, 100) : 0;
+  const avatar = PRESET_AVATARS.find(a => a.id === child.avatar_preset);
+  return (
+    <div className="child-dash-card" style={{ '--c': child.color || '#6366F1' }}>
+      <div className="child-dash-card__header">
+        <div className="child-dash-card__avatar">
+          {child.avatar_url
+            ? <img src={publicAssetUrl(child.avatar_url)} alt="" />
+            : <span>{avatar?.emoji || child.name?.[0] || '👤'}</span>}
+        </div>
+        <div>
+          <div className="child-dash-card__name">{child.name}</div>
+          <div className="child-dash-card__level">⭐ Nível {child.level}</div>
+        </div>
+        {child.streak_current > 0 && (
+          <div className="child-dash-card__streak" title={`${child.streak_current} dias seguidos`}>
+            🔥 {child.streak_current}
+          </div>
+        )}
+      </div>
+      <div className="child-dash-card__xpbar">
+        <div className="child-dash-card__xpbar-fill" style={{ width: `${xpPct}%` }} />
+      </div>
+      <div className="child-dash-card__xplabel">{child.xp} / {child.xp_next_level} XP</div>
+      <div className="child-dash-card__stats">
+        <div className="child-dash-card__stat">
+          <span className="child-dash-card__stat-icon" style={{ background: 'rgba(99,102,241,0.1)', color: '#6366F1' }}>⭐</span>
+          <div>
+            <div className="child-dash-card__stat-val">{child.points}</div>
+            <div className="child-dash-card__stat-lbl">{t('points')}</div>
+          </div>
+        </div>
+        <div className="child-dash-card__stat">
+          <span className="child-dash-card__stat-icon" style={{ background: 'rgba(249,115,22,0.1)', color: '#F97316' }}>🪙</span>
+          <div>
+            <div className="child-dash-card__stat-val">{child.coins}</div>
+            <div className="child-dash-card__stat-lbl">{t('coins')}</div>
+          </div>
+        </div>
+        <div className="child-dash-card__stat">
+          <span className="child-dash-card__stat-icon" style={{ background: 'rgba(16,185,129,0.1)', color: '#10B981' }}>✅</span>
+          <div>
+            <div className="child-dash-card__stat-val">{child.completed || 0}</div>
+            <div className="child-dash-card__stat-lbl">Concluídas</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function QuickAction({ to, icon, label, color }) {
+  return (
+    <Link to={to} className="quick-action" style={{ '--qa-color': color }}>
+      <span className="quick-action__icon">{icon}</span>
+      <span className="quick-action__label">{label}</span>
+    </Link>
+  );
+}
+
 export default function ParentDashboard() {
   const { t } = useLanguage();
-  const { user, modules } = useAuth();
+  const { user, family, modules } = useAuth();
+  const navigate = useNavigate();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const now = new Date();
+  const hour = now.getHours();
+  const greeting = hour < 12 ? 'Bom dia' : hour < 18 ? 'Boa tarde' : 'Boa noite';
 
   useEffect(() => {
     (async () => {
@@ -19,96 +84,146 @@ export default function ParentDashboard() {
     })();
   }, []);
 
-  if (loading) return <div className="flex-center" style={{padding:60}}><span style={{fontSize:'2rem'}}>⏳</span></div>;
-  if (!data) return null;
+  if (loading) return (
+    <div className="dash-loading">
+      <div className="dash-loading__spinner" />
+      <p>Carregando painel…</p>
+    </div>
+  );
+
+  const stats = data?.stats || {};
+  const children = data?.children || [];
+  const events = data?.upcomingEvents || [];
+  const history = data?.recentHistory || [];
 
   return (
-    <div className="animate-fade-in">
-      <div className="page-header">
-        <h1 className="page-title">{t('welcome')}, {user?.name?.split(' ')[0]}! 👋</h1>
-        <p className="page-subtitle">{t('report_overview')}</p>
+    <div className="parent-dash animate-fade-in">
+
+      {/* ── Hero Banner ────────────────────────── */}
+      <div className="dash-hero">
+        <div className="dash-hero__left">
+          <div className="dash-hero__greeting">
+            {greeting}, <strong>{user?.name?.split(' ')[0] || 'Gestor'}</strong>! 👋
+          </div>
+          <p className="dash-hero__sub">
+            {family?.name ? `Família ${family.name}` : 'Base Familiar'} · {now.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })}
+          </p>
+          <div className="dash-hero__actions">
+            <button className="btn btn-primary" onClick={() => navigate('/parent/tasks')}>
+              ＋ Nova Tarefa
+            </button>
+            <button className="btn btn-ghost" onClick={() => navigate('/parent/calendar')} style={{ color: '#fff', borderColor: 'rgba(255,255,255,0.3)' }}>
+              📅 Calendário
+            </button>
+          </div>
+        </div>
+        <div className="dash-hero__right hide-mobile">
+          <div className="dash-hero__stats-mini">
+            <div className="dash-hero__stat-mini">
+              <span className="dash-hero__stat-num">{children.length}</span>
+              <span className="dash-hero__stat-lbl">Filhos</span>
+            </div>
+            <div className="dash-hero__stat-divider" />
+            <div className="dash-hero__stat-mini">
+              <span className="dash-hero__stat-num">{stats.pending || 0}</span>
+              <span className="dash-hero__stat-lbl">Pendentes</span>
+            </div>
+            <div className="dash-hero__stat-divider" />
+            <div className="dash-hero__stat-mini">
+              <span className="dash-hero__stat-num">{stats.approved || 0}</span>
+              <span className="dash-hero__stat-lbl">Aprovadas</span>
+            </div>
+          </div>
+        </div>
       </div>
 
-      <div className={`grid mb-24 ${moduleAllowed(modules, 'family_shop') ? 'grid-4' : 'grid-3'}`}>
-        <div className="stat-card">
-          <div className="stat-icon" style={{background:'rgba(108,92,231,0.1)',color:'var(--primary)'}}>📋</div>
+      {/* ── KPI Cards ──────────────────────────── */}
+      <div className="dash-kpis">
+        <div className="stat-card grad-purple">
+          <div className="stat-icon" style={{ background: 'rgba(255,255,255,0.2)' }}>📋</div>
           <div className="stat-info">
-            <h3>{data.stats.pending}</h3>
+            <h3>{stats.pending ?? '–'}</h3>
             <p>{t('pending_tasks')}</p>
           </div>
         </div>
-        <div className="stat-card">
-          <div className="stat-icon" style={{background:'rgba(0,184,148,0.1)',color:'var(--success)'}}>✅</div>
+        <div className="stat-card grad-orange">
+          <div className="stat-icon" style={{ background: 'rgba(255,255,255,0.2)' }}>⏳</div>
           <div className="stat-info">
-            <h3>{data.stats.completed}</h3>
-            <p>{t('pending_approvals')}</p>
+            <h3>{stats.waitingApproval ?? stats.completed ?? '–'}</h3>
+            <p>Aguardam Aprovação</p>
           </div>
         </div>
-        <div className="stat-card">
-          <div className="stat-icon" style={{background:'rgba(253,203,110,0.15)',color:'#E67E22'}}>🏆</div>
+        <div className="stat-card grad-green">
+          <div className="stat-icon" style={{ background: 'rgba(255,255,255,0.2)' }}>✅</div>
           <div className="stat-info">
-            <h3>{data.stats.approved}</h3>
+            <h3>{stats.approved ?? '–'}</h3>
             <p>{t('tasks_completed')}</p>
           </div>
         </div>
         {moduleAllowed(modules, 'family_shop') && (
-          <div className="stat-card">
-            <div className="stat-icon" style={{background:'rgba(232,67,147,0.1)',color:'var(--accent)'}}>🛍️</div>
+          <div className="stat-card grad-blue">
+            <div className="stat-icon" style={{ background: 'rgba(255,255,255,0.2)' }}>🛍️</div>
             <div className="stat-info">
-              <h3>{data.stats.pendingRedemptions}</h3>
-              <p>{t('nav_family_shop')}</p>
+              <h3>{stats.pendingRedemptions ?? '–'}</h3>
+              <p>Resgates Pendentes</p>
             </div>
           </div>
         )}
       </div>
 
-      <div className="grid grid-3 mb-24">
-        {data.children.map(child => (
-          <div key={child.id} className="card" style={{borderLeft:`4px solid ${child.color}`}}>
-            <div className="flex gap-12" style={{alignItems:'center',marginBottom:16}}>
-              <div className="avatar" style={{background:`linear-gradient(135deg, ${child.color}, ${child.color}88)`, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden'}}>
-                {child.avatar_url ? (
-                  <img src={publicAssetUrl(child.avatar_url)} alt="" style={{width: '100%', height: '100%', objectFit: 'cover'}} />
-                ) : (
-                  child.avatar_preset ? PRESET_AVATARS.find(a => a.id === child.avatar_preset)?.emoji : child.name[0]
-                )}
-              </div>
-              <div>
-                <h3 style={{fontWeight:700,fontSize:'1.05rem'}}>{child.name}</h3>
-                <div className="flex gap-8" style={{marginTop:4}}>
-                  <span className="badge badge-primary">⭐ {t('level')} {child.level}</span>
-                  <span className="badge badge-success">{child.points} {t('points')}</span>
-                </div>
-              </div>
-            </div>
-            <div className="xp-bar mb-8">
-              <div className="xp-fill" style={{width:`${(child.xp / child.xp_next_level) * 100}%`}}></div>
-              <div className="xp-text">{child.xp}/{child.xp_next_level} XP</div>
-            </div>
-            <div className="flex-between" style={{fontSize:'0.82rem',color:'var(--text-light)'}}>
-              <span>💰 {child.coins} {t('coins')}</span>
-              <span className="streak-flame">🔥 {child.streak_current} {t('days')}</span>
-            </div>
-          </div>
-        ))}
+      {/* ── Quick Actions ─────────────────────── */}
+      <div className="dash-section">
+        <div className="dash-section__head">
+          <h2 className="dash-section__title">⚡ Acesso Rápido</h2>
+        </div>
+        <div className="quick-actions-grid">
+          <QuickAction to="/parent/tasks"               icon="✅" label="Tarefas"          color="#6366F1" />
+          <QuickAction to="/parent/tasks?tab=approval"  icon="👍" label="Aprovações"       color="#F97316" />
+          <QuickAction to="/parent/grades"              icon="📚" label="Notas"            color="#3B82F6" />
+          <QuickAction to="/parent/allowance"           icon="💰" label="Mesada"           color="#10B981" />
+          {moduleAllowed(modules, 'health') && <QuickAction to="/parent/health" icon="❤️" label="Saúde"   color="#EC4899" />}
+          {moduleAllowed(modules, 'shopping') && <QuickAction to="/parent/shopping" icon="🛒" label="Compras" color="#14B8A6" />}
+          {moduleAllowed(modules, 'mural') && <QuickAction to="/parent/mural" icon="📌" label="Mural"     color="#8B5CF6" />}
+          <QuickAction to="/parent/reports"             icon="📊" label="Relatórios"       color="#6366F1" />
+        </div>
       </div>
 
-      <div className="grid grid-2">
+      {/* ── Filhos ────────────────────────────── */}
+      {children.length > 0 && (
+        <div className="dash-section">
+          <div className="dash-section__head">
+            <h2 className="dash-section__title">👨‍👩‍👧‍👦 Meus Filhos</h2>
+            <Link to="/parent/family-administration" className="btn btn-sm btn-ghost">Gerir família</Link>
+          </div>
+          <div className="children-grid">
+            {children.map(child => <ChildCard key={child.id} child={child} t={t} />)}
+          </div>
+        </div>
+      )}
+
+      {/* ── Eventos + Atividade ───────────────── */}
+      <div className="dash-section dash-bottom-grid">
         <div className="card">
           <div className="card-header">
             <h3 className="card-title">📅 {t('upcoming_events')}</h3>
             <Link to="/parent/calendar" className="btn btn-sm btn-ghost">{t('calendar')}</Link>
           </div>
-          {data.upcomingEvents.length === 0 ? (
-            <div className="empty-state"><div className="empty-icon">📅</div><h3>{t('no_events')}</h3></div>
-          ) : data.upcomingEvents.map(ev => (
-            <div key={ev.id} className="flex gap-12" style={{padding:'10px 0',borderBottom:'1px solid var(--border)',alignItems:'center'}}>
-              <div style={{width:4,height:36,borderRadius:2,background: ev.child_color || 'var(--primary)',flexShrink:0}}></div>
-              <div style={{flex:1}}>
-                <div style={{fontWeight:600,fontSize:'0.88rem'}}>{ev.title}</div>
-                <div style={{fontSize:'0.78rem',color:'var(--text-light)'}}>{new Date(ev.date).toLocaleDateString('pt-BR')} {ev.child_name ? `• ${ev.child_name}` : ''}</div>
+          {events.length === 0 ? (
+            <div className="empty-state" style={{ padding: '28px 0' }}>
+              <div className="empty-icon">📅</div>
+              <h3>Sem eventos próximos</h3>
+            </div>
+          ) : events.map(ev => (
+            <div key={ev.id} className="event-row">
+              <div className="event-row__dot" style={{ background: ev.child_color || '#6366F1' }} />
+              <div className="event-row__body">
+                <div className="event-row__title">{ev.title}</div>
+                <div className="event-row__meta">
+                  {new Date(ev.date).toLocaleDateString('pt-BR')}
+                  {ev.child_name ? ` · ${ev.child_name}` : ''}
+                </div>
               </div>
-              <span className="badge badge-info">{t(ev.type)}</span>
+              <span className="badge badge-primary">{t(ev.type)}</span>
             </div>
           ))}
         </div>
@@ -117,26 +232,38 @@ export default function ParentDashboard() {
           <div className="card-header">
             <h3 className="card-title">🕐 {t('recent_activity')}</h3>
           </div>
-          {data.recentHistory.length === 0 ? (
-            <div className="empty-state"><div className="empty-icon">📝</div><h3>Nenhuma atividade</h3></div>
-          ) : data.recentHistory.map(h => (
-            <div key={h.id} className="flex gap-12" style={{padding:'10px 0',borderBottom:'1px solid var(--border)',alignItems:'center'}}>
-              <div className="avatar-sm" style={{background: h.child_color ? `${h.child_color}22` : 'var(--bg)',color: h.child_color || 'var(--text)',fontSize:'1rem',fontWeight:700, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden'}}>
-                {h.avatar_url ? (
-                  <img src={publicAssetUrl(h.avatar_url)} alt="" style={{width: '100%', height: '100%', objectFit: 'cover'}} />
-                ) : (
-                  h.avatar_preset ? PRESET_AVATARS.find(a => a.id === h.avatar_preset)?.emoji : h.child_name?.[0]
-                )}
+          {history.length === 0 ? (
+            <div className="empty-state" style={{ padding: '28px 0' }}>
+              <div className="empty-icon">📝</div>
+              <h3>Sem atividade recente</h3>
+            </div>
+          ) : history.map(h => (
+            <div key={h.id} className="activity-row">
+              <div className="activity-row__avatar"
+                style={{ background: h.child_color ? `${h.child_color}22` : 'var(--bg)', color: h.child_color || 'var(--text)' }}>
+                {h.avatar_url
+                  ? <img src={publicAssetUrl(h.avatar_url)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  : (PRESET_AVATARS.find(a => a.id === h.avatar_preset)?.emoji || h.child_name?.[0] || '👤')}
               </div>
-              <div style={{flex:1}}>
-                <div style={{fontWeight:500,fontSize:'0.85rem'}}>{h.event}</div>
-                <div style={{fontSize:'0.75rem',color:'var(--text-light)'}}>{h.child_name}</div>
+              <div className="activity-row__body">
+                <div className="activity-row__event">{h.event}</div>
+                <div className="activity-row__child">{h.child_name}</div>
               </div>
-              {h.points > 0 && <span className="badge badge-success">+{h.points}</span>}
+              {h.points > 0 && <span className="badge badge-success">+{h.points} pts</span>}
             </div>
           ))}
         </div>
       </div>
+
+      {/* ── Footer ────────────────────────────── */}
+      <footer className="dash-footer">
+        <span>© 2025 Base Familiar</span>
+        <div className="dash-footer__links">
+          <a href="#sobre">Sobre</a>
+          <a href="#privacidade">Privacidade</a>
+          <a href="#termos">Termos de Serviço</a>
+        </div>
+      </footer>
     </div>
   );
 }
