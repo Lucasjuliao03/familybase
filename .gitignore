@@ -6,7 +6,7 @@ dist/
 build/
 .next/
 out/
-
+scratch/
 # ambiente / segredos
 .env
 .env.*
