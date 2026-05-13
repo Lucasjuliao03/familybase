@@ -23,44 +23,86 @@ export default defineConfig({
         start_url: '/',
         scope: '/',
         icons: [
-          {
-            src: '/pwa-192x192.png',
-            sizes: '192x192',
-            type: 'image/png',
-            purpose: 'any'
-          },
-          {
-            src: '/pwa-512x512.png',
-            sizes: '512x512',
-            type: 'image/png',
-            purpose: 'any'
-          },
-          {
-            src: '/icons/manifest-icon-192.maskable.png',
-            sizes: '192x192',
-            type: 'image/png',
-            purpose: 'maskable'
-          },
-          {
-            src: '/icons/manifest-icon-512.maskable.png',
-            sizes: '512x512',
-            type: 'image/png',
-            purpose: 'maskable'
-          }
-        ]
+          { src: '/pwa-192x192.png',                      sizes: '192x192', type: 'image/png', purpose: 'any' },
+          { src: '/pwa-512x512.png',                      sizes: '512x512', type: 'image/png', purpose: 'any' },
+          { src: '/icons/manifest-icon-192.maskable.png', sizes: '192x192', type: 'image/png', purpose: 'maskable' },
+          { src: '/icons/manifest-icon-512.maskable.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+        ],
       },
 
       workbox: {
-        maximumFileSizeToCacheInBytes: 5 * 1024 * 1024
+        maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
+        runtimeCaching: [
+          {
+            urlPattern: /^https:\/\/.*\.supabase\.co\/.*/i,
+            handler: 'NetworkFirst',
+            options: { cacheName: 'supabase-api', networkTimeoutSeconds: 10 },
+          },
+          {
+            urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
+            handler: 'CacheFirst',
+            options: { cacheName: 'google-fonts', expiration: { maxAgeSeconds: 60 * 60 * 24 * 365 } },
+          },
+        ],
       },
 
-      devOptions: {
-        enabled: true
-      }
-    })
+      devOptions: { enabled: false }, // desativa SW em dev para evitar conflitos com HMR
+    }),
   ],
 
   server: {
     port: 5173,
-  }
+    hmr: {
+      overlay: true, // exibe erros de compilação como overlay no browser
+    },
+    watch: {
+      usePolling: false, // polling apenas se em WSL/VM; deixe false para desempenho nativo
+    },
+  },
+
+  build: {
+    // Divide o bundle em chunks por rota/módulo para carregamento mais rápido
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          // Vendors estáveis em chunks separados (cached pelo browser)
+          'vendor-react':    ['react', 'react-dom', 'react-router-dom'],
+          'vendor-supabase': ['@supabase/supabase-js'],
+          // Páginas do pai agrupadas
+          'pages-parent': [
+            './src/pages/parent/ParentDashboard.jsx',
+            './src/pages/parent/TaskManager.jsx',
+            './src/pages/parent/GradeTracker.jsx',
+            './src/pages/parent/AllowanceManager.jsx',
+            './src/pages/parent/CalendarPage.jsx',
+            './src/pages/parent/ReportsPage.jsx',
+            './src/pages/parent/ShoppingList.jsx',
+            './src/pages/parent/FamilyShopManager.jsx',
+            './src/pages/parent/FamilyAdministration.jsx',
+          ],
+          // Páginas do filho agrupadas
+          'pages-child': [
+            './src/pages/child/ChildDashboard.jsx',
+            './src/pages/child/MyTasks.jsx',
+            './src/pages/child/MyGrades.jsx',
+            './src/pages/child/MyAllowance.jsx',
+            './src/pages/child/MyFamilyShop.jsx',
+            './src/pages/child/MyCalendar.jsx',
+          ],
+          // Módulos partilhados
+          'pages-shared': [
+            './src/pages/HealthCenter.jsx',
+            './src/pages/MuralBoard.jsx',
+            './src/pages/master/MasterDashboard.jsx',
+          ],
+        },
+      },
+    },
+    sourcemap: false,
+    chunkSizeWarningLimit: 800,
+  },
+
+  optimizeDeps: {
+    include: ['react', 'react-dom', 'react-router-dom', '@supabase/supabase-js'],
+  },
 })

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, memo, useMemo, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useAuth } from '../../contexts/AuthContext';
@@ -6,7 +6,7 @@ import { moduleAllowed } from '../../lib/familyModules';
 import api, { publicAssetUrl } from '../../services/api';
 import { PRESET_AVATARS } from '../../components/AvatarPicker';
 
-function ChildCard({ child, t, settings }) {
+const ChildCard = memo(function ChildCard({ child, t }) {
   const xpPct = child.xp_next_level > 0 ? Math.min((child.xp / child.xp_next_level) * 100, 100) : 0;
   const avatar = PRESET_AVATARS.find(a => a.id === child.avatar_preset);
   return (
@@ -58,14 +58,14 @@ function ChildCard({ child, t, settings }) {
   );
 }
 
-function QuickAction({ to, icon, label, color }) {
+const QuickAction = memo(function QuickAction({ to, icon, label, color }) {
   return (
     <Link to={to} className="quick-action" style={{ '--qa-color': color }}>
       <span className="quick-action__icon">{icon}</span>
       <span className="quick-action__label">{label}</span>
     </Link>
   );
-}
+});
 
 export default function ParentDashboard() {
   const { t } = useLanguage();
@@ -73,16 +73,19 @@ export default function ParentDashboard() {
   const navigate = useNavigate();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
-  const now = new Date();
-  const hour = now.getHours();
-  const greeting = hour < 12 ? 'Bom dia' : hour < 18 ? 'Boa tarde' : 'Boa noite';
 
-  useEffect(() => {
-    (async () => {
-      try { const { data: d } = await api.get('/reports/dashboard'); setData(d); }
-      catch {} finally { setLoading(false); }
-    })();
+  const now = useMemo(() => new Date(), []);
+  const greeting = useMemo(() => {
+    const h = now.getHours();
+    return h < 12 ? 'Bom dia' : h < 18 ? 'Boa tarde' : 'Boa noite';
+  }, [now]);
+
+  const fetchDashboard = useCallback(async () => {
+    try { const { data: d } = await api.get('/reports/dashboard'); setData(d); }
+    catch {} finally { setLoading(false); }
   }, []);
+
+  useEffect(() => { fetchDashboard(); }, [fetchDashboard]);
 
   if (loading) return (
     <div className="dash-loading">
@@ -91,10 +94,10 @@ export default function ParentDashboard() {
     </div>
   );
 
-  const stats = data?.stats || {};
-  const children = data?.children || [];
-  const events = data?.upcomingEvents || [];
-  const history = data?.recentHistory || [];
+  const stats    = useMemo(() => data?.stats           || {}, [data]);
+  const children = useMemo(() => data?.children        || [], [data]);
+  const events   = useMemo(() => data?.upcomingEvents  || [], [data]);
+  const history  = useMemo(() => data?.recentHistory   || [], [data]);
 
   return (
     <div className="parent-dash animate-fade-in">

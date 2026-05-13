@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { moduleAllowed, anyModuleAllowed } from './lib/familyModules';
@@ -5,59 +6,77 @@ import { LanguageProvider } from './contexts/LanguageContext';
 import { ToastProvider } from './contexts/ToastContext';
 import { PWAProvider } from './contexts/PWAContext';
 import PWAInstallBanner from './components/PWAInstallBanner';
-import LoginPage from './pages/auth/LoginPage';
-import RegisterPage from './pages/auth/RegisterPage';
-import ParentLayout from './components/layout/ParentLayout';
-import ChildLayout from './components/layout/ChildLayout';
-import MasterLayout from './components/layout/MasterLayout';
-import ParentDashboard from './pages/parent/ParentDashboard';
-import TaskManager from './pages/parent/TaskManager';
-import GradeTracker from './pages/parent/GradeTracker';
-import AllowanceManager from './pages/parent/AllowanceManager';
-import FamilyShopManager from './pages/parent/FamilyShopManager';
-import CalendarPage from './pages/parent/CalendarPage';
-import ReportsPage from './pages/parent/ReportsPage';
-import FamilyAdministration from './pages/parent/FamilyAdministration';
 import FirstAccessPasswordModal from './components/FirstAccessPasswordModal';
-import ShoppingList from './pages/parent/ShoppingList';
-import HealthCenter from './pages/HealthCenter';
-import MuralBoard from './pages/MuralBoard';
-import ChildDashboard from './pages/child/ChildDashboard';
-import MyTasks from './pages/child/MyTasks';
-import MyGrades from './pages/child/MyGrades';
-import MyAllowance from './pages/child/MyAllowance';
-import MyFamilyShop from './pages/child/MyFamilyShop';
-import MyCalendar from './pages/child/MyCalendar';
-import MasterDashboard from './pages/master/MasterDashboard';
+import PageLoader from './components/PageLoader';
 
+// ─── Layouts (carregados antecipadamente — pequenos e usados em tudo) ─────────
+import ParentLayout from './components/layout/ParentLayout';
+import ChildLayout  from './components/layout/ChildLayout';
+import MasterLayout from './components/layout/MasterLayout';
+
+// ─── Auth (carregadas imediatamente — rota inicial para não-logados) ──────────
+import LoginPage    from './pages/auth/LoginPage';
+import RegisterPage from './pages/auth/RegisterPage';
+
+// ─── Páginas pai — lazy (chunk: pages-parent) ─────────────────────────────────
+const ParentDashboard      = lazy(() => import('./pages/parent/ParentDashboard'));
+const TaskManager          = lazy(() => import('./pages/parent/TaskManager'));
+const GradeTracker         = lazy(() => import('./pages/parent/GradeTracker'));
+const AllowanceManager     = lazy(() => import('./pages/parent/AllowanceManager'));
+const FamilyShopManager    = lazy(() => import('./pages/parent/FamilyShopManager'));
+const CalendarPage         = lazy(() => import('./pages/parent/CalendarPage'));
+const ShoppingList         = lazy(() => import('./pages/parent/ShoppingList'));
+const ReportsPage          = lazy(() => import('./pages/parent/ReportsPage'));
+const FamilyAdministration = lazy(() => import('./pages/parent/FamilyAdministration'));
+
+// ─── Páginas filho — lazy (chunk: pages-child) ───────────────────────────────
+const ChildDashboard = lazy(() => import('./pages/child/ChildDashboard'));
+const MyTasks        = lazy(() => import('./pages/child/MyTasks'));
+const MyGrades       = lazy(() => import('./pages/child/MyGrades'));
+const MyAllowance    = lazy(() => import('./pages/child/MyAllowance'));
+const MyFamilyShop   = lazy(() => import('./pages/child/MyFamilyShop'));
+const MyCalendar     = lazy(() => import('./pages/child/MyCalendar'));
+
+// ─── Módulos partilhados — lazy (chunk: pages-shared) ────────────────────────
+const HealthCenter     = lazy(() => import('./pages/HealthCenter'));
+const MuralBoard       = lazy(() => import('./pages/MuralBoard'));
+const MasterDashboard  = lazy(() => import('./pages/master/MasterDashboard'));
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Spinner inline para os guards (antes de qualquer chunk carregar)
+const Spinner = () => (
+  <div className="flex-center" style={{ minHeight: '100vh' }}>
+    <div className="animate-bounce-in" style={{ fontSize: '3rem' }}>🏠</div>
+  </div>
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
 function ProtectedRoute({ children, allowedRoles }) {
   const { user, loading } = useAuth();
-  if (loading) return <div className="flex-center" style={{ minHeight: '100vh' }}><div className="animate-bounce-in" style={{ fontSize: '3rem' }}>🏠</div></div>;
-  if (!user) return <Navigate to="/login" />;
+  if (loading) return <Spinner />;
+  if (!user) return <Navigate to="/login" replace />;
   if (allowedRoles && !allowedRoles.includes(user.role)) {
-    if (user.role === 'master') return <Navigate to="/master" />;
-    if (user.role === 'child') return <Navigate to="/child" />;
-    return <Navigate to="/parent" />;
+    if (user.role === 'master') return <Navigate to="/master" replace />;
+    if (user.role === 'child')  return <Navigate to="/child"  replace />;
+    return <Navigate to="/parent" replace />;
   }
   return children;
 }
 
-/** Apenas pai/gestor (perfil gestor), não parente nem responsável auxiliar */
 function GestorRoute({ children }) {
   const { user, loading } = useAuth();
-  if (loading) return <div className="flex-center" style={{ minHeight: '100vh' }}><div className="animate-bounce-in" style={{ fontSize: '3rem' }}>🏠</div></div>;
-  if (!user) return <Navigate to="/login" />;
-  if (user.role !== 'parent') return <Navigate to="/parent" />;
+  if (loading) return <Spinner />;
+  if (!user) return <Navigate to="/login" replace />;
+  if (user.role !== 'parent') return <Navigate to="/parent" replace />;
   const ap = user.access_profile ?? user.accessProfile ?? 'gestor';
-  if (ap !== 'gestor') return <Navigate to="/parent" />;
+  if (ap !== 'gestor') return <Navigate to="/parent" replace />;
   return children;
 }
 
-/** Bloqueia rota se o módulo não estiver ativo para a família (além das permissões no backend). */
 function ModuleRoute({ module: moduleKey, anyOf, children }) {
   const { user, modules, loading } = useAuth();
   const base = user?.role === 'child' ? '/child' : '/parent';
-  if (loading) return <div className="flex-center" style={{ minHeight: '100vh' }}><div className="animate-bounce-in" style={{ fontSize: '3rem' }}>🏠</div></div>;
+  if (loading) return <Spinner />;
   if (anyOf?.length) {
     if (!anyModuleAllowed(modules, anyOf)) return <Navigate to={base} replace />;
   } else if (moduleKey && !moduleAllowed(modules, moduleKey)) {
@@ -66,62 +85,156 @@ function ModuleRoute({ module: moduleKey, anyOf, children }) {
   return children;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
 function AppRoutes() {
   const { user, loading } = useAuth();
-  if (loading) return <div className="flex-center" style={{ minHeight: '100vh' }}><div className="animate-bounce-in" style={{ fontSize: '3rem' }}>🏠</div></div>;
+  if (loading) return <Spinner />;
 
-  const getDefaultPath = () => {
+  const defaultPath = () => {
     if (!user) return '/login';
     if (user.role === 'master') return '/master';
-    if (user.role === 'child') return '/child';
+    if (user.role === 'child')  return '/child';
     return '/parent';
   };
 
   return (
     <Routes>
-      <Route path="/login" element={user ? <Navigate to={getDefaultPath()} /> : <LoginPage />} />
-      <Route path="/register" element={user ? <Navigate to="/parent" /> : <RegisterPage />} />
+      <Route path="/login"    element={user ? <Navigate to={defaultPath()} /> : <LoginPage />} />
+      <Route path="/register" element={user ? <Navigate to="/parent" />      : <RegisterPage />} />
 
-      {/* PARENT & RELATIVE ROUTES */}
-      <Route path="/parent" element={<ProtectedRoute allowedRoles={['parent', 'relative']}><ParentLayout /></ProtectedRoute>}>
-        <Route index element={<ParentDashboard />} />
-        <Route path="tasks" element={<ModuleRoute module="tasks"><TaskManager /></ModuleRoute>} />
-        <Route path="grades" element={<ModuleRoute module="grades"><GradeTracker /></ModuleRoute>} />
-        <Route path="allowance" element={<ModuleRoute anyOf={['allowance', 'piggy_bank', 'goals']}><AllowanceManager /></ModuleRoute>} />
-        <Route path="family-shop" element={<ModuleRoute module="family_shop"><FamilyShopManager /></ModuleRoute>} />
-        <Route path="calendar" element={<ModuleRoute module="calendar"><CalendarPage /></ModuleRoute>} />
-        <Route path="shopping" element={<ModuleRoute module="shopping"><ShoppingList /></ModuleRoute>} />
-        <Route path="health" element={<ModuleRoute module="health"><HealthCenter /></ModuleRoute>} />
-        <Route path="mural" element={<ModuleRoute module="mural"><MuralBoard /></ModuleRoute>} />
-        <Route path="reports" element={<ModuleRoute module="reports"><ReportsPage /></ModuleRoute>} />
+      {/* ── PARENT & RELATIVE ──────────────────────────────────────────── */}
+      <Route path="/parent" element={
+        <ProtectedRoute allowedRoles={['parent', 'relative']}>
+          <ParentLayout />
+        </ProtectedRoute>
+      }>
+        <Route index element={
+          <Suspense fallback={<PageLoader />}>
+            <ParentDashboard />
+          </Suspense>
+        } />
+        <Route path="tasks" element={
+          <ModuleRoute module="tasks">
+            <Suspense fallback={<PageLoader />}><TaskManager /></Suspense>
+          </ModuleRoute>
+        } />
+        <Route path="grades" element={
+          <ModuleRoute module="grades">
+            <Suspense fallback={<PageLoader />}><GradeTracker /></Suspense>
+          </ModuleRoute>
+        } />
+        <Route path="allowance" element={
+          <ModuleRoute anyOf={['allowance', 'piggy_bank', 'goals']}>
+            <Suspense fallback={<PageLoader />}><AllowanceManager /></Suspense>
+          </ModuleRoute>
+        } />
+        <Route path="family-shop" element={
+          <ModuleRoute module="family_shop">
+            <Suspense fallback={<PageLoader />}><FamilyShopManager /></Suspense>
+          </ModuleRoute>
+        } />
+        <Route path="calendar" element={
+          <ModuleRoute module="calendar">
+            <Suspense fallback={<PageLoader />}><CalendarPage /></Suspense>
+          </ModuleRoute>
+        } />
+        <Route path="shopping" element={
+          <ModuleRoute module="shopping">
+            <Suspense fallback={<PageLoader />}><ShoppingList /></Suspense>
+          </ModuleRoute>
+        } />
+        <Route path="health" element={
+          <ModuleRoute module="health">
+            <Suspense fallback={<PageLoader />}><HealthCenter /></Suspense>
+          </ModuleRoute>
+        } />
+        <Route path="mural" element={
+          <ModuleRoute module="mural">
+            <Suspense fallback={<PageLoader />}><MuralBoard /></Suspense>
+          </ModuleRoute>
+        } />
+        <Route path="reports" element={
+          <ModuleRoute module="reports">
+            <Suspense fallback={<PageLoader />}><ReportsPage /></Suspense>
+          </ModuleRoute>
+        } />
         <Route path="family" element={<Navigate to="/parent/family-administration" replace />} />
-        <Route path="admin" element={<Navigate to="/parent/family-administration" replace />} />
-        <Route path="family-administration" element={<GestorRoute><FamilyAdministration /></GestorRoute>} />
+        <Route path="admin"  element={<Navigate to="/parent/family-administration" replace />} />
+        <Route path="family-administration" element={
+          <GestorRoute>
+            <Suspense fallback={<PageLoader />}><FamilyAdministration /></Suspense>
+          </GestorRoute>
+        } />
       </Route>
 
-      {/* CHILD ROUTES */}
-      <Route path="/child" element={<ProtectedRoute allowedRoles={['child']}><ChildLayout /></ProtectedRoute>}>
-        <Route index element={<ChildDashboard />} />
-        <Route path="tasks" element={<ModuleRoute module="tasks"><MyTasks /></ModuleRoute>} />
-        <Route path="grades" element={<ModuleRoute module="grades"><MyGrades /></ModuleRoute>} />
-        <Route path="allowance" element={<ModuleRoute anyOf={['allowance', 'piggy_bank', 'goals']}><MyAllowance /></ModuleRoute>} />
-        <Route path="family-shop" element={<ModuleRoute module="family_shop"><MyFamilyShop /></ModuleRoute>} />
-        <Route path="calendar" element={<ModuleRoute module="calendar"><MyCalendar /></ModuleRoute>} />
-        <Route path="shopping" element={<ModuleRoute module="shopping"><ShoppingList /></ModuleRoute>} />
-        <Route path="health" element={<ModuleRoute module="health"><HealthCenter /></ModuleRoute>} />
-        <Route path="mural" element={<ModuleRoute module="mural"><MuralBoard /></ModuleRoute>} />
+      {/* ── CHILD ──────────────────────────────────────────────────────── */}
+      <Route path="/child" element={
+        <ProtectedRoute allowedRoles={['child']}>
+          <ChildLayout />
+        </ProtectedRoute>
+      }>
+        <Route index element={
+          <Suspense fallback={<PageLoader />}><ChildDashboard /></Suspense>
+        } />
+        <Route path="tasks" element={
+          <ModuleRoute module="tasks">
+            <Suspense fallback={<PageLoader />}><MyTasks /></Suspense>
+          </ModuleRoute>
+        } />
+        <Route path="grades" element={
+          <ModuleRoute module="grades">
+            <Suspense fallback={<PageLoader />}><MyGrades /></Suspense>
+          </ModuleRoute>
+        } />
+        <Route path="allowance" element={
+          <ModuleRoute anyOf={['allowance', 'piggy_bank', 'goals']}>
+            <Suspense fallback={<PageLoader />}><MyAllowance /></Suspense>
+          </ModuleRoute>
+        } />
+        <Route path="family-shop" element={
+          <ModuleRoute module="family_shop">
+            <Suspense fallback={<PageLoader />}><MyFamilyShop /></Suspense>
+          </ModuleRoute>
+        } />
+        <Route path="calendar" element={
+          <ModuleRoute module="calendar">
+            <Suspense fallback={<PageLoader />}><MyCalendar /></Suspense>
+          </ModuleRoute>
+        } />
+        <Route path="shopping" element={
+          <ModuleRoute module="shopping">
+            <Suspense fallback={<PageLoader />}><ShoppingList /></Suspense>
+          </ModuleRoute>
+        } />
+        <Route path="health" element={
+          <ModuleRoute module="health">
+            <Suspense fallback={<PageLoader />}><HealthCenter /></Suspense>
+          </ModuleRoute>
+        } />
+        <Route path="mural" element={
+          <ModuleRoute module="mural">
+            <Suspense fallback={<PageLoader />}><MuralBoard /></Suspense>
+          </ModuleRoute>
+        } />
       </Route>
 
-      {/* MASTER ROUTES */}
-      <Route path="/master" element={<ProtectedRoute allowedRoles={['master']}><MasterLayout /></ProtectedRoute>}>
-        <Route index element={<MasterDashboard />} />
+      {/* ── MASTER ─────────────────────────────────────────────────────── */}
+      <Route path="/master" element={
+        <ProtectedRoute allowedRoles={['master']}>
+          <MasterLayout />
+        </ProtectedRoute>
+      }>
+        <Route index element={
+          <Suspense fallback={<PageLoader />}><MasterDashboard /></Suspense>
+        } />
       </Route>
 
-      <Route path="*" element={<Navigate to="/login" />} />
+      <Route path="*" element={<Navigate to="/login" replace />} />
     </Routes>
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
 export default function App() {
   return (
     <BrowserRouter>
