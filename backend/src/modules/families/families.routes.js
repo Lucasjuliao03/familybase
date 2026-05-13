@@ -495,7 +495,7 @@ router.post('/relatives', authMiddleware, gestorOnly, async (req, res) => {
     const ap = access_profile === 'auxiliar' ? 'auxiliar' : 'parente';
     const userId = uuidv4();
     const hashed = bcrypt.hashSync(password || '123456', 10);
-    const mustFlag = !!must_change_password;
+    const mustFlag = must_change_password ? 1 : 0;
 
     let dcRel;
     try {

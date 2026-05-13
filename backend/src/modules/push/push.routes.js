@@ -34,27 +34,13 @@ router.post('/subscribe', async (req, res) => {
     const endpoint = subscription.endpoint;
     const subJson = JSON.stringify(subscription);
 
-    // Check if push_subscriptions table exists; create if not
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS push_subscriptions (
-        id TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL,
-        family_id TEXT,
-        endpoint TEXT NOT NULL UNIQUE,
-        subscription TEXT NOT NULL,
-        created_at TEXT DEFAULT (datetime('now')),
-        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-      );
-      CREATE INDEX IF NOT EXISTS idx_push_user ON push_subscriptions(user_id);
-    `);
-
-    // Upsert subscription
+    // Upsert subscription (tabela push_subscriptions já criada no schema Supabase)
     const existing = await db.prepare('SELECT id FROM push_subscriptions WHERE endpoint=?').get(endpoint);
     if (existing) {
-      db.prepare('UPDATE push_subscriptions SET subscription=?, user_id=?, family_id=? WHERE id=?')
+      await db.prepare('UPDATE push_subscriptions SET subscription=?, user_id=?, family_id=? WHERE id=?')
         .run(subJson, req.user.id, req.user.familyId || null, existing.id);
     } else {
-      db.prepare('INSERT INTO push_subscriptions (id, user_id, family_id, endpoint, subscription) VALUES (?,?,?,?,?)')
+      await db.prepare('INSERT INTO push_subscriptions (id, user_id, family_id, endpoint, subscription) VALUES (?,?,?,?,?)')
         .run(uuidv4(), req.user.id, req.user.familyId || null, endpoint, subJson);
     }
 
@@ -71,7 +57,7 @@ router.delete('/unsubscribe', async (req, res) => {
     const db = req.db;
     const { endpoint } = req.body;
     if (endpoint) {
-      db.prepare('DELETE FROM push_subscriptions WHERE endpoint=? AND user_id=?').run(endpoint, req.user.id);
+      await db.prepare('DELETE FROM push_subscriptions WHERE endpoint=? AND user_id=?').run(endpoint, req.user.id);
     }
     res.json({ ok: true });
   } catch (err) {

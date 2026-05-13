@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { moduleAllowed } from '../../lib/familyModules';
-import api from '../../services/api';
+import api, { apiOrigin } from '../../services/api';
 import { PRESET_AVATARS } from '../../components/AvatarPicker';
 
 export default function ParentDashboard() {
@@ -68,7 +68,7 @@ export default function ParentDashboard() {
             <div className="flex gap-12" style={{alignItems:'center',marginBottom:16}}>
               <div className="avatar" style={{background:`linear-gradient(135deg, ${child.color}, ${child.color}88)`, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden'}}>
                 {child.avatar_url ? (
-                  <img src={`http://localhost:3001${child.avatar_url}`} alt="" style={{width: '100%', height: '100%', objectFit: 'cover'}} />
+                  <img src={`${apiOrigin}${child.avatar_url}`} alt="" style={{width: '100%', height: '100%', objectFit: 'cover'}} />
                 ) : (
                   child.avatar_preset ? PRESET_AVATARS.find(a => a.id === child.avatar_preset)?.emoji : child.name[0]
                 )}
@@ -123,7 +123,7 @@ export default function ParentDashboard() {
             <div key={h.id} className="flex gap-12" style={{padding:'10px 0',borderBottom:'1px solid var(--border)',alignItems:'center'}}>
               <div className="avatar-sm" style={{background: h.child_color ? `${h.child_color}22` : 'var(--bg)',color: h.child_color || 'var(--text)',fontSize:'1rem',fontWeight:700, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden'}}>
                 {h.avatar_url ? (
-                  <img src={`http://localhost:3001${h.avatar_url}`} alt="" style={{width: '100%', height: '100%', objectFit: 'cover'}} />
+                  <img src={`${apiOrigin}${h.avatar_url}`} alt="" style={{width: '100%', height: '100%', objectFit: 'cover'}} />
                 ) : (
                   h.avatar_preset ? PRESET_AVATARS.find(a => a.id === h.avatar_preset)?.emoji : h.child_name?.[0]
                 )}

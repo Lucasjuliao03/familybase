@@ -86,8 +86,9 @@ router.post('/register', async (req, res) => {
 
     const { supabase } = require('../../database/supabaseClient');
     let userId = uuidv4();
+    let hashedPassword = null;
 
-    // Criar no Supabase Auth se disponível
+    // Criar no Supabase Auth (fonte principal de autenticação)
     if (supabase && process.env.SUPABASE_URL) {
       const { data: sData, error: sError } = await supabase.auth.admin.createUser({
         email,
@@ -96,14 +97,19 @@ router.post('/register', async (req, res) => {
         user_metadata: { name }
       });
       if (sError) {
-        console.warn('⚠️ Erro ao criar no Supabase Auth (usando UUID gerado):', sError.message);
+        console.warn('⚠️ Erro ao criar no Supabase Auth:', sError.message);
+        // Fallback: guardar hash local se Supabase Auth falhar
+        hashedPassword = bcrypt.hashSync(password, 10);
       } else if (sData.user) {
         userId = sData.user.id;
         console.log(`✅ Supabase Auth user created: ${userId}`);
       }
+    } else {
+      // Sem Supabase configurado: usar hash local
+      hashedPassword = bcrypt.hashSync(password, 10);
     }
 
-    const hashedPassword = bcrypt.hashSync(password, 10);
+    // Inserir perfil na tabela users (password é nullable — auth é via Supabase Auth)
     await db.prepare('INSERT INTO users (id, name, email, password, role, family_id, avatar_preset) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
       userId, name, email, hashedPassword, 'parent', familyId, 'parent_male'
     );
@@ -269,9 +275,43 @@ router.put('/password', authMiddleware, async (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body;
     const db = req.db;
-    const user = await db.prepare('SELECT password FROM users WHERE id = ?').get(req.user.id);
-    if (!bcrypt.compareSync(currentPassword, user.password)) return res.status(400).json({ error: 'Senha atual incorreta' });
-    await db.prepare("UPDATE users SET password = ?, must_change_password = FALSE, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(bcrypt.hashSync(newPassword, 10), req.user.id);
+    const { supabase } = require('../../database/supabaseClient');
+
+    // Verificar senha atual via Supabase Auth (fonte de verdade)
+    if (supabase && process.env.SUPABASE_URL) {
+      const userRow = await db.prepare('SELECT email FROM users WHERE id = ?').get(req.user.id);
+      if (!userRow) return res.status(404).json({ error: 'Usuário não encontrado' });
+
+      // Verificar senha atual fazendo signIn
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email: userRow.email,
+        password: currentPassword,
+      });
+      if (signInError) return res.status(400).json({ error: 'Senha atual incorreta' });
+
+      // Alterar senha via admin API
+      const { error: updateError } = await supabase.auth.admin.updateUserById(req.user.id, {
+        password: newPassword,
+      });
+      if (updateError) return res.status(500).json({ error: 'Erro ao alterar senha no Supabase Auth' });
+    } else {
+      // Fallback local (bcrypt)
+      const user = await db.prepare('SELECT password FROM users WHERE id = ?').get(req.user.id);
+      if (!user?.password || !bcrypt.compareSync(currentPassword, user.password)) {
+        return res.status(400).json({ error: 'Senha atual incorreta' });
+      }
+      await db.prepare("UPDATE users SET password = ?, must_change_password = FALSE, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(
+        bcrypt.hashSync(newPassword, 10), req.user.id
+      );
+    }
+
+    // Atualizar hash local como backup (se coluna existir)
+    try {
+      await db.prepare("UPDATE users SET password = ?, must_change_password = FALSE, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(
+        bcrypt.hashSync(newPassword, 10), req.user.id
+      );
+    } catch (_) { /* coluna password pode não existir */ }
+
     res.json({ message: 'Senha alterada com sucesso' });
   } catch (err) {
     return sendJsonForDbError(res, err, { defaultMsg: 'Erro' });
@@ -286,8 +326,20 @@ router.put('/password/first-access', authMiddleware, async (req, res) => {
     const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
     if (!user.must_change_password) return res.status(400).json({ error: 'Não é necessário alterar a senha agora' });
     if (!newPassword || String(newPassword).length < 4) return res.status(400).json({ error: 'Senha muito curta' });
-    await db.prepare("UPDATE users SET password = ?, must_change_password = FALSE, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
-      .run(bcrypt.hashSync(newPassword, 10), req.user.id);
+
+    // Atualizar senha no Supabase Auth
+    const { supabase } = require('../../database/supabaseClient');
+    if (supabase && process.env.SUPABASE_URL) {
+      await supabase.auth.admin.updateUserById(req.user.id, { password: newPassword });
+    }
+
+    // Atualizar hash local como backup
+    try {
+      await db.prepare("UPDATE users SET password = ?, must_change_password = FALSE, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+        .run(bcrypt.hashSync(newPassword, 10), req.user.id);
+    } catch (_) {
+      await db.prepare("UPDATE users SET must_change_password = FALSE, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(req.user.id);
+    }
     const updated = await db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
     const token = jwt.sign(
       buildTokenPayload(updated),

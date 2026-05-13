@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect } from 'react';
-import api from '../services/api';
+import { supabase } from '../lib/supabase';
 
 const AuthContext = createContext(null);
 
@@ -12,66 +12,119 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const token = localStorage.getItem('fb_token');
-    if (token) {
-      api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
-      fetchMe();
-    } else {
-      setLoading(false);
-    }
+    // 1. Ouvinte global de mudanças de sessão do Supabase
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (event, session) => {
+        if (session?.user) {
+          await loadUserProfile(session.user.id, session.user.email);
+        } else {
+          clearState();
+          setLoading(false);
+        }
+      }
+    );
+
+    // 2. Busca inicial
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) {
+        loadUserProfile(session.user.id, session.user.email);
+      } else {
+        setLoading(false);
+      }
+    });
+
+    return () => {
+      subscription?.unsubscribe();
+    };
   }, []);
 
-  const fetchMe = async () => {
+  const clearState = () => {
+    setUser(null);
+    setFamily(null);
+    setChildProfile(null);
+    setModules({});
+    setMustChangePassword(false);
+  };
+
+  const loadUserProfile = async (userId, email) => {
     try {
-      const { data } = await api.get('/auth/me');
-      setUser(data.user);
-      setFamily(data.family);
-      setChildProfile(data.childProfile);
-      setMustChangePassword(!!data.mustChangePassword || !!data.user?.must_change_password);
-      setModules(data.modules || {});
-    } catch {
-      localStorage.removeItem('fb_token');
-      delete api.defaults.headers.common['Authorization'];
-      setUser(null);
-      setFamily(null);
-      setChildProfile(null);
-      setModules({});
+      // Busca o perfil do usuário
+      const { data: profile, error } = await supabase
+        .from('users')
+        .select('*')
+        .eq('id', userId)
+        .single();
+
+      if (error || !profile) {
+        // Se o auth user existe mas não tem na tabela users, precisamos criar
+        console.warn('Perfil não encontrado para o usuário:', email);
+        clearState();
+        setLoading(false);
+        return;
+      }
+
+      setUser({ ...profile, email });
+      setMustChangePassword(!!profile.must_change_password);
+
+      // Busca dados da família e módulos persistentes
+      if (profile.family_id) {
+        const { data: familyData } = await supabase.from('families').select('*').eq('id', profile.family_id).single();
+        setFamily(familyData);
+
+        // Mescla os módulos ativos da família com os padrões
+        const defaultMods = { tasks: true, calendar: true, routines: true, medals: true, reports: true, shopping: true, mural: true, family_shop: true, allowance: true, piggy_bank: true, goals: true, notifications: true, health: true };
+        const savedMods = familyData.active_modules || {};
+        
+        // Se a família nunca salvou nada, usa os padrões. Se salvou, usa os salvos.
+        const mergedMods = Object.keys(savedMods).length > 0 ? savedMods : defaultMods;
+        setModules(mergedMods);
+      }
+
+      // Se for criança, busca o perfil de child
+      if (profile.role === 'child') {
+        const { data: cData } = await supabase.from('children').select('*').eq('user_id', userId).single();
+        setChildProfile(cData);
+      } else {
+        setChildProfile(null);
+      }
+    } catch (err) {
+      console.error('Erro ao carregar perfil:', err);
     } finally {
       setLoading(false);
     }
   };
 
   const login = async (email, password) => {
-    const { data } = await api.post('/auth/login', { email, password });
-    localStorage.setItem('fb_token', data.token);
-    api.defaults.headers.common['Authorization'] = `Bearer ${data.token}`;
-    setUser(data.user);
-    setFamily(data.family);
-    setChildProfile(data.childProfile);
-    setMustChangePassword(!!data.mustChangePassword || !!data.user?.must_change_password);
-    setModules(data.modules || {});
-    return data;
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) throw new Error(error.message);
+    await loadUserProfile(data.user.id, email);
+    return { user: data.user };
   };
 
   const register = async (formData) => {
-    const { data } = await api.post('/auth/register', formData);
-    localStorage.setItem('fb_token', data.token);
-    api.defaults.headers.common['Authorization'] = `Bearer ${data.token}`;
-    setUser(data.user);
-    setFamily(data.family);
-    setMustChangePassword(!!data.mustChangePassword || !!data.user?.must_change_password);
-    setModules(data.modules || {});
+    // Cadastro de família + gestor diretamente pelo frontend via RPC ou Supabase Auth
+    // Neste contexto BaaS, normalmente criamos via Edge Function ou uma lógica direta
+    const { data, error } = await supabase.auth.signUp({
+      email: formData.email,
+      password: formData.password,
+      options: {
+        data: { name: formData.name }
+      }
+    });
+    if (error) throw new Error(error.message);
+    // (A criação das tabelas 'users' e 'families' pode depender de Triggers no banco
+    // ou ser feita em seguida no frontend caso o RLS permita insert sem family_id).
     return data;
   };
 
-  const logout = () => {
-    localStorage.removeItem('fb_token');
-    delete api.defaults.headers.common['Authorization'];
-    setUser(null);
-    setFamily(null);
-    setChildProfile(null);
-    setMustChangePassword(false);
-    setModules({});
+  const logout = async () => {
+    await supabase.auth.signOut();
+    clearState();
+  };
+
+  const fetchMe = async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user) await loadUserProfile(user.id, user.email);
   };
 
   const clearMustChangePassword = () => setMustChangePassword(false);
@@ -90,8 +143,7 @@ export function AuthProvider({ children }) {
       logout,
       fetchMe,
       clearMustChangePassword,
-    }}
-    >
+    }}>
       {children}
     </AuthContext.Provider>
   );

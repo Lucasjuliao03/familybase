@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { usePWA } from '../contexts/PWAContext';
 
 export default function PWAInstallBanner() {
-  const { canInstall, promptInstall, isInstalled, notifPermission, isPushSubscribed, requestNotifications, swReady } = usePWA();
+  const pwaCtx = usePWA();
   const [dismissed, setDismissed] = useState(() => localStorage.getItem('pwa-banner-dismissed') === '1');
   const [notifDismissed, setNotifDismissed] = useState(() => localStorage.getItem('pwa-notif-dismissed') === '1');
   const [installing, setInstalling] = useState(false);
@@ -10,8 +10,11 @@ export default function PWAInstallBanner() {
 
   // Auto-dismiss banner after install
   useEffect(() => {
-    if (isInstalled) setDismissed(true);
-  }, [isInstalled]);
+    if (pwaCtx?.isInstalled) setDismissed(true);
+  }, [pwaCtx?.isInstalled]);
+
+  if (!pwaCtx) return null;
+  const { canInstall, promptInstall, isInstalled, notifPermission, isPushSubscribed, requestNotifications, swReady } = pwaCtx;
 
   const handleInstall = async () => {
     setInstalling(true);
