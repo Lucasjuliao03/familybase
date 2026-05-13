@@ -61,6 +61,58 @@ function omitNullish(obj) {
   return out;
 }
 
+// Verifica e atribui medalhas à criança após aprovação de tarefa
+async function checkAndAwardMedals(supabase, childId, familyId, currentStreak) {
+  try {
+    // Contar tarefas aprovadas
+    const { count: taskCount } = await supabase
+      .from('task_occurrences')
+      .select('*', { count: 'exact', head: true })
+      .eq('child_id', childId)
+      .eq('status', 'approved');
+
+    // Obter medalhas disponíveis (família + globais)
+    const { data: medals } = await supabase
+      .from('medals')
+      .select('*')
+      .eq('is_active', true)
+      .or(`family_id.eq.${familyId},family_id.is.null`);
+
+    if (!medals?.length) return;
+
+    // Medalhas já conquistadas
+    const { data: earned } = await supabase
+      .from('earned_medals')
+      .select('medal_id')
+      .eq('child_id', childId);
+    const earnedIds = new Set((earned || []).map(e => e.medal_id));
+
+    const toAward = [];
+    let bonusPoints = 0;
+
+    for (const medal of medals) {
+      if (earnedIds.has(medal.id)) continue;
+      let qualified = false;
+      if (medal.requirement_type === 'task_count' && taskCount >= (medal.requirement_value || 1)) qualified = true;
+      if (medal.requirement_type === 'task_streak' && currentStreak >= (medal.requirement_value || 1)) qualified = true;
+      if (qualified) {
+        toAward.push({ id: uuidv4(), medal_id: medal.id, child_id: childId });
+        bonusPoints += medal.extra_points || 0;
+      }
+    }
+
+    if (toAward.length) {
+      await supabase.from('earned_medals').upsert(toAward, { onConflict: 'medal_id,child_id', ignoreDuplicates: true });
+      if (bonusPoints > 0) {
+        const { data: ch } = await supabase.from('children').select('points').eq('id', childId).single();
+        if (ch) await supabase.from('children').update({ points: (ch.points || 0) + bonusPoints }).eq('id', childId);
+      }
+    }
+  } catch (err) {
+    console.warn('Medal check failed:', err.message);
+  }
+}
+
 function toYMDLocal(d = new Date()) {
   const y = d.getFullYear();
   const m = d.getMonth() + 1;
@@ -496,8 +548,28 @@ const api = {
     }
 
     if (path.startsWith('/shopping')) {
-      const { data } = await supabase.from('shopping_list').select('*, registered_by:users!shopping_list_registered_by_fkey(name), bought_by:users!shopping_list_bought_by_fkey(name)').eq('family_id', familyId).order('created_at', { ascending: false });
-      return { data: { pending: (data || []).filter(i => !i.is_bought), history: (data || []).filter(i => i.is_bought) }};
+      const { data } = await supabase
+        .from('shopping_list')
+        .select('*')
+        .eq('family_id', familyId)
+        .order('created_at', { ascending: false });
+      const rows = data || [];
+      // Enriquecer com nomes dos utilizadores (registered_by, bought_by)
+      const uids = [...new Set([
+        ...rows.map(i => i.registered_by).filter(Boolean),
+        ...rows.map(i => i.bought_by).filter(Boolean),
+      ])];
+      let nameMap = {};
+      if (uids.length) {
+        const { data: users } = await supabase.from('users').select('id, name').in('id', uids);
+        (users || []).forEach(u => { nameMap[u.id] = u.name; });
+      }
+      const mapped = rows.map(i => ({
+        ...i,
+        registered_by_name: nameMap[i.registered_by] || '',
+        bought_by_name: nameMap[i.bought_by] || '',
+      }));
+      return { data: { pending: mapped.filter(i => !i.is_bought), history: mapped.filter(i => i.is_bought) }};
     }
 
     if (path.startsWith('/tasks/occurrences')) {
@@ -506,6 +578,8 @@ const api = {
       if (d) q = q.eq('occurrence_date', String(d).slice(0, 10));
       const childId = config.params?.child_id;
       if (childId) q = q.eq('child_id', childId);
+      const statusParam = config.params?.status;
+      if (statusParam) q = q.eq('status', statusParam);
       const { data, error } = await q.order('occurrence_date', { ascending: true });
       if (error) throw new Error(error.message);
       const mapOcc = (o) => {
@@ -583,11 +657,19 @@ const api = {
 
     if (path === '/gamification/medals') {
       try {
-        const { data } = await supabase.from('medals').select('*').eq('family_id', familyId);
+        const { data } = await supabase.from('medals').select('*').or(`family_id.eq.${familyId},family_id.is.null`);
         return { data: data || [] };
       } catch {
         return { data: [] };
       }
+    }
+
+    if (path.startsWith('/gamification/child-stats')) {
+      const cid = config.params?.child_id;
+      if (!cid) return { data: null };
+      const { data: child } = await supabase.from('children').select('name, points, coins, xp, xp_next_level, level, streak_current, streak_best').eq('id', cid).maybeSingle();
+      const { data: earned } = await supabase.from('earned_medals').select('*, medals(*)').eq('child_id', cid);
+      return { data: { ...child, earned_medals: earned || [] } };
     }
 
     if (path === '/families/modules') {
@@ -616,7 +698,9 @@ const api = {
     }
 
     if (path.startsWith('/allowance/goals')) {
-      const { data } = await supabase.from('savings_goals').select('*').eq('family_id', familyId).order('created_at', { ascending: false });
+      let q = supabase.from('savings_goals').select('*').eq('family_id', familyId);
+      if (config.params?.child_id) q = q.eq('child_id', config.params.child_id);
+      const { data } = await q.order('created_at', { ascending: false });
       return { data: data || [] };
     }
 
@@ -1095,7 +1179,17 @@ const api = {
     }
 
     if (path === '/allowance/goals') {
-      const { data, error } = await supabase.from('savings_goals').insert([{ ...body, family_id: familyId, id: uuidv4() }]).select().single();
+      const goalData = { ...body, family_id: familyId, id: uuidv4() };
+      // Se não foi fornecido child_id, tentar obter da tabela children pelo user atual
+      if (!goalData.child_id) {
+        const { data: { session } } = await supabase.auth.getSession();
+        const uid = session?.user?.id;
+        if (uid) {
+          const { data: cr } = await supabase.from('children').select('id').eq('user_id', uid).maybeSingle();
+          if (cr?.id) goalData.child_id = cr.id;
+        }
+      }
+      const { data, error } = await supabase.from('savings_goals').insert([goalData]).select().single();
       if (error) throw new Error(error.message);
       return { data };
     }
@@ -1753,6 +1847,35 @@ const api = {
         .update({ status: newStatus, completed_at: new Date().toISOString() })
         .eq('id', occId);
       if (error) throw new Error(error.message);
+
+      // Se não precisa de aprovação, atribuir pontos imediatamente
+      if (newStatus === 'completed' && occ.child_id && (task?.points > 0 || task?.coins > 0)) {
+        const taskPoints = task.points || 0;
+        const taskCoins = task.coins || 0;
+        await supabase.from('task_occurrences').update({ points_awarded: taskPoints }).eq('id', occId);
+        const { data: child } = await supabase.from('children').select('points, coins, xp, xp_next_level, level, streak_current, streak_best, streak_last_date').eq('id', occ.child_id).single();
+        if (child) {
+          const today = new Date().toISOString().split('T')[0];
+          const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
+          const lastDate = child.streak_last_date;
+          const newStreak = lastDate === yesterday ? (child.streak_current || 0) + 1 : lastDate === today ? child.streak_current : 1;
+          const newXp = (child.xp || 0) + taskPoints;
+          let newLevel = child.level || 1;
+          let newXpNext = child.xp_next_level || 100;
+          if (newXp >= newXpNext) { newLevel++; newXpNext = Math.round(newXpNext * 1.5); }
+          await supabase.from('children').update({
+            points: (child.points || 0) + taskPoints,
+            coins: (child.coins || 0) + taskCoins,
+            xp: newXp,
+            level: newLevel,
+            xp_next_level: newXpNext,
+            streak_current: newStreak,
+            streak_best: Math.max(newStreak, child.streak_best || 0),
+            streak_last_date: today,
+          }).eq('id', occ.child_id);
+          await checkAndAwardMedals(supabase, occ.child_id, familyId, newStreak);
+        }
+      }
       return { data: { message: 'Ocorrência atualizada', status: newStatus } };
     }
 
@@ -1763,8 +1886,43 @@ const api = {
       const patch = approved
         ? { status: 'approved', approved_at: new Date().toISOString(), approved_by: userId }
         : { status: 'rejected', rejected_at: new Date().toISOString(), rejected_by: userId, rejection_reason: body?.rejection_reason || null };
-      const { data, error } = await supabase.from('task_occurrences').update(patch).eq('id', occId).eq('family_id', familyId).select().single();
+      const { data, error } = await supabase.from('task_occurrences').update(patch).eq('id', occId).eq('family_id', familyId).select('*, tasks(points, coins)').single();
       if (error) throw new Error(error.message);
+
+      // Ao aprovar: atribuir pontos/moedas à criança e verificar medalhas
+      if (approved && data?.child_id) {
+        const taskPoints = data.tasks?.points || 0;
+        const taskCoins = data.tasks?.coins || 0;
+        if (taskPoints > 0 || taskCoins > 0) {
+          // Atualiza points_awarded na ocorrência
+          await supabase.from('task_occurrences').update({ points_awarded: taskPoints }).eq('id', occId);
+          // Incrementa pontos/moedas/xp na criança
+          const { data: child } = await supabase.from('children').select('points, coins, xp, xp_next_level, level, streak_current, streak_best, streak_last_date').eq('id', data.child_id).single();
+          if (child) {
+            const today = new Date().toISOString().split('T')[0];
+            const lastDate = child.streak_last_date;
+            const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
+            const newStreak = lastDate === yesterday ? (child.streak_current || 0) + 1 : lastDate === today ? child.streak_current : 1;
+            const newXp = (child.xp || 0) + taskPoints;
+            let newLevel = child.level || 1;
+            let newXpNext = child.xp_next_level || 100;
+            if (newXp >= newXpNext) { newLevel++; newXpNext = Math.round(newXpNext * 1.5); }
+            await supabase.from('children').update({
+              points: (child.points || 0) + taskPoints,
+              coins: (child.coins || 0) + taskCoins,
+              xp: newXp,
+              level: newLevel,
+              xp_next_level: newXpNext,
+              streak_current: newStreak,
+              streak_best: Math.max(newStreak, child.streak_best || 0),
+              streak_last_date: today,
+              updated_at: new Date().toISOString(),
+            }).eq('id', data.child_id);
+            // Verificar e atribuir medalhas
+            await checkAndAwardMedals(supabase, data.child_id, familyId, newStreak);
+          }
+        }
+      }
       return { data };
     }
 

@@ -246,7 +246,38 @@ END
 $chk$;
 
 -- -----------------------------------------------------------------------------
--- 6) Confirmar Email desativado para auth — lembrete no comentário
+-- 7) Garantir RLS permissiva para earned_medals INSERT (api atribui medalhas)
+-- -----------------------------------------------------------------------------
+
+DO $em$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies WHERE tablename = 'earned_medals' AND policyname = 'Family can insert earned medals'
+  ) THEN
+    EXECUTE $p$
+      CREATE POLICY "Family can insert earned medals" ON public.earned_medals
+      FOR INSERT WITH CHECK (
+        child_id IN (SELECT id FROM public.children WHERE family_id = public.get_current_user_family_id())
+      );
+    $p$;
+  END IF;
+END
+$em$;
+
+-- Medalhas padrão globais (se não existirem)
+INSERT INTO public.medals (name, name_en, description, icon, category, requirement_type, requirement_value, extra_points, rule_description, is_active)
+VALUES
+  ('Primeiros Passos',   'First Steps',    'Completa a tua primeira tarefa',       '🌱', 'tasks',  'task_count',  1,   5,  'Completa 1 tarefa',        true),
+  ('Iniciante Dedicado', 'Dedicated Beginner', 'Completa 5 tarefas',              '⭐', 'tasks',  'task_count',  5,   10, 'Completa 5 tarefas',       true),
+  ('Herói das Tarefas',  'Task Hero',      'Completa 20 tarefas',                 '🦸', 'tasks',  'task_count',  20,  25, 'Completa 20 tarefas',      true),
+  ('Campeão',            'Champion',       'Completa 50 tarefas',                 '🏆', 'tasks',  'task_count',  50,  50, 'Completa 50 tarefas',      true),
+  ('Sequência de 3',     'Streak 3',       '3 dias consecutivos com tarefas',     '🔥', 'streak', 'task_streak', 3,   10, 'Sequência de 3 dias',      true),
+  ('Semana Perfeita',    'Perfect Week',   '7 dias consecutivos com tarefas',     '💎', 'streak', 'task_streak', 7,   20, 'Sequência de 7 dias',      true),
+  ('Mês Exemplar',       'Exemplary Month','30 dias consecutivos com tarefas',    '👑', 'streak', 'task_streak', 30,  100,'Sequência de 30 dias',     true)
+ON CONFLICT DO NOTHING;
+
+-- -----------------------------------------------------------------------------
+-- 8) Confirmar Email desativado para auth — lembrete no comentário
 --    No Supabase Dashboard: Authentication > Settings > desabilitar
 --    "Enable email confirmations" para que signUp retorne sessão imediatamente.
 -- -----------------------------------------------------------------------------

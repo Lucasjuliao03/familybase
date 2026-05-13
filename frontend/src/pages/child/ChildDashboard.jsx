@@ -12,7 +12,7 @@ export default function ChildDashboard() {
   useEffect(() => {
     if (childProfile?.id) {
       api.get(`/gamification/profile/${childProfile.id}`).then(r => setProfile(r.data)).catch(() => {});
-      api.get('/tasks/occurrences', { params: { status: 'pending' } }).then(r => setOccurrences(r.data.slice(0, 5))).catch(() => {});
+      api.get('/tasks/occurrences', { params: { status: 'pending', child_id: childProfile.id } }).then(r => setOccurrences(r.data.slice(0, 5))).catch(() => {});
     }
   }, [childProfile]);
 

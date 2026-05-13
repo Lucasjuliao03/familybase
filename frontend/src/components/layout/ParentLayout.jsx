@@ -82,13 +82,13 @@ export default function ParentLayout() {
       <aside className={`app-sidebar ${collapsed ? 'collapsed' : ''} ${mobileOpen ? 'open' : ''}`}>
         <div className="sidebar-logo" style={{ flexDirection: 'column', alignItems: 'center', textAlign: 'center', gap: 6 }}>
           {family?.logo_url ? (
-            <img src={publicAssetUrl(family.logo_url)} alt="" style={{ height: collapsed ? 32 : 40, maxWidth: collapsed ? 40 : 160, objectFit: 'contain' }} />
+            <img src={publicAssetUrl(family.logo_url)} alt="" style={{ height: collapsed ? 32 : 44, maxWidth: collapsed ? 44 : 160, objectFit: 'contain' }} />
           ) : (
-            <img src="/logo.png" alt="FamilyBase" style={{ height: collapsed ? 32 : 40 }} />
+            <img src="/logo512.png" alt="Base Familiar" style={{ height: collapsed ? 36 : 52, objectFit: 'contain' }} />
           )}
           {!collapsed && (
             <>
-              <h1 style={{ margin: 0, lineHeight: 1.15 }}>FamilyBase</h1>
+              <h1 style={{ margin: 0, lineHeight: 1.15 }}>Base Familiar</h1>
               {family?.name && <div className="sidebar-family-name">{family.name}</div>}
             </>
           )}

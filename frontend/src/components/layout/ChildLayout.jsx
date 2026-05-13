@@ -75,11 +75,11 @@ export default function ChildLayout() {
       <aside className={`app-sidebar ${mobileOpen ? 'open' : ''}`}>
         <div className="sidebar-logo" style={{ flexDirection: 'column', alignItems: 'center', textAlign: 'center', gap: 6 }}>
           {family?.logo_url ? (
-            <img src={`${api.defaults.baseURL?.replace('/api', '') || ''}${family.logo_url}`} alt="Logo" style={{ height: 40, maxWidth: 160, objectFit: 'contain' }} />
+            <img src={`${api.defaults.baseURL?.replace('/api', '') || ''}${family.logo_url}`} alt="Logo" style={{ height: 44, maxWidth: 160, objectFit: 'contain' }} />
           ) : (
-            <img src="/logo.png" alt="FamilyBase" style={{height: 40}} />
+            <img src="/logo512.png" alt="Base Familiar" style={{ height: 52, objectFit: 'contain' }} />
           )}
-          <h1 style={{ margin: 0, lineHeight: 1.15 }}>FamilyBase</h1>
+          <h1 style={{ margin: 0, lineHeight: 1.15 }}>Base Familiar</h1>
           {family?.name && <div className="sidebar-family-name" style={{ fontSize: '0.85rem', color: 'var(--text-light)', fontWeight: 500 }}>{family.name}</div>}
         </div>
         <div style={{textAlign:'center',padding:'16px 0'}}>

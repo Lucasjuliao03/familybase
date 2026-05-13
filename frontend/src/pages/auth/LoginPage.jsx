@@ -1,4 +1,4 @@
-import { useState } from 'react';
+﻿import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { useLanguage } from '../../contexts/LanguageContext';
@@ -28,9 +28,9 @@ export default function LoginPage() {
     <div className="login-page">
       <div className="login-card">
         <div style={{textAlign: 'center', marginBottom: 16}}>
-          <img src="/logo.png" alt="FamilyBase" style={{height: 64}} />
+          <img src="/logo512.png" alt="Base Familiar" style={{height: 64}} />
         </div>
-        <h1 style={{textAlign: 'center', marginBottom: 8}}>FamilyBase</h1>
+        <h1 style={{textAlign: 'center', marginBottom: 8}}>Base Familiar</h1>
         <p className="login-subtitle">{t('login_subtitle')}</p>
         <form onSubmit={handleSubmit}>
           <div className="form-group">
@@ -39,7 +39,7 @@ export default function LoginPage() {
           </div>
           <div className="form-group">
             <label className="form-label">{t('password')}</label>
-            <input className="form-input" type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••" required />
+            <input className="form-input" type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="â€¢â€¢â€¢â€¢â€¢â€¢" required />
           </div>
           <button className="btn btn-primary btn-lg" type="submit" disabled={loading} style={{width:'100%',justifyContent:'center'}}>
             {loading ? '...' : t('login')}
@@ -49,16 +49,17 @@ export default function LoginPage() {
         <Link to="/register" className="btn btn-ghost btn-lg" style={{width:'100%',justifyContent:'center'}}>{t('register')}</Link>
         <div style={{textAlign:'center',marginTop:16}}>
           <div className="lang-switch" style={{display:'inline-flex'}}>
-            <button className={`lang-btn ${lang==='pt'?'active':''}`} onClick={() => switchLanguage('pt')}>🇧🇷</button>
-            <button className={`lang-btn ${lang==='en'?'active':''}`} onClick={() => switchLanguage('en')}>🇺🇸</button>
+            <button className={`lang-btn ${lang==='pt'?'active':''}`} onClick={() => switchLanguage('pt')}>ðŸ‡§ðŸ‡·</button>
+            <button className={`lang-btn ${lang==='en'?'active':''}`} onClick={() => switchLanguage('en')}>ðŸ‡ºðŸ‡¸</button>
           </div>
         </div>
         <div style={{marginTop:20,padding:12,background:'var(--bg)',borderRadius:'var(--radius-sm)',fontSize:'0.78rem',color:'var(--text-light)'}}>
           <strong>Demo:</strong><br/>
-          👤 pai@familia.com / 123456<br/>
-          👦 lucas@familia.com / 123456
+          ðŸ‘¤ pai@familia.com / 123456<br/>
+          ðŸ‘¦ lucas@familia.com / 123456
         </div>
       </div>
     </div>
   );
 }
+

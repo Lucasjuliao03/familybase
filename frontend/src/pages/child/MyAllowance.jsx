@@ -24,10 +24,11 @@ export default function MyAllowance() {
 
   const fetchData = async () => {
     try {
+      const goalParams = childProfile?.id ? { params: { child_id: childProfile.id } } : {};
       const [rSet, rTrans, rGoals] = await Promise.all([
         api.get('/allowance/settings').catch(() => ({ data: [] })),
         api.get('/allowance/transactions').catch(() => ({ data: [] })),
-        api.get('/allowance/goals').catch(() => ({ data: [] })),
+        api.get('/allowance/goals', goalParams).catch(() => ({ data: [] })),
       ]);
 
       const mySetting = rSet.data[0];
@@ -53,7 +54,7 @@ export default function MyAllowance() {
   const handleSaveGoal = async (e) => {
     e.preventDefault();
     try {
-      await api.post('/allowance/goals', goalForm);
+      await api.post('/allowance/goals', { ...goalForm, child_id: childProfile?.id });
       toast.success('Meta de cofrinho criada!');
       setShowGoalModal(false);
       setGoalForm({ title: '', target_amount: '' });

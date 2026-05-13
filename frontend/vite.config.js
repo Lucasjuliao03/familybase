@@ -14,10 +14,10 @@ export default defineConfig({
       registerType: 'autoUpdate',
 
       manifest: {
-        name: 'FamilyBase',
-        short_name: 'FamilyBase',
+        name: 'Base Familiar',
+        short_name: 'Base Familiar',
         description: 'Gestão familiar, tarefas, mesada, saúde e rotina',
-        theme_color: '#2563eb',
+        theme_color: '#1e3a5f',
         background_color: '#ffffff',
         display: 'standalone',
         start_url: '/',
@@ -26,12 +26,26 @@ export default defineConfig({
           {
             src: '/pwa-192x192.png',
             sizes: '192x192',
-            type: 'image/png'
+            type: 'image/png',
+            purpose: 'any'
           },
           {
             src: '/pwa-512x512.png',
             sizes: '512x512',
-            type: 'image/png'
+            type: 'image/png',
+            purpose: 'any'
+          },
+          {
+            src: '/icons/manifest-icon-192.maskable.png',
+            sizes: '192x192',
+            type: 'image/png',
+            purpose: 'maskable'
+          },
+          {
+            src: '/icons/manifest-icon-512.maskable.png',
+            sizes: '512x512',
+            type: 'image/png',
+            purpose: 'maskable'
           }
         ]
       },

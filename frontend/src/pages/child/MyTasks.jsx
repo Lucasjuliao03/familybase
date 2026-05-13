@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react';
+import { useAuth } from '../../contexts/AuthContext';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useToast } from '../../contexts/ToastContext';
 import api from '../../services/api';
 
 export default function MyTasks() {
+  const { childProfile } = useAuth();
   const { t } = useLanguage();
   const toast = useToast();
   const [occurrences, setOccurrences] = useState([]);
@@ -15,6 +17,7 @@ export default function MyTasks() {
     try {
       const params = {};
       if (filter) params.status = filter;
+      if (childProfile?.id) params.child_id = childProfile.id;
       const { data } = await api.get('/tasks/occurrences', { params });
       setOccurrences(data);
     } catch (e) { console.error(e); }

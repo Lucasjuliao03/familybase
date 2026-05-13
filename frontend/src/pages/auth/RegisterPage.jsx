@@ -1,4 +1,4 @@
-import { useState } from 'react';
+﻿import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { useLanguage } from '../../contexts/LanguageContext';
@@ -13,7 +13,7 @@ export default function RegisterPage() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (form.password !== form.confirmPassword) { toast.error('As senhas não coincidem'); return; }
+    if (form.password !== form.confirmPassword) { toast.error('As senhas nÃ£o coincidem'); return; }
     setLoading(true);
     try {
       await register(form);
@@ -28,14 +28,14 @@ export default function RegisterPage() {
     <div className="login-page">
       <div className="login-card">
         <div style={{textAlign: 'center', marginBottom: 16}}>
-          <img src="/logo.png" alt="FamilyBase" style={{height: 64}} />
+          <img src="/logo512.png" alt="Base Familiar" style={{height: 64}} />
         </div>
-        <h1 style={{textAlign: 'center', marginBottom: 8}}>FamilyBase</h1>
+        <h1 style={{textAlign: 'center', marginBottom: 8}}>Base Familiar</h1>
         <p className="login-subtitle">{t('register_subtitle')}</p>
         <form onSubmit={handleSubmit}>
           <div className="form-group">
             <label className="form-label">{t('family_name')}</label>
-            <input className="form-input" value={form.familyName} onChange={e => update('familyName', e.target.value)} placeholder="Ex: Família Silva" required />
+            <input className="form-input" value={form.familyName} onChange={e => update('familyName', e.target.value)} placeholder="Ex: FamÃ­lia Silva" required />
           </div>
           <div className="form-group">
             <label className="form-label">{t('name')}</label>
@@ -63,3 +63,4 @@ export default function RegisterPage() {
     </div>
   );
 }
+
