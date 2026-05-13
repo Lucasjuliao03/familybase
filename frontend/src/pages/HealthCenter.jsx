@@ -789,7 +789,20 @@ export default function HealthCenter() {
           adultsList={hcContext?.adults || []}
           t={t}
           toast={toast}
-          onSaved={() => { setModal(null); loadAppointments(); loadOverview(); }}
+          onSaved={() => {
+            const savedMode = modal?.patient_mode;
+            const savedChildId = modal?.child_id;
+            setModal(null);
+            loadOverview();
+            // Se guardou consulta de filho e scope está errado, muda scope
+            // (o useEffect em loadAppointments vai disparar automaticamente quando scope muda)
+            if (savedMode === 'child' && savedChildId && healthScope !== 'children') {
+              setHealthScope('children');
+              setFilters((f) => ({ ...f, child_id: savedChildId }));
+            } else {
+              loadAppointments();
+            }
+          }}
         />
       )}
       {modal?.kind === 'med' && (

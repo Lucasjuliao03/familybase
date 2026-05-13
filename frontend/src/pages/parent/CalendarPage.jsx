@@ -82,7 +82,7 @@ export default function CalendarPage() {
       setShowModal(false);
       const params = tab === 'history' ? {} : { year, month: month + 1 };
       api.get('/calendar', { params }).then(r => setEvents(r.data));
-    } catch { toast.error(t('error_occurred')); }
+    } catch (err) { toast.error(err.message || t('error_occurred')); }
   };
 
   const handleDelete = async (id) => {

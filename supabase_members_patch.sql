@@ -159,7 +159,94 @@ END
 $do$;
 
 -- -----------------------------------------------------------------------------
--- 4) Confirmar Email desativado para auth — lembrete no comentário
+-- 4) RPC: change_member_password
+--    Permite que um responsável altere a senha de outro membro da família
+--    sem precisar de Edge Function — usa SECURITY DEFINER para aceder a auth.users.
+-- -----------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION public.change_member_password(
+  p_target_user_id uuid,
+  p_new_password   text
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_caller_uid  uuid;
+  v_caller_role text;
+  v_caller_fid  uuid;
+  v_target_fid  uuid;
+BEGIN
+  v_caller_uid := auth.uid();
+  IF v_caller_uid IS NULL THEN
+    RAISE EXCEPTION 'not_authenticated';
+  END IF;
+
+  SELECT role, family_id INTO v_caller_role, v_caller_fid
+  FROM public.users WHERE id = v_caller_uid;
+
+  IF v_caller_role NOT IN ('parent', 'master') THEN
+    RAISE EXCEPTION 'permission_denied: apenas responsáveis podem alterar senhas de membros';
+  END IF;
+
+  SELECT family_id INTO v_target_fid
+  FROM public.users WHERE id = p_target_user_id;
+
+  IF v_target_fid IS DISTINCT FROM v_caller_fid THEN
+    RAISE EXCEPTION 'family_mismatch: o utilizador alvo não pertence à sua família';
+  END IF;
+
+  IF length(p_new_password) < 4 THEN
+    RAISE EXCEPTION 'password_too_short: a senha deve ter pelo menos 4 caracteres';
+  END IF;
+
+  -- Atualiza diretamente o hash bcrypt em auth.users
+  UPDATE auth.users
+  SET encrypted_password = crypt(p_new_password, gen_salt('bf')),
+      updated_at = now()
+  WHERE id = p_target_user_id;
+
+  RETURN jsonb_build_object('ok', true);
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.change_member_password(uuid, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.change_member_password(uuid, text) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.change_member_password(uuid, text) TO service_role;
+
+-- -----------------------------------------------------------------------------
+-- 5) Colunas defensivas em calendar_events (caso schema mais antigo não as tenha)
+-- -----------------------------------------------------------------------------
+
+ALTER TABLE public.calendar_events ADD COLUMN IF NOT EXISTS visible_to_child BOOLEAN DEFAULT true;
+ALTER TABLE public.calendar_events ADD COLUMN IF NOT EXISTS visibility TEXT DEFAULT 'family';
+ALTER TABLE public.calendar_events ADD COLUMN IF NOT EXISTS created_by UUID REFERENCES public.users(id) ON DELETE SET NULL;
+ALTER TABLE public.calendar_events ADD COLUMN IF NOT EXISTS color TEXT DEFAULT '#6C5CE7';
+ALTER TABLE public.calendar_events ADD COLUMN IF NOT EXISTS end_date DATE;
+
+-- Garante que a constraint de visibility existe (só adiciona se ainda não existir)
+DO $chk$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'calendar_events_visibility_check'
+      AND conrelid = 'public.calendar_events'::regclass
+  ) THEN
+    BEGIN
+      ALTER TABLE public.calendar_events
+        ADD CONSTRAINT calendar_events_visibility_check
+        CHECK (visibility IN ('family', 'private', 'child'));
+    EXCEPTION WHEN OTHERS THEN
+      NULL; -- ignora se já existir com outro nome
+    END;
+  END IF;
+END
+$chk$;
+
+-- -----------------------------------------------------------------------------
+-- 6) Confirmar Email desativado para auth — lembrete no comentário
 --    No Supabase Dashboard: Authentication > Settings > desabilitar
 --    "Enable email confirmations" para que signUp retorne sessão imediatamente.
 -- -----------------------------------------------------------------------------

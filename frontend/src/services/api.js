@@ -953,7 +953,7 @@ const api = {
     }
 
     if (path.startsWith('/calendar')) {
-      const row = pickCalendarRow(body, familyId, userId, true);
+      const row = omitNullish(pickCalendarRow(body, familyId, userId, true));
       if (!row.date) throw new Error('Indique a data do evento.');
       const { data, error } = await supabase.from('calendar_events').insert([row]).select('*, children:child_id(name, color)').single();
       if (error) throw new Error(error.message);
@@ -1551,11 +1551,18 @@ const api = {
       const targetUid = ch.user_id;
       const pwd = body?.password;
       const must = !!body?.must_change_password;
-      if (pwd && String(pwd).length >= 4 && targetUid === userId) {
-        const { error } = await supabase.auth.updateUser({ password: String(pwd) });
-        if (error) throw new Error(error.message);
-      } else if (pwd && String(pwd).length >= 4) {
-        throw new Error('Alterar a palavra-passe de outro utilizador requer uma Edge Function com privilégios de administração (Supabase).');
+      if (pwd && String(pwd).length >= 4) {
+        if (targetUid === userId) {
+          const { error } = await supabase.auth.updateUser({ password: String(pwd) });
+          if (error) throw new Error(error.message);
+        } else {
+          // Usa RPC com SECURITY DEFINER para alterar senha de outro utilizador
+          const { error: rpcErr } = await supabase.rpc('change_member_password', {
+            p_target_user_id: targetUid,
+            p_new_password: String(pwd),
+          });
+          if (rpcErr) throw new Error(rpcErr.message);
+        }
       }
       const { error: uErr } = await supabase.from('users').update({ must_change_password: must }).eq('id', targetUid).eq('family_id', familyId);
       if (uErr) throw new Error(uErr.message);
@@ -1569,11 +1576,17 @@ const api = {
       const must = !!body?.must_change_password;
       const { data: tgt } = await supabase.from('users').select('id').eq('id', targetUid).eq('family_id', familyId).maybeSingle();
       if (!tgt) throw new Error('Membro não encontrado.');
-      if (pwd && String(pwd).length >= 4 && targetUid === userId) {
-        const { error } = await supabase.auth.updateUser({ password: String(pwd) });
-        if (error) throw new Error(error.message);
-      } else if (pwd && String(pwd).length >= 4) {
-        throw new Error('Alterar a palavra-passe de outro utilizador requer uma Edge Function com privilégios de administração (Supabase).');
+      if (pwd && String(pwd).length >= 4) {
+        if (targetUid === userId) {
+          const { error } = await supabase.auth.updateUser({ password: String(pwd) });
+          if (error) throw new Error(error.message);
+        } else {
+          const { error: rpcErr } = await supabase.rpc('change_member_password', {
+            p_target_user_id: targetUid,
+            p_new_password: String(pwd),
+          });
+          if (rpcErr) throw new Error(rpcErr.message);
+        }
       }
       const { error: uErr } = await supabase.from('users').update({ must_change_password: must }).eq('id', targetUid).eq('family_id', familyId);
       if (uErr) throw new Error(uErr.message);
@@ -1810,6 +1823,30 @@ const api = {
     if (occUpdateOnly) {
       const occId = occUpdateOnly[1];
       const { data, error } = await supabase.from('task_occurrences').update({ ...body }).eq('id', occId).eq('family_id', familyId).select().single();
+      if (error) throw new Error(error.message);
+      return { data };
+    }
+
+    // Editar aviso do mural — DEVE ficar antes do handler genérico
+    const muralNoticeUpdateMatch = path.match(/^\/mural\/notices\/([^/]+)$/);
+    if (muralNoticeUpdateMatch) {
+      const noticeId = muralNoticeUpdateMatch[1];
+      const allowedFields = [
+        'title', 'content', 'type', 'priority', 'status',
+        'target_type', 'target_user_ids', 'target_child_ids',
+        'start_datetime', 'due_datetime', 'notice_time',
+        'is_recurring', 'recurrence_rule', 'is_pinned',
+        'requires_read_confirmation',
+      ];
+      const patch = {};
+      allowedFields.forEach((k) => { if (body[k] !== undefined) patch[k] = body[k]; });
+      const { data, error } = await supabase
+        .from('family_notices')
+        .update(patch)
+        .eq('id', noticeId)
+        .eq('family_id', familyId)
+        .select()
+        .single();
       if (error) throw new Error(error.message);
       return { data };
     }

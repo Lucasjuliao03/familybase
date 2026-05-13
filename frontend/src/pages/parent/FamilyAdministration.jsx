@@ -974,6 +974,7 @@ function PasswordResetModal({ pwModal, onClose, onSaved, t }) {
       onSaved();
     } catch (err) {
       console.error(err);
+      alert(err.response?.data?.error || err.message || 'Erro ao alterar senha.');
     }
   };
   return (
