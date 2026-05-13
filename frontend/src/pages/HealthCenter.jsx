@@ -89,6 +89,7 @@ export default function HealthCenter() {
   const [filters, setFilters] = useState({ child_id: '', status: '', med_status: '', from: '', to: '' });
   const [modal, setModal] = useState(null);
   const [logModal, setLogModal] = useState(null);
+  const [selectedAppt, setSelectedAppt] = useState(null);
   const [hcContext, setHcContext] = useState(null);
   const [healthScope, setHealthScope] = useState('mine');
   // ID do registo na tabela children para o utilizador child atual
@@ -543,13 +544,23 @@ export default function HealthCenter() {
       {tab === 'appointments' && !canManage && (
         <div className="grid grid-2">
           {appointments.map((a) => (
-            <div key={a.id} className="card">
-              <strong>{a.child_name}</strong>
-              <div style={{ marginTop: 4 }}>{formatDateBr(a.appointment_date)}</div>
-              <div style={{ marginTop: 4, color: 'var(--text-light)', fontSize: '0.9rem' }}>{a.reason || ''}</div>
-              <span className="badge badge-primary mt-8">{t(`health_appt_status_${a.status}`)}</span>
+            <div key={a.id} className="card" style={{ cursor: 'pointer', transition: 'box-shadow 0.2s' }}
+              onClick={() => setSelectedAppt(a)}
+              onMouseEnter={e => e.currentTarget.style.boxShadow = 'var(--shadow-hover)'}
+              onMouseLeave={e => e.currentTarget.style.boxShadow = ''}
+            >
+              <div className="flex-between mb-8">
+                <span className="badge badge-primary">{t(`health_appt_status_${a.status}`)}</span>
+                <span style={{ fontSize: '0.8rem', color: 'var(--text-light)' }}>{formatDateBr(a.appointment_date)} {a.appointment_time || ''}</span>
+              </div>
+              <div style={{ fontWeight: 700, fontSize: '1rem', marginBottom: 4 }}>{a.specialty || t('health_appointment')}</div>
+              {a.doctor_name && <div style={{ fontSize: '0.85rem', color: 'var(--text-light)' }}>👨‍⚕️ {a.doctor_name}</div>}
+              {a.location && <div style={{ fontSize: '0.85rem', color: 'var(--text-light)', marginTop: 2 }}>📍 {a.location}</div>}
+              {a.reason && <div style={{ fontSize: '0.85rem', marginTop: 6, borderTop: '1px solid var(--border)', paddingTop: 6 }}>🗒️ {a.reason}</div>}
+              <div style={{ fontSize: '0.75rem', color: 'var(--primary)', marginTop: 8, fontWeight: 600 }}>Toque para ver detalhes →</div>
             </div>
           ))}
+          {appointments.length === 0 && <div className="card empty-state" style={{ gridColumn: '1/-1' }}><div className="empty-icon">📅</div><h3>{t('health_empty')}</h3></div>}
         </div>
       )}
 
@@ -612,6 +623,24 @@ export default function HealthCenter() {
                     <img key={url} src={publicAssetUrl(url)} alt="Anexo" style={{ height: 60, width: 60, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--border)' }} />
                   ))}
                 </div>
+                {/* Linha do tempo das últimas doses */}
+                {logs.filter(l => l.medication_id === m.id).length > 0 && (
+                  <div style={{ marginTop: 12, borderTop: '1px solid var(--border)', paddingTop: 10 }}>
+                    <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-light)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                      📋 Últimas doses
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      {logs.filter(l => l.medication_id === m.id).slice(0, 5).map(l => (
+                        <div key={l.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.82rem' }}>
+                          <span style={{ width: 8, height: 8, borderRadius: '50%', background: l.status === 'taken' ? 'var(--success)' : l.status === 'skipped' ? 'var(--danger)' : 'var(--warning)', flexShrink: 0 }} />
+                          <span style={{ color: 'var(--text-light)' }}>{l.taken_at ? new Date(l.taken_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—'}</span>
+                          <span className={`badge badge-${l.status === 'taken' ? 'success' : 'danger'}`} style={{ fontSize: '0.7rem', padding: '1px 6px' }}>{l.status === 'taken' ? 'Tomado' : 'Não tomado'}</span>
+                          {l.logged_by_name && <span style={{ color: 'var(--text-light)', marginLeft: 'auto' }}>por {l.logged_by_name}</span>}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 {(canManage || isChild) && (
                   <div className="flex gap-8 mt-12 flex-wrap">
                     {canManage && isParent && <button type="button" className="btn btn-sm btn-ghost" onClick={() => setModal({
@@ -841,6 +870,43 @@ export default function HealthCenter() {
           toast={toast}
           onSaved={() => { setModal(null); loadMedications(); loadOverview(); }}
         />
+      )}
+
+      {selectedAppt && (
+        <div className="modal-overlay" onClick={() => setSelectedAppt(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 480 }}>
+            <div className="modal-header">
+              <h2 className="modal-title">📅 {t('health_appointment')}</h2>
+              <button className="modal-close" onClick={() => setSelectedAppt(null)}>×</button>
+            </div>
+            <div style={{ padding: '16px 0', display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <div className="flex-between">
+                <span className={`badge badge-${selectedAppt.status === 'scheduled' ? 'primary' : selectedAppt.status === 'completed' ? 'success' : 'warning'}`}>
+                  {t(`health_appt_status_${selectedAppt.status}`)}
+                </span>
+                <span style={{ fontWeight: 700 }}>{formatDateBr(selectedAppt.appointment_date)} {selectedAppt.appointment_time || ''}</span>
+              </div>
+              {selectedAppt.specialty && <div><strong>Especialidade:</strong> {selectedAppt.specialty}</div>}
+              {selectedAppt.doctor_name && <div>👨‍⚕️ <strong>{t('health_doctor')}:</strong> {selectedAppt.doctor_name}</div>}
+              {selectedAppt.location && <div>📍 <strong>{t('health_location')}:</strong> {selectedAppt.location}</div>}
+              {selectedAppt.reason && <div>🗒️ <strong>{t('health_reason')}:</strong> {selectedAppt.reason}</div>}
+              {selectedAppt.notes && <div style={{ background: 'var(--bg)', borderRadius: 8, padding: '10px 14px', fontSize: '0.9rem', color: 'var(--text-light)' }}>📝 {selectedAppt.notes}</div>}
+              {imgList(selectedAppt.attachment_urls).length > 0 && (
+                <div>
+                  <div style={{ fontWeight: 600, marginBottom: 8 }}>{t('health_attachments_label')}</div>
+                  <div className="flex gap-8 flex-wrap">
+                    {imgList(selectedAppt.attachment_urls).map(url => (
+                      <a key={url} href={publicAssetUrl(url)} target="_blank" rel="noreferrer">
+                        <img src={publicAssetUrl(url)} alt="" style={{ height: 72, width: 72, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--border)' }} />
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+            <button className="btn btn-ghost" style={{ width: '100%' }} onClick={() => setSelectedAppt(null)}>Fechar</button>
+          </div>
+        </div>
       )}
 
       {logModal && (

@@ -370,7 +370,26 @@ CREATE POLICY "Authenticated users can delete uploads"
   USING (bucket_id = 'uploads');
 
 -- -----------------------------------------------------------------------------
--- 12) Confirmar Email desativado para auth — lembrete no comentário
+-- 13) Permitir que crianças criem pedidos de cofrinho (piggy_requests)
+-- -----------------------------------------------------------------------------
+
+DROP POLICY IF EXISTS "Parents manage piggy requests" ON public.piggy_requests;
+DROP POLICY IF EXISTS "Family view piggy requests" ON public.piggy_requests;
+
+CREATE POLICY "Family view piggy requests" ON public.piggy_requests
+  FOR SELECT USING (family_id = public.get_current_user_family_id());
+
+CREATE POLICY "Children can insert piggy requests" ON public.piggy_requests
+  FOR INSERT WITH CHECK (family_id = public.get_current_user_family_id());
+
+CREATE POLICY "Parents manage piggy requests" ON public.piggy_requests
+  FOR ALL USING (
+    family_id = public.get_current_user_family_id()
+    AND public.get_current_user_role() IN ('parent', 'master')
+  );
+
+-- -----------------------------------------------------------------------------
+-- 14) Confirmar Email desativado para auth — lembrete no comentário
 --    No Supabase Dashboard: Authentication > Settings > desabilitar
 --    "Enable email confirmations" para que signUp retorne sessão imediatamente.
 -- -----------------------------------------------------------------------------

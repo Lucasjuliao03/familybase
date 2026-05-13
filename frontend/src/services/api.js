@@ -657,8 +657,11 @@ const api = {
 
     if (path === '/gamification/medals') {
       try {
-        const { data } = await supabase.from('medals').select('*').or(`family_id.eq.${familyId},family_id.is.null`);
-        return { data: data || [] };
+        const [{ data: famMedals }, { data: globalMedals }] = await Promise.all([
+          supabase.from('medals').select('*').eq('family_id', familyId).order('created_at', { ascending: true }),
+          supabase.from('medals').select('*').is('family_id', null).order('created_at', { ascending: true }),
+        ]);
+        return { data: [...(famMedals || []), ...(globalMedals || [])] };
       } catch {
         return { data: [] };
       }
@@ -979,7 +982,7 @@ const api = {
       }
       let q = supabase
         .from('health_medication_logs')
-        .select('*, medications(name, child_id, patient_user_id), children:child_id(name)')
+        .select('*, medications(name, child_id, patient_user_id), children:child_id(name), logged_by_user:logged_by(name)')
         .eq('family_id', familyId);
       if (medIds) q = q.in('medication_id', medIds);
       if (healthSearch.get('child_id')) q = q.eq('child_id', healthSearch.get('child_id'));
@@ -991,6 +994,7 @@ const api = {
           ...l,
           medication_name: l.medications?.name || '—',
           child_name: l.children?.name || '—',
+          logged_by_name: l.logged_by_user?.name || null,
           taken_date: l.taken_at ? String(l.taken_at).slice(0, 10) : '',
           taken_time: l.taken_at && String(l.taken_at).length > 11 ? String(l.taken_at).slice(11, 19) : '',
         })),
@@ -1198,7 +1202,35 @@ const api = {
     }
 
     if (path === '/allowance/piggy-requests') {
-      const { data, error } = await supabase.from('piggy_requests').insert([{ ...body, family_id: familyId, id: uuidv4() }]).select().single();
+      // Resolver child_id e goal_title — a tabela não tem savings_goal_id
+      let childId = body.child_id || null;
+      let childName = body.child_name || null;
+      let goalTitle = body.goal_title || null;
+
+      // Auto-injectar child_id via sessão actual (criança logada)
+      if (!childId) {
+        const { data: cr } = await supabase.from('children').select('id, name').eq('user_id', userId).eq('family_id', familyId).maybeSingle();
+        if (cr?.id) { childId = cr.id; childName = cr.name; }
+      }
+      if (!childId) throw new Error('Perfil de criança não encontrado. Verifique a conta.');
+
+      // Buscar título da meta pelo savings_goal_id (se fornecido)
+      if (!goalTitle && body.savings_goal_id) {
+        const { data: goalRow } = await supabase.from('savings_goals').select('title').eq('id', body.savings_goal_id).maybeSingle();
+        goalTitle = goalRow?.title || null;
+      }
+
+      const ins = {
+        id: uuidv4(),
+        family_id: familyId,
+        child_id: childId,
+        child_name: childName,
+        goal_title: goalTitle,
+        requested_amount: Number(body.requested_amount) || 0,
+        message: body.message || null,
+        status: 'pending',
+      };
+      const { data, error } = await supabase.from('piggy_requests').insert([ins]).select().single();
       if (error) throw new Error(error.message);
       return { data };
     }

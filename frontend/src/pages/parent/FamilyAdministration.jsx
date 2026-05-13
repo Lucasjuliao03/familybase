@@ -299,7 +299,7 @@ export default function FamilyAdministration() {
       </header>
 
       <nav className="fam-admin-tabs">
-        {['family', 'users', 'profiles', 'appearance', 'medals', 'modules', 'security', 'subscription'].map((k) => (
+        {['family', 'users', 'medals', 'modules'].map((k) => (
           <button key={k} type="button" className={`tab ${tab === k ? 'active' : ''}`} onClick={() => setTab(k)}>
             {t(`fam_admin_tab_${k}`)}
           </button>
