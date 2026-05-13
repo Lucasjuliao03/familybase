@@ -37,6 +37,187 @@ async function getUserRole() {
   return data?.role || null;
 }
 
+function omitUndefined(obj) {
+  const out = { ...obj };
+  Object.keys(out).forEach((k) => {
+    if (out[k] === undefined) delete out[k];
+  });
+  return out;
+}
+
+/** Notas escolares: tabela `grades` usa score, max_score, observation, concept (supabase_missing_tables). */
+function normalizeGradeRow(body, familyId, idOverride) {
+  const id = idOverride || body.id || uuidv4();
+  const row = omitUndefined({
+    id,
+    family_id: familyId,
+    subject: body.subject,
+    type: body.type || 'test',
+    date: body.date,
+    child_id: body.child_id,
+    score: body.score != null ? Number(body.score) : body.grade_value != null ? Number(body.grade_value) : null,
+    max_score: body.max_score != null ? Number(body.max_score) : body.max_value != null ? Number(body.max_value) : 10,
+    concept: body.concept ?? body.term ?? null,
+    observation: body.observation ?? body.notes ?? null,
+  });
+  return row;
+}
+
+function mapGradeFromDb(d) {
+  if (!d) return d;
+  return {
+    ...d,
+    score: d.score ?? d.grade_value,
+    max_score: d.max_score ?? d.max_value,
+    observation: d.observation ?? d.notes,
+    concept: d.concept ?? d.term,
+    child_name: d.children?.name,
+    child_color: d.children?.color,
+    avatar_url: d.children?.avatar_url,
+    avatar_preset: d.children?.avatar_preset,
+  };
+}
+
+const CAL_EVENT_FIELDS = ['title', 'description', 'date', 'time', 'end_date', 'type', 'color', 'child_id', 'visible_to_child', 'visibility'];
+
+function pickCalendarRow(body, familyId, userId, withId) {
+  const row = {};
+  CAL_EVENT_FIELDS.forEach((k) => {
+    if (body[k] !== undefined) row[k] = body[k];
+  });
+  if (row.child_id === '' || row.child_id === undefined) row.child_id = null;
+  if (row.time === '' || row.time == null) {
+    const st = body.start_time;
+    if (st != null && st !== '') row.time = st;
+    else row.time = null;
+  }
+  if (row.end_date === '') row.end_date = null;
+  if (body.end_date != null && row.end_date == null && body.end_date !== '') row.end_date = body.end_date;
+  row.family_id = familyId;
+  row.created_by = userId;
+  if (withId) row.id = body.id || uuidv4();
+  return omitUndefined(row);
+}
+
+function apptExtraFromNotes(notes) {
+  if (!notes || typeof notes !== 'string') return {};
+  try {
+    const o = JSON.parse(notes);
+    if (o && typeof o === 'object' && !Array.isArray(o)) return o;
+  } catch { /* ignore */ }
+  return { reason: notes };
+}
+
+function apptNotesSerialize(body) {
+  const extra = {
+    reason: body.reason ?? null,
+    diagnosis_notes: body.diagnosis_notes ?? null,
+    attachment_urls: body.attachment_urls ?? null,
+    needs_followup: !!body.needs_followup,
+    followup_date: body.followup_date || null,
+  };
+  return JSON.stringify(extra);
+}
+
+function mapAppointmentFromDb(a, childName) {
+  const extra = apptExtraFromNotes(a.notes);
+  const att = extra.attachment_urls ?? (Array.isArray(a.attachment_urls) ? a.attachment_urls : null);
+  return {
+    ...a,
+    appointment_date: a.appointment_date ?? a.date,
+    appointment_time: a.appointment_time ?? a.time ?? '',
+    professional_name: a.professional_name ?? a.doctor_name ?? '',
+    reason: extra.reason ?? '',
+    diagnosis_notes: extra.diagnosis_notes ?? '',
+    attachment_urls: att ?? [],
+    needs_followup: !!extra.needs_followup,
+    followup_date: extra.followup_date ?? null,
+    child_name: childName || a.children?.name || '—',
+  };
+}
+
+/** /health/records/:id → { table, id } */
+function parseHealthSubResource(path) {
+  const p = path.split('/').filter(Boolean);
+  if (p[0] !== 'health' || p.length < 3) return null;
+  const sub = p[1];
+  const id = p[2];
+  const map = {
+    records: 'health_records',
+    appointments: 'health_appointments',
+    medications: 'medications',
+    'medication-logs': 'health_medication_logs',
+  };
+  const table = map[sub];
+  if (!table) return null;
+  return { table, id };
+}
+
+const HEALTH_RECORD_FIELDS = [
+  'child_id', 'patient_user_id', 'record_type', 'symptoms', 'temperature', 'severity', 'status', 'notes',
+  'medication_given', 'stayed_home', 'record_date', 'record_time', 'attachment_urls', 'inactive',
+];
+
+function buildHealthRecordInsert(body, familyId, userId) {
+  const row = { id: uuidv4(), family_id: familyId, created_by: userId };
+  HEALTH_RECORD_FIELDS.forEach((k) => {
+    if (body[k] !== undefined) row[k] = body[k];
+  });
+  if (row.child_id === '') row.child_id = null;
+  if (row.patient_user_id === '') row.patient_user_id = null;
+  if (Array.isArray(row.attachment_urls)) row.attachment_urls = JSON.stringify(row.attachment_urls);
+  return omitUndefined(row);
+}
+
+const MEDICATION_FIELDS = [
+  'child_id', 'patient_user_id', 'name', 'dosage', 'frequency', 'start_date', 'end_date', 'scheduled_time', 'scheduled_times',
+  'notes', 'prescription_image_url', 'attachment_urls', 'status',
+];
+
+function buildMedicationInsert(body, familyId, userId) {
+  const row = { id: uuidv4(), family_id: familyId, created_by: userId };
+  MEDICATION_FIELDS.forEach((k) => {
+    if (body[k] !== undefined) row[k] = body[k];
+  });
+  if (row.child_id === '') row.child_id = null;
+  if (row.patient_user_id === '') row.patient_user_id = null;
+  if (Array.isArray(row.scheduled_times)) row.scheduled_times = JSON.stringify(row.scheduled_times);
+  if (Array.isArray(row.attachment_urls)) row.attachment_urls = JSON.stringify(row.attachment_urls);
+  return omitUndefined(row);
+}
+
+function buildAppointmentInsert(body, familyId) {
+  return omitUndefined({
+    id: uuidv4(),
+    family_id: familyId,
+    child_id: body.child_id === '' ? null : body.child_id ?? null,
+    patient_user_id: body.patient_user_id === '' ? null : body.patient_user_id ?? null,
+    title: (body.reason && String(body.reason).slice(0, 200)) || body.specialty || 'Consulta',
+    doctor_name: body.professional_name || null,
+    specialty: body.specialty || null,
+    date: body.appointment_date,
+    time: body.appointment_time || null,
+    location: body.location || null,
+    notes: apptNotesSerialize(body),
+    status: body.status || 'scheduled',
+  });
+}
+
+function buildAppointmentUpdate(body) {
+  return omitUndefined({
+    child_id: body.child_id === '' ? null : body.child_id ?? undefined,
+    patient_user_id: body.patient_user_id === '' ? null : body.patient_user_id ?? undefined,
+    title: (body.reason && String(body.reason).slice(0, 200)) || body.specialty || body.title || undefined,
+    doctor_name: body.professional_name ?? body.doctor_name,
+    specialty: body.specialty,
+    date: body.appointment_date ?? body.date,
+    time: body.appointment_time ?? body.time ?? null,
+    location: body.location,
+    notes: apptNotesSerialize(body),
+    status: body.status,
+  });
+}
+
 const DEFAULT_MODULE_KEYS = [
   'tasks', 'routines', 'calendar', 'allowance', 'family_shop', 'medals', 'grades',
   'piggy_bank', 'goals', 'reports', 'notifications', 'shopping', 'health', 'mural',
@@ -157,16 +338,7 @@ const api = {
 
     if (path.startsWith('/grades')) {
       const { data } = await supabase.from('grades').select('*, children:child_id(name, color, avatar_url, avatar_preset)').eq('family_id', familyId).order('date', { ascending: false });
-      return { data: (data || []).map(d => ({
-        ...d,
-        score: d.grade_value ?? d.score,
-        max_score: d.max_value ?? d.max_score,
-        observation: d.notes ?? d.observation,
-        child_name: d.children?.name,
-        child_color: d.children?.color,
-        avatar_url: d.children?.avatar_url,
-        avatar_preset: d.children?.avatar_preset,
-      })) };
+      return { data: (data || []).map(mapGradeFromDb) };
     }
     
     if (path.startsWith('/calendar')) {
@@ -287,7 +459,8 @@ const api = {
       if (grades) {
         grades.forEach(g => {
           if (!avgBySubject[g.subject]) avgBySubject[g.subject] = { sum: 0, count: 0 };
-          avgBySubject[g.subject].sum += Number(g.grade_value || 0);
+          const val = Number(g.score ?? g.grade_value ?? 0);
+          avgBySubject[g.subject].sum += val;
           avgBySubject[g.subject].count++;
         });
         Object.keys(avgBySubject).forEach(s => avgBySubject[s] = (avgBySubject[s].sum / avgBySubject[s].count).toFixed(1));
@@ -365,6 +538,136 @@ const api = {
       return { data: data || [] };
     }
 
+    const healthPath = path.split('?')[0];
+    const healthSearch = new URLSearchParams(url.includes('?') ? url.split('?')[1] : '');
+
+    if (healthPath.startsWith('/health/context')) {
+      const { data: children } = await supabase.from('children').select('id, name, user_id').eq('family_id', familyId);
+      const { data: adults } = await supabase
+        .from('users')
+        .select('id, name, role')
+        .eq('family_id', familyId)
+        .in('role', ['parent', 'relative']);
+      const showChildrenTab = (await getUserRole()) === 'parent';
+      return { data: { children: children || [], adults: adults || [], showChildrenTab } };
+    }
+
+    if (healthPath.startsWith('/health/overview')) {
+      const patientUserId = healthSearch.get('patient_user_id');
+      const filterChildId = healthSearch.get('child_id');
+
+      let recBase = supabase.from('health_records').select('*, children:child_id(name)').eq('family_id', familyId);
+      if (patientUserId) recBase = recBase.eq('patient_user_id', patientUserId);
+      else if (filterChildId) recBase = recBase.eq('child_id', filterChildId);
+      const { data: allRecords } = await recBase.order('record_date', { ascending: false }).limit(80);
+
+      const patientIds = [...new Set((allRecords || []).map((r) => r.patient_user_id).filter(Boolean))];
+      let patientNames = {};
+      if (patientIds.length) {
+        const { data: pu } = await supabase.from('users').select('id, name').in('id', patientIds);
+        (pu || []).forEach((u) => { patientNames[u.id] = u.name; });
+      }
+
+      let apptBase = supabase.from('health_appointments').select('*, children:child_id(name)').eq('family_id', familyId).eq('status', 'scheduled');
+      if (patientUserId) apptBase = apptBase.eq('patient_user_id', patientUserId);
+      else if (filterChildId) apptBase = apptBase.eq('child_id', filterChildId);
+      const today = new Date().toISOString().split('T')[0];
+      const { data: upcomingRaw } = await apptBase.gte('date', today).order('date', { ascending: true }).order('time', { ascending: true }).limit(8);
+
+      let medBase = supabase.from('medications').select('*, children:child_id(name)').eq('family_id', familyId).eq('status', 'active');
+      if (patientUserId) medBase = medBase.eq('patient_user_id', patientUserId);
+      else if (filterChildId) medBase = medBase.eq('child_id', filterChildId);
+      const { data: activeMeds } = await medBase.order('name', { ascending: true }).limit(20);
+
+      const nameFor = (r) => r.children?.name || (r.patient_user_id && patientNames[r.patient_user_id]) || '—';
+      const recentRecords = (allRecords || []).slice(0, 6).map((r) => ({
+        ...r,
+        child_name: nameFor(r),
+      }));
+      const monitoring = (allRecords || []).filter((r) => r.status === 'monitoring').map((r) => ({ ...r, child_name: nameFor(r) }));
+
+      return {
+        data: {
+          upcomingAppointments: (upcomingRaw || []).map((a) => mapAppointmentFromDb(a, a.children?.name)),
+          activeMedications: (activeMeds || []).map((m) => ({ ...m, child_name: m.children?.name || '—' })),
+          recentRecords,
+          monitoring,
+        },
+      };
+    }
+
+    if (healthPath.startsWith('/health/records')) {
+      let q = supabase
+        .from('health_records')
+        .select('*, children:child_id(name)')
+        .eq('family_id', familyId);
+      if (healthSearch.get('patient_user_id')) q = q.eq('patient_user_id', healthSearch.get('patient_user_id'));
+      if (healthSearch.get('child_id')) q = q.eq('child_id', healthSearch.get('child_id'));
+      if (healthSearch.get('status')) q = q.eq('status', healthSearch.get('status'));
+      if (healthSearch.get('from')) q = q.gte('record_date', healthSearch.get('from'));
+      if (healthSearch.get('to')) q = q.lte('record_date', healthSearch.get('to'));
+      const { data } = await q.order('record_date', { ascending: false });
+      const rows = data || [];
+      const pids = [...new Set(rows.map((r) => r.patient_user_id).filter(Boolean))];
+      let patientNames = {};
+      if (pids.length) {
+        const { data: pu } = await supabase.from('users').select('id, name').in('id', pids);
+        (pu || []).forEach((u) => { patientNames[u.id] = u.name; });
+      }
+      return {
+        data: rows.map((r) => ({
+          ...r,
+          child_name: r.children?.name || (r.patient_user_id && patientNames[r.patient_user_id]) || '—',
+        })),
+      };
+    }
+
+    if (healthPath.startsWith('/health/appointments')) {
+      let q = supabase.from('health_appointments').select('*, children:child_id(name)').eq('family_id', familyId);
+      if (healthSearch.get('patient_user_id')) q = q.eq('patient_user_id', healthSearch.get('patient_user_id'));
+      if (healthSearch.get('child_id')) q = q.eq('child_id', healthSearch.get('child_id'));
+      if (healthSearch.get('from')) q = q.gte('date', healthSearch.get('from'));
+      if (healthSearch.get('to')) q = q.lte('date', healthSearch.get('to'));
+      const { data } = await q.order('date', { ascending: false });
+      return { data: (data || []).map((a) => mapAppointmentFromDb(a, a.children?.name)) };
+    }
+
+    if (healthPath.startsWith('/health/medications')) {
+      let q = supabase.from('medications').select('*, children:child_id(name)').eq('family_id', familyId);
+      if (healthSearch.get('patient_user_id')) q = q.eq('patient_user_id', healthSearch.get('patient_user_id'));
+      if (healthSearch.get('child_id')) q = q.eq('child_id', healthSearch.get('child_id'));
+      if (healthSearch.get('status')) q = q.eq('status', healthSearch.get('status'));
+      const { data } = await q.order('created_at', { ascending: false });
+      return { data: (data || []).map((m) => ({ ...m, child_name: m.children?.name || '—' })) };
+    }
+
+    if (healthPath.startsWith('/health/medication-logs')) {
+      let medIds = null;
+      if (healthSearch.get('patient_user_id')) {
+        const { data: meds } = await supabase.from('medications').select('id').eq('family_id', familyId).eq('patient_user_id', healthSearch.get('patient_user_id'));
+        medIds = (meds || []).map((m) => m.id);
+        if (!medIds.length) return { data: [] };
+      }
+      let q = supabase
+        .from('health_medication_logs')
+        .select('*, medications(name, child_id, patient_user_id), children:child_id(name)')
+        .eq('family_id', familyId);
+      if (medIds) q = q.in('medication_id', medIds);
+      if (healthSearch.get('child_id')) q = q.eq('child_id', healthSearch.get('child_id'));
+      if (healthSearch.get('from')) q = q.gte('taken_at', `${healthSearch.get('from')}T00:00:00`);
+      if (healthSearch.get('to')) q = q.lte('taken_at', `${healthSearch.get('to')}T23:59:59`);
+      const { data } = await q.order('taken_at', { ascending: false });
+      return {
+        data: (data || []).map((l) => ({
+          ...l,
+          medication_name: l.medications?.name || '—',
+          child_name: l.children?.name || '—',
+          taken_date: l.taken_at ? String(l.taken_at).slice(0, 10) : '',
+          taken_time: l.taken_at && String(l.taken_at).length > 11 ? String(l.taken_at).slice(11, 19) : '',
+        })),
+      };
+    }
+
     // Generic fallback
     let table = path.split('/')[1];
     if (table === 'calendar') table = 'calendar_events';
@@ -396,28 +699,86 @@ const api = {
     const userId = session?.user?.id;
 
     if (path.startsWith('/grades')) {
-      const safeBody = { ...body };
-      if ('score' in safeBody) { safeBody.grade_value = safeBody.score; delete safeBody.score; }
-      if ('max_score' in safeBody) { safeBody.max_value = safeBody.max_score; delete safeBody.max_score; }
-      if ('observation' in safeBody) { safeBody.notes = safeBody.observation; delete safeBody.observation; }
-      if ('concept' in safeBody) { safeBody.term = safeBody.concept; delete safeBody.concept; }
-      delete safeBody.type;
+      const row = normalizeGradeRow(body, familyId);
+      const { data, error } = await supabase.from('grades').insert([omitUndefined(row)]).select('*, children:child_id(name, color, avatar_url, avatar_preset)').single();
+      if (error) throw new Error(error.message);
+      return { data: mapGradeFromDb(data) };
+    }
 
-      const { data, error } = await supabase.from('grades').insert([{ ...safeBody, family_id: familyId, id: uuidv4() }]).select().single();
+    if (path.startsWith('/calendar')) {
+      const row = pickCalendarRow(body, familyId, userId, true);
+      const { data, error } = await supabase.from('calendar_events').insert([row]).select('*, children:child_id(name, color)').single();
+      if (error) throw new Error(error.message);
+      return { data: { ...data, child_name: data.children?.name, child_color: data.children?.color } };
+    }
+
+    if (path === '/shopping' || path === '/shopping/') {
+      const row = omitUndefined({
+        id: uuidv4(),
+        family_id: familyId,
+        name: body.name,
+        description: body.description ?? null,
+        quantity: body.quantity ?? null,
+        establishment: body.establishment ?? null,
+        price: body.price != null ? Number(body.price) : 0,
+        is_urgent: !!body.is_urgent,
+        registered_by: userId,
+      });
+      const { data, error } = await supabase.from('shopping_list').insert([row]).select().single();
       if (error) throw new Error(error.message);
       return { data };
     }
 
-    if (path.startsWith('/calendar')) {
-      const safeBody = { ...body };
-      if (safeBody.child_id === '' || safeBody.child_id === undefined) safeBody.child_id = null;
-      if (safeBody.start_time === '') safeBody.start_time = null;
-      if (safeBody.end_time === '') safeBody.end_time = null;
-      if (safeBody.start_time != null && safeBody.time == null) safeBody.time = safeBody.start_time;
-      delete safeBody.start_time;
-      delete safeBody.end_time;
+    if (path.startsWith('/health/upload')) {
+      if (!(body instanceof FormData) || !body.get('file')) throw new Error('Envie file em FormData');
+      const file = body.get('file');
+      const ext = (file.name && String(file.name).split('.').pop()) || 'jpg';
+      const filePath = `${familyId}/health/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+      const { error: upErr } = await supabase.storage.from('uploads').upload(filePath, file, { upsert: true, contentType: file.type || undefined });
+      if (upErr) throw new Error(upErr.message);
+      const rel = `uploads/${filePath}`;
+      return { data: { url: rel } };
+    }
 
-      const { data, error } = await supabase.from('calendar_events').insert([{ ...safeBody, family_id: familyId, created_by: userId, id: uuidv4() }]).select().single();
+    if (path === '/health/records') {
+      const ins = buildHealthRecordInsert(body, familyId, userId);
+      const { data, error } = await supabase.from('health_records').insert([ins]).select().single();
+      if (error) throw new Error(error.message);
+      return { data };
+    }
+
+    if (path === '/health/appointments') {
+      const ins = buildAppointmentInsert(body, familyId);
+      const { data, error } = await supabase.from('health_appointments').insert([ins]).select().single();
+      if (error) throw new Error(error.message);
+      return { data: mapAppointmentFromDb(data, null) };
+    }
+
+    if (path === '/health/medications') {
+      const ins = buildMedicationInsert(body, familyId, userId);
+      const { data, error } = await supabase.from('medications').insert([ins]).select().single();
+      if (error) throw new Error(error.message);
+      return { data };
+    }
+
+    if (path === '/health/medication-logs') {
+      const { data: med, error: mErr } = await supabase.from('medications').select('child_id').eq('id', body.medication_id).eq('family_id', familyId).single();
+      if (mErr || !med) throw new Error('Medicamento não encontrado');
+      const datePart = body.taken_date || new Date().toISOString().split('T')[0];
+      const timePart = (body.taken_time && String(body.taken_time).trim()) || '12:00';
+      const timeNorm = timePart.length <= 5 ? `${timePart}:00` : timePart;
+      const takenAt = `${datePart}T${timeNorm}`;
+      const ins = omitUndefined({
+        id: uuidv4(),
+        family_id: familyId,
+        child_id: med.child_id ?? null,
+        medication_id: body.medication_id,
+        taken_at: takenAt,
+        status: body.status || 'taken',
+        notes: body.notes ?? null,
+        logged_by: userId,
+      });
+      const { data, error } = await supabase.from('health_medication_logs').insert([ins]).select().single();
       if (error) throw new Error(error.message);
       return { data };
     }
@@ -509,10 +870,14 @@ const api = {
       if (m) {
         const [, noticeId, action] = m;
         if (action === 'read') {
-          await supabase.from('notice_reads').upsert(
-            { notice_id: noticeId, user_id: userId, read_at: new Date().toISOString() },
-            { onConflict: 'notice_id,user_id' },
-          );
+          await supabase.from('notice_reads').delete().eq('notice_id', noticeId).eq('user_id', userId);
+          const { error: nrErr } = await supabase.from('notice_reads').insert({
+            id: uuidv4(),
+            notice_id: noticeId,
+            user_id: userId,
+            read_at: new Date().toISOString(),
+          });
+          if (nrErr) throw new Error(nrErr.message);
           return { data: { ok: true } };
         }
         const statusMap = { complete: 'completed', archive: 'archived', confirm: 'active' };
@@ -575,25 +940,46 @@ const api = {
     }
 
     if (path === '/allowance/transactions/manual') {
-      const { data } = await supabase.from('allowance_transactions').insert({ family_id: familyId, child_id: body.child_id, cycle_id: body.cycle_id, type: body.type, amount: body.amount, description: body.description }).select();
-      
-      const amount = body.type === 'credit' ? body.amount : -body.amount;
-      const { data: cycle } = await supabase.from('allowance_cycles').select('manual_adjustments').eq('id', body.cycle_id).single();
-      const currentAdj = cycle?.manual_adjustments || 0;
-      await supabase.from('allowance_cycles').update({ manual_adjustments: currentAdj + amount }).eq('id', body.cycle_id);
+      if (!body?.cycle_id || !body?.child_id || body.amount == null || !body?.type) {
+        throw new Error('Mesada manual: cycle_id, child_id, amount e type são obrigatórios.');
+      }
+      const amt = Number(body.amount);
+      const { data: inserted, error: insErr } = await supabase
+        .from('allowance_transactions')
+        .insert({
+          id: uuidv4(),
+          family_id: familyId,
+          child_id: body.child_id,
+          cycle_id: body.cycle_id,
+          type: body.type,
+          amount: amt,
+          description: body.description ?? null,
+          origin: 'manual',
+          status: 'approved',
+          approved_by: userId,
+          balance_after: 0,
+        })
+        .select()
+        .maybeSingle();
+      if (insErr) throw new Error(insErr.message);
 
-      return { data: data?.[0] || {} };
+      const delta = body.type === 'credit' ? amt : -amt;
+      const { data: cycle } = await supabase.from('allowance_cycles').select('manual_adjustments').eq('id', body.cycle_id).single();
+      const currentAdj = Number(cycle?.manual_adjustments || 0);
+      await supabase.from('allowance_cycles').update({ manual_adjustments: currentAdj + delta }).eq('id', body.cycle_id);
+
+      return { data: inserted || {} };
     }
 
     if (path.startsWith('/allowance/cycles/') && path.endsWith('/close')) {
       const cycleId = path.split('/')[3];
-      await supabase.from('allowance_cycles').update({ status: 'closed' }).eq('id', cycleId);
+      await supabase.from('allowance_cycles').update({ status: 'closed' }).eq('id', cycleId).eq('family_id', familyId);
       return { data: { ok: true } };
     }
 
     if (path.startsWith('/allowance/cycles/') && path.endsWith('/pay')) {
       const cycleId = path.split('/')[3];
-      await supabase.from('allowance_cycles').update({ status: 'paid' }).eq('id', cycleId);
+      await supabase.from('allowance_cycles').update({ status: 'paid' }).eq('id', cycleId).eq('family_id', familyId);
       return { data: { ok: true } };
     }
 
@@ -755,6 +1141,50 @@ const api = {
       return { data };
     }
 
+    const healthPut = parseHealthSubResource(path);
+    if (healthPut) {
+      if (healthPut.table === 'health_records') {
+        const patch = {};
+        HEALTH_RECORD_FIELDS.forEach((k) => {
+          if (body[k] !== undefined) patch[k] = body[k];
+        });
+        if (patch.child_id === '') patch.child_id = null;
+        if (patch.patient_user_id === '') patch.patient_user_id = null;
+        if (Array.isArray(patch.attachment_urls)) patch.attachment_urls = JSON.stringify(patch.attachment_urls);
+        const { data, error } = await supabase.from('health_records').update(omitUndefined(patch)).eq('id', healthPut.id).eq('family_id', familyId).select().single();
+        if (error) throw new Error(error.message);
+        return { data };
+      }
+      if (healthPut.table === 'health_appointments') {
+        const patch = buildAppointmentUpdate(body);
+        const { data, error } = await supabase.from('health_appointments').update(patch).eq('id', healthPut.id).eq('family_id', familyId).select().single();
+        if (error) throw new Error(error.message);
+        return { data: mapAppointmentFromDb(data, null) };
+      }
+      if (healthPut.table === 'medications') {
+        const patch = { ...body };
+        ['kind', 'patient_mode', 'child_name', 'created_at', 'updated_at', 'id', 'family_id', 'children'].forEach((k) => delete patch[k]);
+        if (patch.child_id === '') patch.child_id = null;
+        if (patch.patient_user_id === '') patch.patient_user_id = null;
+        if (Array.isArray(patch.scheduled_times)) patch.scheduled_times = JSON.stringify(patch.scheduled_times);
+        if (Array.isArray(patch.attachment_urls)) patch.attachment_urls = JSON.stringify(patch.attachment_urls);
+        const { data, error } = await supabase.from('medications').update(omitUndefined(patch)).eq('id', healthPut.id).eq('family_id', familyId).select().single();
+        if (error) throw new Error(error.message);
+        return { data };
+      }
+      const { data, error } = await supabase.from(healthPut.table).update(omitUndefined(body)).eq('id', healthPut.id).eq('family_id', familyId).select().single();
+      if (error) throw new Error(error.message);
+      return { data };
+    }
+
+    if (table === 'shopping' && !action) {
+      const patch = { ...body };
+      ['id', 'family_id', 'registered_by', 'bought_by', 'bought_at', 'created_at'].forEach((k) => delete patch[k]);
+      const { data, error } = await supabase.from('shopping_list').update(omitUndefined(patch)).eq('id', id).eq('family_id', familyId).select().single();
+      if (error) throw new Error(error.message);
+      return { data };
+    }
+
     const completeMatch = path.match(/^\/tasks\/occurrences\/([^/]+)\/complete$/);
     if (completeMatch) {
       const occId = completeMatch[1];
@@ -859,18 +1289,17 @@ const api = {
       if (safeBody.due_time === '') safeBody.due_time = null;
       if (safeBody.start_date === '') safeBody.start_date = null;
     } else if (table === 'calendar_events' || table === 'calendar') {
-      if (safeBody.child_id === '') safeBody.child_id = null;
-      if (safeBody.start_time === '') safeBody.start_time = null;
-      if (safeBody.end_time === '') safeBody.end_time = null;
-      if (safeBody.start_time != null && safeBody.time == null) safeBody.time = safeBody.start_time;
-      delete safeBody.start_time;
-      delete safeBody.end_time;
+      const calPatch = pickCalendarRow(safeBody, familyId, userId, false);
+      delete calPatch.family_id;
+      delete calPatch.created_by;
+      Object.keys(safeBody).forEach((k) => delete safeBody[k]);
+      Object.assign(safeBody, calPatch);
     } else if (table === 'grades') {
-      if ('score' in safeBody) { safeBody.grade_value = safeBody.score; delete safeBody.score; }
-      if ('max_score' in safeBody) { safeBody.max_value = safeBody.max_score; delete safeBody.max_score; }
-      if ('observation' in safeBody) { safeBody.notes = safeBody.observation; delete safeBody.observation; }
-      if ('concept' in safeBody) { safeBody.term = safeBody.concept; delete safeBody.concept; }
-      delete safeBody.type;
+      const patch = omitUndefined(normalizeGradeRow({ ...safeBody, id }, familyId, id));
+      delete patch.id;
+      delete patch.family_id;
+      Object.keys(safeBody).forEach((k) => delete safeBody[k]);
+      Object.assign(safeBody, patch);
     }
 
     let targetTable = table;
@@ -920,7 +1349,14 @@ const api = {
       return { data: { success: true } };
     }
 
+    const healthDel = parseHealthSubResource(path);
+    if (healthDel) {
+      await supabase.from(healthDel.table).delete().eq('id', healthDel.id).eq('family_id', familyId);
+      return { data: { success: true } };
+    }
+
     let targetTable = table;
+    if (targetTable === 'shopping') targetTable = 'shopping_list';
     if (targetTable === 'calendar') targetTable = 'calendar_events';
     if (targetTable === 'health') {
       if (path.includes('appointments')) targetTable = 'health_appointments';
