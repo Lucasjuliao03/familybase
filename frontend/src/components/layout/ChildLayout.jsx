@@ -82,21 +82,18 @@ export default function ChildLayout() {
           <h1 style={{ margin: 0, lineHeight: 1.15 }}>Base Familiar</h1>
           {family?.name && <div className="sidebar-family-name" style={{ fontSize: '0.85rem', color: 'var(--text-light)', fontWeight: 500 }}>{family.name}</div>}
         </div>
-        <div style={{textAlign:'center',padding:'16px 0'}}>
-          <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 8 }}>
+        <div style={{textAlign:'center',padding:'8px 0',flexShrink:0}}>
+          <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 4 }}>
             <AvatarPicker
               currentAvatarUrl={childProfile?.avatar_url}
               currentPreset={childProfile?.avatar_preset}
               endpoint="/auth/avatar"
-              size="lg"
-              onSave={(data) => {
-                // Update local storage or trigger context update if necessary
-                window.location.reload(); // Simple way to refresh context
-              }}
+              size="md"
+              onSave={() => { window.location.reload(); }}
             />
           </div>
-          <div style={{marginTop:8,fontWeight:700,fontSize:'1.1rem'}}>{childProfile?.name || user?.name}</div>
-          <div className="level-badge" style={{marginTop:8}}>⭐ {t('level')} {childProfile?.level || 1}</div>
+          <div style={{fontWeight:700,fontSize:'1rem',lineHeight:1.2}}>{childProfile?.name || user?.name}</div>
+          <div className="level-badge" style={{marginTop:4,fontSize:'0.8rem',padding:'2px 10px'}}>⭐ Nível {childProfile?.level || 1}</div>
         </div>
         <nav className="sidebar-nav">
           {navItems.map(item => (

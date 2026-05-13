@@ -277,7 +277,100 @@ VALUES
 ON CONFLICT DO NOTHING;
 
 -- -----------------------------------------------------------------------------
--- 8) Confirmar Email desativado para auth — lembrete no comentário
+-- 9) RPC: create_savings_goal — criança ou pai cria meta de cofrinho
+-- -----------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION public.create_savings_goal(
+  p_title        TEXT,
+  p_target_amount NUMERIC,
+  p_child_id     UUID DEFAULT NULL
+)
+RETURNS public.savings_goals
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_caller_uid  UUID;
+  v_family_id   UUID;
+  v_child_id    UUID := p_child_id;
+  v_new_goal    public.savings_goals;
+BEGIN
+  v_caller_uid := auth.uid();
+  IF v_caller_uid IS NULL THEN RAISE EXCEPTION 'not_authenticated'; END IF;
+
+  SELECT family_id INTO v_family_id FROM public.users WHERE id = v_caller_uid;
+  IF v_family_id IS NULL THEN RAISE EXCEPTION 'user_has_no_family'; END IF;
+
+  -- Se child_id não for fornecido, tenta encontrar pelo user actual (criança logada)
+  IF v_child_id IS NULL THEN
+    SELECT id INTO v_child_id
+    FROM public.children
+    WHERE user_id = v_caller_uid AND family_id = v_family_id
+    LIMIT 1;
+  END IF;
+
+  IF v_child_id IS NULL THEN
+    RAISE EXCEPTION 'child_not_found: forneça p_child_id ou aceda com conta de criança';
+  END IF;
+
+  -- Validar que o child pertence à família do chamador
+  IF NOT EXISTS (SELECT 1 FROM public.children WHERE id = v_child_id AND family_id = v_family_id) THEN
+    RAISE EXCEPTION 'permission_denied: criança não pertence à sua família';
+  END IF;
+
+  INSERT INTO public.savings_goals (id, child_id, family_id, title, target_amount)
+  VALUES (gen_random_uuid(), v_child_id, v_family_id, p_title, p_target_amount)
+  RETURNING * INTO v_new_goal;
+
+  RETURN v_new_goal;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.create_savings_goal(TEXT, NUMERIC, UUID) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.create_savings_goal(TEXT, NUMERIC, UUID) TO authenticated;
+
+-- -----------------------------------------------------------------------------
+-- 10) Permitir que crianças registem toma de medicamentos
+-- -----------------------------------------------------------------------------
+
+DROP POLICY IF EXISTS "Users can manage family health_medication_logs" ON public.health_medication_logs;
+CREATE POLICY "Users can manage family health_medication_logs" ON public.health_medication_logs
+  FOR ALL USING (family_id = public.get_current_user_family_id());
+
+-- -----------------------------------------------------------------------------
+-- 11) Bucket uploads para imagens de saúde
+-- -----------------------------------------------------------------------------
+-- O bucket 'uploads' deve ser criado no Supabase Dashboard → Storage → New bucket
+-- Nome: uploads | Public: true
+-- Em alternativa, execute o seguinte (requer service_role):
+
+INSERT INTO storage.buckets (id, name, public)
+VALUES ('uploads', 'uploads', true)
+ON CONFLICT (id) DO UPDATE SET public = true;
+
+DROP POLICY IF EXISTS "Authenticated users can upload" ON storage.objects;
+CREATE POLICY "Authenticated users can upload"
+  ON storage.objects FOR INSERT TO authenticated
+  WITH CHECK (bucket_id = 'uploads');
+
+DROP POLICY IF EXISTS "Public read uploads" ON storage.objects;
+CREATE POLICY "Public read uploads"
+  ON storage.objects FOR SELECT TO public
+  USING (bucket_id = 'uploads');
+
+DROP POLICY IF EXISTS "Authenticated users can update uploads" ON storage.objects;
+CREATE POLICY "Authenticated users can update uploads"
+  ON storage.objects FOR UPDATE TO authenticated
+  USING (bucket_id = 'uploads');
+
+DROP POLICY IF EXISTS "Authenticated users can delete uploads" ON storage.objects;
+CREATE POLICY "Authenticated users can delete uploads"
+  ON storage.objects FOR DELETE TO authenticated
+  USING (bucket_id = 'uploads');
+
+-- -----------------------------------------------------------------------------
+-- 12) Confirmar Email desativado para auth — lembrete no comentário
 --    No Supabase Dashboard: Authentication > Settings > desabilitar
 --    "Enable email confirmations" para que signUp retorne sessão imediatamente.
 -- -----------------------------------------------------------------------------

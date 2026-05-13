@@ -50,8 +50,8 @@ function HealthAttachmentPicker({ urls, onChange, disabled, t, toast }) {
     try {
       const { data } = await api.post('/health/upload', fd);
       if (data?.url) onChange([...list, data.url]);
-    } catch {
-      toast.error(t('error_occurred'));
+    } catch (err) {
+      toast.error(err?.message || t('error_occurred'));
     }
     e.target.value = '';
   };
@@ -206,9 +206,10 @@ export default function HealthCenter() {
   useEffect(() => {
     if (!isChild || !myChildId) return;
     loadOverview();
+    loadMedications();
+    loadLogs();
     if (tab === 'records') loadRecords();
     if (tab === 'appointments') loadAppointments();
-    if (tab === 'medications') loadMedications();
   }, [myChildId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -611,24 +612,24 @@ export default function HealthCenter() {
                     <img key={url} src={publicAssetUrl(url)} alt="Anexo" style={{ height: 60, width: 60, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--border)' }} />
                   ))}
                 </div>
-                {canManage && isParent && (
+                {(canManage || isChild) && (
                   <div className="flex gap-8 mt-12 flex-wrap">
-                    <button type="button" className="btn btn-sm btn-ghost" onClick={() => setModal({
+                    {canManage && isParent && <button type="button" className="btn btn-sm btn-ghost" onClick={() => setModal({
                       kind: 'med',
                       ...m,
                       attachment_urls: imgList(m.attachment_urls),
                     })}
-                    >{t('edit')}</button>
+                    >{t('edit')}</button>}
                     <button type="button" className="btn btn-sm btn-primary" onClick={() => setLogModal({
                       medication_id: m.id,
                       medication_name: m.name,
-                      child_id: m.child_id,
+                      child_id: m.child_id || myChildId,
                       taken_date: new Date().toISOString().split('T')[0],
-                      taken_time: '',
+                      taken_time: new Date().toTimeString().slice(0, 5),
                       status: 'taken',
                       notes: '',
                     })}
-                    >{t('health_add_log')}</button>
+                    >💊 {t('health_add_log')}</button>
                     {(isGestor || m.created_by === user.id) && (
                       <button type="button" className="btn btn-sm btn-danger" onClick={async () => {
                         if (!confirm(t('health_confirm_delete'))) return;

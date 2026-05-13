@@ -1064,11 +1064,19 @@ const api = {
     if (path.startsWith('/health/upload')) {
       if (!(body instanceof FormData) || !body.get('file')) throw new Error('Envie file em FormData');
       const file = body.get('file');
-      const ext = (file.name && String(file.name).split('.').pop()) || 'jpg';
-      const filePath = `${familyId}/health/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
-      const { error: upErr } = await supabase.storage.from('uploads').upload(filePath, file, { upsert: true, contentType: file.type || undefined });
-      if (upErr) throw new Error(upErr.message);
-      const rel = `uploads/${filePath}`;
+      const ext = (file.name && String(file.name).split('.').pop().toLowerCase()) || 'jpg';
+      const safeExt = ['jpg','jpeg','png','gif','webp','pdf'].includes(ext) ? ext : 'jpg';
+      const filePath = `${familyId}/health/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${safeExt}`;
+      // Tentar bucket 'uploads' e depois 'health-images' como fallback
+      let uploadBucket = 'uploads';
+      let { error: upErr } = await supabase.storage.from(uploadBucket).upload(filePath, file, { upsert: true, contentType: file.type || 'image/jpeg' });
+      if (upErr && upErr.message?.includes('Bucket not found')) {
+        uploadBucket = 'health-images';
+        const res2 = await supabase.storage.from(uploadBucket).upload(filePath, file, { upsert: true, contentType: file.type || 'image/jpeg' });
+        upErr = res2.error;
+      }
+      if (upErr) throw new Error(`Upload falhou (bucket ${uploadBucket}): ${upErr.message}. Crie o bucket 'uploads' (público) no Supabase Dashboard → Storage.`);
+      const rel = `${uploadBucket}/${filePath}`;
       return { data: { url: rel } };
     }
 
@@ -1179,17 +1187,12 @@ const api = {
     }
 
     if (path === '/allowance/goals') {
-      const goalData = { ...body, family_id: familyId, id: uuidv4() };
-      // Se não foi fornecido child_id, tentar obter da tabela children pelo user atual
-      if (!goalData.child_id) {
-        const { data: { session } } = await supabase.auth.getSession();
-        const uid = session?.user?.id;
-        if (uid) {
-          const { data: cr } = await supabase.from('children').select('id').eq('user_id', uid).maybeSingle();
-          if (cr?.id) goalData.child_id = cr.id;
-        }
-      }
-      const { data, error } = await supabase.from('savings_goals').insert([goalData]).select().single();
+      // Usa RPC SECURITY DEFINER que auto-resolve child_id mesmo que não seja passado
+      const { data, error } = await supabase.rpc('create_savings_goal', {
+        p_title: body.title,
+        p_target_amount: Number(body.target_amount),
+        p_child_id: body.child_id || null,
+      });
       if (error) throw new Error(error.message);
       return { data };
     }
