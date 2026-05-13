@@ -1,6 +1,13 @@
 import { supabase } from '../lib/supabase';
+import { createClient } from '@supabase/supabase-js';
 
 const BASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
+const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+
+// Cliente secundário para permitir registo de novos membros/crianças sem encerrar a sessão atual (master/parent)
+const supabaseSecondary = BASE_URL && ANON_KEY ? createClient(BASE_URL, ANON_KEY, {
+  auth: { persistSession: false, autoRefreshToken: false }
+}) : null;
 
 /** URL pública Supabase Storage (bucket path sem barra inicial). */
 export function publicAssetUrl(path) {
@@ -989,7 +996,7 @@ const api = {
     if (path === '/health/medication-logs') {
       const { data: med, error: mErr } = await supabase.from('medications').select('child_id').eq('id', body.medication_id).eq('family_id', familyId).single();
       if (mErr || !med) throw new Error('Medicamento não encontrado');
-      const datePart = body.taken_date || new Date().toISOString().split('T')[0];
+      const datePart = body.taken_date || toYMDLocal();
       const timePart = (body.taken_time && String(body.taken_time).trim()) || '12:00';
       const timeNorm = timePart.length <= 5 ? `${timePart}:00` : timePart;
       const takenAt = `${datePart}T${timeNorm}`;
