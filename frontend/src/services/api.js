@@ -61,6 +61,68 @@ function omitNullish(obj) {
   return out;
 }
 
+/** Senha mínima para contas de criança criadas pelo gestor (login próprio). */
+const CHILD_LOGIN_PASSWORD_MIN = 6;
+
+/**
+ * Cria utilizador Auth + associa à família como role child (RPC).
+ * Retorna o novo auth user id.
+ */
+async function createLinkedChildAuthUser({
+  email,
+  password,
+  displayName,
+  familyId,
+  mustChangePassword,
+}) {
+  if (!supabaseSecondary) throw new Error('Configuração do Supabase secundário em falta (VITE_SUPABASE_*).');
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  const pwd = String(password || '').trim();
+  if (!normalizedEmail) throw new Error('O email de acesso da criança é obrigatório.');
+  if (pwd.length < CHILD_LOGIN_PASSWORD_MIN) {
+    throw new Error(`A senha deve ter pelo menos ${CHILD_LOGIN_PASSWORD_MIN} caracteres.`);
+  }
+
+  const { data: signUpData, error: signUpError } = await supabaseSecondary.auth.signUp({
+    email: normalizedEmail,
+    password: pwd,
+    options: { data: { name: displayName || normalizedEmail.split('@')[0] } },
+  });
+
+  if (signUpError) {
+    const msg = signUpError.message || '';
+    if (/already registered|already exists|User already|duplicate/i.test(msg)) {
+      throw new Error('Este email já está registado. Use outro email ou peça ao utilizador para iniciar sessão com essa conta.');
+    }
+    throw new Error(signUpError.message);
+  }
+  if (!signUpData?.user?.id) {
+    throw new Error(
+      'Não foi possível criar a conta de acesso. No Supabase Dashboard → Authentication → Settings, ' +
+      'desative "Enable email confirmations" para cadastro imediato de filhos.',
+    );
+  }
+
+  const newUserId = signUpData.user.id;
+  const label = displayName || normalizedEmail.split('@')[0];
+
+  const backoffMs = [120, 280, 520, 900, 1400];
+  let lastRpcErr = null;
+  for (let i = 0; i <= backoffMs.length; i++) {
+    const { error: rpcErr } = await supabase.rpc('add_member_to_family', {
+      p_target_user_id: newUserId,
+      p_family_id: familyId,
+      p_role: 'child',
+      p_name: label,
+      p_must_change_password: !!mustChangePassword,
+    });
+    if (!rpcErr) return newUserId;
+    lastRpcErr = rpcErr;
+    if (i < backoffMs.length) await new Promise((r) => setTimeout(r, backoffMs[i]));
+  }
+  throw new Error(lastRpcErr?.message || 'Não foi possível associar o filho à família (RPC add_member_to_family).');
+}
+
 // Verifica e atribui medalhas à criança após aprovação de tarefa
 async function checkAndAwardMedals(supabase, childId, familyId, currentStreak) {
   try {
@@ -621,8 +683,21 @@ const api = {
 
     if (path === '/families') {
       const { data: family } = await supabase.from('families').select('*').eq('id', familyId).single();
-      const { data: children } = await supabase.from('children').select('*').eq('family_id', familyId);
-      return { data: { family: family || {}, children: children || [] } };
+      const { data: rawChildren } = await supabase.from('children').select('*').eq('family_id', familyId);
+      const rows = rawChildren || [];
+      const uids = [...new Set(rows.map((c) => c.user_id).filter(Boolean))];
+      let emailMap = {};
+      if (uids.length) {
+        const { data: usRows } = await supabase.from('users').select('id, email').in('id', uids);
+        (usRows || []).forEach((u) => {
+          emailMap[u.id] = u.email;
+        });
+      }
+      const children = rows.map((c) => ({
+        ...c,
+        user_email: c.user_id ? emailMap[c.user_id] ?? null : null,
+      }));
+      return { data: { family: family || {}, children } };
     }
 
     if (path === '/families/members') {
@@ -1236,38 +1311,18 @@ const api = {
     }
 
     if (path === '/families/children') {
-      const email = body?.email && String(body.email).trim() ? String(body.email).trim().toLowerCase() : null;
-      let newUserId = null;
-
-      if (email) {
-        if (!supabaseSecondary) throw new Error('Configuração do Supabase secundário em falta.');
-        const password = String(body.password || '').trim() || '123456';
-        const { data: signUpData, error: signUpError } = await supabaseSecondary.auth.signUp({
-          email,
-          password,
-          options: { data: { name: body.name || email.split('@')[0] } },
-        });
-        if (signUpError) throw new Error(signUpError.message);
-        if (!signUpData?.user?.id) {
-          throw new Error(
-            'Não foi possível criar a conta de acesso. ' +
-            'No Supabase Dashboard → Authentication → Settings, desative "Enable email confirmations".',
-          );
-        }
-        newUserId = signUpData.user.id;
-
-        // Aguarda um tick para o trigger on_auth_user_created concluir
-        await new Promise((r) => setTimeout(r, 400));
-
-        const { error: rpcErr } = await supabase.rpc('add_member_to_family', {
-          p_target_user_id: newUserId,
-          p_family_id: familyId,
-          p_role: 'child',
-          p_name: body.name || email.split('@')[0],
-          p_must_change_password: !!body.must_change_password,
-        });
-        if (rpcErr) throw new Error(rpcErr.message);
+      const emailRaw = body?.email != null ? String(body.email).trim().toLowerCase() : '';
+      if (!emailRaw) {
+        throw new Error('Email e senha são obrigatórios para o filho poder iniciar sessão.');
       }
+
+      const newUserId = await createLinkedChildAuthUser({
+        email: emailRaw,
+        password: body.password,
+        displayName: body.name || emailRaw.split('@')[0],
+        familyId,
+        mustChangePassword: !!body.must_change_password,
+      });
 
       const childId = uuidv4();
       const { data, error } = await supabase
@@ -1283,7 +1338,7 @@ const api = {
           emoji: body.emoji || null,
           notes: body.notes || null,
           family_id: familyId,
-          user_id: newUserId || null,
+          user_id: newUserId,
         }])
         .select()
         .single();
@@ -1751,6 +1806,27 @@ const api = {
     const childPutMatch = path.match(/^\/families\/children\/([^/]+)$/);
     if (childPutMatch) {
       const childId = childPutMatch[1];
+      const { data: existing, error: exErr } = await supabase
+        .from('children')
+        .select('id, user_id')
+        .eq('id', childId)
+        .eq('family_id', familyId)
+        .maybeSingle();
+      if (exErr || !existing) throw new Error('Criança não encontrada.');
+
+      let linkedUserId = existing.user_id;
+      const emailRaw = body.email != null ? String(body.email).trim().toLowerCase() : '';
+
+      if (!linkedUserId && emailRaw) {
+        linkedUserId = await createLinkedChildAuthUser({
+          email: emailRaw,
+          password: body.password,
+          displayName: body.name || emailRaw.split('@')[0],
+          familyId,
+          mustChangePassword: !!body.must_change_password,
+        });
+      }
+
       const patch = omitUndefined({
         name: body.name,
         nickname: body.nickname,
@@ -1760,6 +1836,7 @@ const api = {
         notes: body.notes,
         birthday: body.birthday === '' ? null : body.birthday,
         avatar_preset: body.avatar_preset,
+        user_id: linkedUserId || undefined,
       });
       const { data, error } = await supabase.from('children').update(patch).eq('id', childId).eq('family_id', familyId).select().single();
       if (error) throw new Error(error.message);

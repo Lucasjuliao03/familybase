@@ -538,6 +538,11 @@ export default function FamilyAdministration() {
                 </div>
                 <h3 style={{ textAlign: 'center', fontWeight: 700 }}>{c.emoji ? `${c.emoji} ` : ''}{c.name}</h3>
                 <p style={{ textAlign: 'center', color: 'var(--text-light)', fontSize: '0.85rem' }}>{c.age != null ? `${c.age} ${t('fam_admin_years')}` : ''}</p>
+                {c.user_email ? (
+                  <p style={{ textAlign: 'center', fontSize: '0.76rem', color: 'var(--text-light)', wordBreak: 'break-all', marginTop: 4 }}>{c.user_email}</p>
+                ) : (
+                  <p style={{ textAlign: 'center', fontSize: '0.76rem', color: 'var(--warning)', marginTop: 4 }}>{t('fam_admin_child_no_login')}</p>
+                )}
                 <div style={{ textAlign: 'center' }}>
                   <span className={`badge badge-${c.status === 'active' ? 'success' : 'warning'}`}>{c.status}</span>
                 </div>
@@ -1159,6 +1164,7 @@ function GuardianUserModal({ initial, onClose, onSaved, t, toast, familyPrimary,
 
 function ChildModalForm({ initial, t, toast, onClose, onSaved }) {
   const isEdit = !!initial.id;
+  const hasLogin = !!(initial.user_id || initial.user_email);
   const [form, setForm] = useState({
     name: initial.name || '',
     nickname: initial.nickname || '',
@@ -1173,24 +1179,37 @@ function ChildModalForm({ initial, t, toast, onClose, onSaved }) {
 
   const submit = async (e) => {
     e.preventDefault();
+    const emailTrim = String(form.email || '').trim().toLowerCase();
+    if (!isEdit || !hasLogin) {
+      if (!emailTrim) {
+        toast.error(t('fam_admin_child_email_required'));
+        return;
+      }
+      if (!form.password || String(form.password).length < 6) {
+        toast.error(t('fam_admin_child_password_rule'));
+        return;
+      }
+    }
     try {
       if (isEdit) {
         await api.put(`/families/children/${initial.id}`, {
           name: form.name,
           nickname: form.nickname,
           age: form.age === '' ? null : Number(form.age),
-          email: form.email || undefined,
+          email: emailTrim || undefined,
+          password: !hasLogin ? form.password : undefined,
           color: form.color,
           emoji: form.emoji,
           notes: form.notes,
+          must_change_password: !hasLogin ? form.must_change_password : undefined,
         });
       } else {
         await api.post('/families/children', {
           name: form.name,
           nickname: form.nickname,
           age: form.age === '' ? null : Number(form.age),
-          email: form.email || undefined,
-          password: form.email ? form.password || '123456' : undefined,
+          email: emailTrim,
+          password: form.password,
           color: form.color,
           emoji: form.emoji,
           notes: form.notes,
@@ -1229,14 +1248,37 @@ function ChildModalForm({ initial, t, toast, onClose, onSaved }) {
             </div>
           </div>
           <div className="form-group">
-            <label className="form-label">{t('email')}</label>
-            <input className="form-input" type="email" value={form.email} onChange={(e) => setForm((p) => ({ ...p, email: e.target.value }))} />
+            <label className="form-label">
+              {t('email')}
+              {(!isEdit || !hasLogin) ? ` *` : ''}
+            </label>
+            <input
+              className="form-input"
+              type="email"
+              autoComplete="off"
+              value={form.email}
+              onChange={(e) => setForm((p) => ({ ...p, email: e.target.value }))}
+              readOnly={isEdit && hasLogin}
+              title={isEdit && hasLogin ? t('fam_admin_child_email_locked_hint') : undefined}
+            />
+            {(!isEdit || !hasLogin) && (
+              <p style={{ fontSize: '0.82rem', color: 'var(--text-light)', marginTop: 6 }}>{t('fam_admin_child_login_hint')}</p>
+            )}
           </div>
-          {!isEdit && form.email && (
+          {(!isEdit || !hasLogin) && (
             <>
               <div className="form-group">
-                <label className="form-label">{t('password')}</label>
-                <input className="form-input" type="password" value={form.password} onChange={(e) => setForm((p) => ({ ...p, password: e.target.value }))} />
+                <label className="form-label">{t('password')} *</label>
+                <input
+                  className="form-input"
+                  type="password"
+                  autoComplete="new-password"
+                  value={form.password}
+                  onChange={(e) => setForm((p) => ({ ...p, password: e.target.value }))}
+                  minLength={6}
+                  required
+                />
+                <p style={{ fontSize: '0.82rem', color: 'var(--text-light)', marginTop: 6 }}>{t('fam_admin_child_password_rule')}</p>
               </div>
               <label style={{ display: 'flex', gap: 8, alignItems: 'center', cursor: 'pointer', marginBottom: 16 }}>
                 <input type="checkbox" checked={form.must_change_password} onChange={(e) => setForm((p) => ({ ...p, must_change_password: e.target.checked }))} />
