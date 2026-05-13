@@ -1,9 +1,19 @@
 import { supabase } from '../lib/supabase';
 
-// Exportando apiOrigin para compatibilidade com componentes que buscam imagens
-export const apiOrigin = import.meta.env.VITE_SUPABASE_URL 
-  ? `${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public`
-  : '';
+const BASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
+
+/** URL pública Supabase Storage (bucket path sem barra inicial). */
+export function publicAssetUrl(path) {
+  if (path == null || path === '') return '';
+  const s = String(path).trim();
+  if (s.startsWith('http://') || s.startsWith('https://')) return s;
+  if (!BASE_URL) return s;
+  const clean = s.replace(/^\/+/, '');
+  return `${BASE_URL}/storage/v1/object/public/${clean}`;
+}
+
+/** @deprecated Prefira `publicAssetUrl` — mantido para imports antigos. */
+export const apiOrigin = BASE_URL ? `${BASE_URL}/storage/v1/object/public` : '';
 
 // Gerador de UUID nativo para substituir a biblioteca externa e evitar erros no Vite
 function uuidv4() {
@@ -20,19 +30,143 @@ async function getFamilyId() {
   return data?.family_id;
 }
 
+async function getUserRole() {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session) return null;
+  const { data } = await supabase.from('users').select('role').eq('id', session.user.id).single();
+  return data?.role || null;
+}
+
+const DEFAULT_MODULE_KEYS = [
+  'tasks', 'routines', 'calendar', 'allowance', 'family_shop', 'medals', 'grades',
+  'piggy_bank', 'goals', 'reports', 'notifications', 'shopping', 'health', 'mural',
+];
+
+const MODULE_META = {
+  tasks: { is_premium: false },
+  routines: { is_premium: false },
+  calendar: { is_premium: false },
+  allowance: { is_premium: true },
+  family_shop: { is_premium: true },
+  medals: { is_premium: false },
+  grades: { is_premium: false },
+  piggy_bank: { is_premium: true },
+  goals: { is_premium: true },
+  reports: { is_premium: false },
+  notifications: { is_premium: false },
+  shopping: { is_premium: false },
+  health: { is_premium: true },
+  mural: { is_premium: false },
+};
+
+async function buildModulesPayload(familyId) {
+  const defaultMods = Object.fromEntries(DEFAULT_MODULE_KEYS.map((k) => [k, true]));
+  const { data: rows, error } = await supabase.from('family_modules').select('module_key, is_enabled').eq('family_id', familyId);
+  if (error || !rows?.length) {
+    const modules = DEFAULT_MODULE_KEYS.map((module_key) => ({
+      module_key,
+      is_premium: MODULE_META[module_key]?.is_premium ?? false,
+      is_enabled: true,
+      can_enable: true,
+    }));
+    return { modules, planAllowsPremium: true };
+  }
+  const map = { ...defaultMods };
+  rows.forEach((r) => {
+    if (r.module_key != null) map[r.module_key] = !!r.is_enabled;
+  });
+  const modules = DEFAULT_MODULE_KEYS.map((module_key) => ({
+    module_key,
+    is_premium: MODULE_META[module_key]?.is_premium ?? false,
+    is_enabled: !!map[module_key],
+    can_enable: true,
+  }));
+  return { modules, planAllowsPremium: true };
+}
+
 const api = {
   defaults: { headers: { common: {} } },
   interceptors: { request: { use: () => {} }, response: { use: () => {} } },
 
   async get(url, config = {}) {
-    const familyId = await getFamilyId();
-    if (!familyId && !url.includes('/auth/')) throw new Error('Not authenticated');
-
     const path = url.split('?')[0];
 
+    if (path.startsWith('/push/')) {
+      return { data: { ok: true } };
+    }
+
+    if (path.startsWith('/master/')) {
+      const role = await getUserRole();
+      if (role !== 'master') {
+        if (path.includes('stats')) {
+          return { data: { totalFamilies: 0, activeFamilies: 0, totalUsers: 0, activeUsers: 0 } };
+        }
+        return { data: [] };
+      }
+      if (path.startsWith('/master/stats')) {
+        const { count: totalFamilies } = await supabase.from('families').select('*', { count: 'exact', head: true });
+        const { count: activeFamilies } = await supabase.from('families').select('*', { count: 'exact', head: true }).eq('status', 'active');
+        const { count: totalUsers } = await supabase.from('users').select('*', { count: 'exact', head: true });
+        const { count: activeUsers } = await supabase.from('users').select('*', { count: 'exact', head: true }).eq('status', 'active');
+        return {
+          data: {
+            totalFamilies: totalFamilies || 0,
+            activeFamilies: activeFamilies || 0,
+            totalUsers: totalUsers || 0,
+            activeUsers: activeUsers || 0,
+          },
+        };
+      }
+      if (path.startsWith('/master/families')) {
+        const { data, error } = await supabase.from('families').select('*').order('created_at', { ascending: false });
+        if (error) return { data: [] };
+        return { data: data || [] };
+      }
+      if (path.startsWith('/master/users')) {
+        const { data, error } = await supabase.from('users').select('*').order('created_at', { ascending: false });
+        if (error) return { data: [] };
+        return { data: data || [] };
+      }
+      if (path.startsWith('/master/subscriptions')) {
+        const { data } = await supabase.from('families').select('id, name, plan, status, language, created_at').order('created_at', { ascending: false });
+        return {
+          data: (data || []).map((f) => ({
+            family_id: f.id,
+            family_name: f.name,
+            plan: f.plan,
+            status: f.status,
+            language: f.language,
+            created_at: f.created_at,
+          })),
+        };
+      }
+      if (path.startsWith('/master/audit-logs')) {
+        return { data: [] };
+      }
+      return { data: [] };
+    }
+
+    const familyId = await getFamilyId();
+    if (!familyId) throw new Error('Not authenticated');
+
+    if (path.startsWith('/grades/subjects')) {
+      const { data: grades } = await supabase.from('grades').select('subject').eq('family_id', familyId);
+      const uniq = [...new Set((grades || []).map((g) => g.subject).filter(Boolean))];
+      return { data: uniq.sort() };
+    }
+
     if (path.startsWith('/grades')) {
-      const { data } = await supabase.from('grades').select('*, children:child_id(name, color, avatar_url)').eq('family_id', familyId).order('date', { ascending: false });
-      return { data: (data || []).map(d => ({ ...d, child_name: d.children?.name, child_color: d.children?.color, avatar_url: d.children?.avatar_url })) };
+      const { data } = await supabase.from('grades').select('*, children:child_id(name, color, avatar_url, avatar_preset)').eq('family_id', familyId).order('date', { ascending: false });
+      return { data: (data || []).map(d => ({
+        ...d,
+        score: d.grade_value ?? d.score,
+        max_score: d.max_value ?? d.max_score,
+        observation: d.notes ?? d.observation,
+        child_name: d.children?.name,
+        child_color: d.children?.color,
+        avatar_url: d.children?.avatar_url,
+        avatar_preset: d.children?.avatar_preset,
+      })) };
     }
     
     if (path.startsWith('/calendar')) {
@@ -62,12 +196,12 @@ const api = {
     }
 
     if (path === '/families/members') {
-      const { data } = await supabase.from('users').select('*').eq('family_id', familyId).in('role', ['parent', 'gestor']);
+      const { data } = await supabase.from('users').select('*').eq('family_id', familyId).not('role', 'eq', 'child').not('role', 'eq', 'master');
       return { data: data || [] };
     }
 
     if (path === '/families/relatives') {
-      const { data } = await supabase.from('users').select('*').eq('family_id', familyId).in('role', ['parente', 'aux']);
+      const { data } = await supabase.from('users').select('*').eq('family_id', familyId).eq('role', 'relative');
       return { data: data || [] };
     }
 
@@ -81,36 +215,33 @@ const api = {
     }
 
     if (path === '/families/modules') {
-      const defaultModules = [
-        { module_key: 'tasks', is_premium: false },
-        { module_key: 'routines', is_premium: false },
-        { module_key: 'calendar', is_premium: false },
-        { module_key: 'allowance', is_premium: true },
-        { module_key: 'family_shop', is_premium: true },
-        { module_key: 'medals', is_premium: false },
-        { module_key: 'grades', is_premium: false },
-        { module_key: 'piggy_bank', is_premium: true },
-        { module_key: 'goals', is_premium: true },
-        { module_key: 'reports', is_premium: false },
-        { module_key: 'notifications', is_premium: false },
-        { module_key: 'shopping', is_premium: false },
-        { module_key: 'health', is_premium: true },
-        { module_key: 'mural', is_premium: false }
-      ];
-      try {
-        const { data: family } = await supabase.from('families').select('active_modules').eq('id', familyId).single();
-        const savedMods = family?.active_modules || {};
-        const hasSavedMods = Object.keys(savedMods).length > 0;
+      return { data: await buildModulesPayload(familyId) };
+    }
 
-        const mergedList = defaultModules.map(m => ({
-          ...m,
-          is_enabled: hasSavedMods ? !!savedMods[m.module_key] : true,
-          can_enable: true
-        }));
-        return { data: { modules: mergedList, planAllowsPremium: true } };
-      } catch {
-        return { data: { modules: defaultModules.map(m => ({ ...m, is_enabled: true, can_enable: true })), planAllowsPremium: true } };
-      }
+    if (path.startsWith('/allowance/rewards/list')) {
+      const { data } = await supabase.from('rewards').select('*').eq('family_id', familyId).order('created_at', { ascending: false });
+      return { data: data || [] };
+    }
+
+    if (path.startsWith('/allowance/redemptions/list')) {
+      const { data: children } = await supabase.from('children').select('id').eq('family_id', familyId);
+      const childIds = (children || []).map((c) => c.id);
+      if (!childIds.length) return { data: [] };
+      const { data: rows } = await supabase.from('redemptions').select('*, rewards(*), children:child_id(name)').in('child_id', childIds).order('created_at', { ascending: false });
+      return { data: rows || [] };
+    }
+
+    if (path.startsWith('/allowance/transactions')) {
+      let q = supabase.from('allowance_transactions').select('*, children:child_id(name)').eq('family_id', familyId).order('created_at', { ascending: false });
+      const childId = config?.params?.child_id;
+      if (childId) q = q.eq('child_id', childId);
+      const { data } = await q;
+      return { data: (data || []).map((t) => ({ ...t, child_name: t.children?.name })) };
+    }
+
+    if (path.startsWith('/allowance/goals')) {
+      const { data } = await supabase.from('savings_goals').select('*').eq('family_id', familyId).order('created_at', { ascending: false });
+      return { data: data || [] };
     }
 
     if (path === '/allowance/settings') {
@@ -184,8 +315,12 @@ const api = {
       const { count: approved } = await supabase.from('task_occurrences').select('*', { count: 'exact', head: true }).eq('family_id', familyId).eq('status', 'approved');
       let pendingRedemptions = 0;
       try {
-        const res = await supabase.from('reward_redemptions').select('*', { count: 'exact', head: true }).eq('family_id', familyId).eq('status', 'pending');
-        pendingRedemptions = res.count || 0;
+        const { data: ch } = await supabase.from('children').select('id').eq('family_id', familyId);
+        const ids = (ch || []).map((c) => c.id);
+        if (ids.length) {
+          const res = await supabase.from('redemptions').select('*', { count: 'exact', head: true }).in('child_id', ids).eq('status', 'pending');
+          pendingRedemptions = res.count || 0;
+        }
       } catch {}
       
       const { data: upcomingEvents } = await supabase.from('calendar_events')
@@ -249,10 +384,16 @@ const api = {
   },
 
   async post(url, body, config = {}) {
+    const path = url.split('?')[0];
+
+    if (path.startsWith('/push/')) {
+      return { data: { ok: true } };
+    }
+
     const familyId = await getFamilyId();
+    if (!familyId) throw new Error('Not authenticated');
     const { data: { session } } = await supabase.auth.getSession();
     const userId = session?.user?.id;
-    const path = url.split('?')[0];
 
     if (path.startsWith('/grades')) {
       const safeBody = { ...body };
@@ -269,9 +410,12 @@ const api = {
 
     if (path.startsWith('/calendar')) {
       const safeBody = { ...body };
-      delete safeBody.child_id;
+      if (safeBody.child_id === '' || safeBody.child_id === undefined) safeBody.child_id = null;
       if (safeBody.start_time === '') safeBody.start_time = null;
       if (safeBody.end_time === '') safeBody.end_time = null;
+      if (safeBody.start_time != null && safeBody.time == null) safeBody.time = safeBody.start_time;
+      delete safeBody.start_time;
+      delete safeBody.end_time;
 
       const { data, error } = await supabase.from('calendar_events').insert([{ ...safeBody, family_id: familyId, created_by: userId, id: uuidv4() }]).select().single();
       if (error) throw new Error(error.message);
@@ -290,15 +434,144 @@ const api = {
       return { data };
     }
 
-    if (path.startsWith('/mural/notices') && path.endsWith('/read')) {
-      const noticeId = path.split('/')[3];
-      await supabase.from('notice_reads').upsert({ notice_id: noticeId, user_id: userId, read_at: new Date().toISOString() });
-      return { data: { ok: true } };
+    if (path === '/allowance/rewards') {
+      const { data, error } = await supabase.from('rewards').insert([{ ...body, family_id: familyId, id: uuidv4() }]).select().single();
+      if (error) throw new Error(error.message);
+      return { data };
+    }
+
+    const redeemMatch = path.match(/^\/allowance\/rewards\/([^/]+)\/redeem$/);
+    if (redeemMatch) {
+      const rewardId = redeemMatch[1];
+      let childId = body?.child_id;
+      if (!childId) {
+        const { data: ch } = await supabase.from('children').select('id').eq('user_id', userId).maybeSingle();
+        childId = ch?.id;
+      }
+      if (!childId) throw new Error('child_id obrigatório para resgate');
+      const { data, error } = await supabase
+        .from('redemptions')
+        .insert([{ reward_id: rewardId, child_id: childId, status: 'pending', id: uuidv4() }])
+        .select()
+        .single();
+      if (error) throw new Error(error.message);
+      return { data };
+    }
+
+    if (path === '/allowance/goals') {
+      const { data, error } = await supabase.from('savings_goals').insert([{ ...body, family_id: familyId, id: uuidv4() }]).select().single();
+      if (error) throw new Error(error.message);
+      return { data };
+    }
+
+    if (path === '/allowance/piggy-requests') {
+      const { data, error } = await supabase.from('piggy_requests').insert([{ ...body, family_id: familyId, id: uuidv4() }]).select().single();
+      if (error) throw new Error(error.message);
+      return { data };
+    }
+
+    if (path === '/families/children') {
+      if (body?.email && String(body.email).trim()) {
+        throw new Error('Criar criança com email de login requer Edge Function (service role). Crie sem email ou convide pelo Supabase Dashboard.');
+      }
+      const { data, error } = await supabase
+        .from('children')
+        .insert([{
+          name: body.name,
+          age: body.age ?? null,
+          birthday: body.birthday || null,
+          color: body.color || '#6C5CE7',
+          avatar_preset: body.avatar_preset || 'explorer',
+          nickname: body.nickname || null,
+          emoji: body.emoji || null,
+          notes: body.notes || null,
+          family_id: familyId,
+          id: uuidv4(),
+        }])
+        .select()
+        .single();
+      if (error) throw new Error(error.message);
+      return { data };
+    }
+
+    if (path === '/families/members' || path === '/families/relatives') {
+      throw new Error('Convite de utilizadores com email requer Edge Function ou Supabase Dashboard (Auth).');
+    }
+
+    if (path === '/gamification/medals') {
+      const { data, error } = await supabase.from('medals').insert([{ ...body, family_id: familyId, id: uuidv4() }]).select().single();
+      if (error) throw new Error(error.message);
+      return { data };
+    }
+
+    if (path.startsWith('/mural/notices')) {
+      const m = path.match(/^\/mural\/notices\/([^/]+)\/(read|confirm|complete|archive)$/);
+      if (m) {
+        const [, noticeId, action] = m;
+        if (action === 'read') {
+          await supabase.from('notice_reads').upsert(
+            { notice_id: noticeId, user_id: userId, read_at: new Date().toISOString() },
+            { onConflict: 'notice_id,user_id' },
+          );
+          return { data: { ok: true } };
+        }
+        const statusMap = { complete: 'completed', archive: 'archived', confirm: 'active' };
+        const st = statusMap[action];
+        if (st) {
+          await supabase.from('family_notices').update({ status: st }).eq('id', noticeId).eq('family_id', familyId);
+        }
+        return { data: { ok: true } };
+      }
+      if (path === '/mural/notices') {
+        const { data, error } = await supabase
+          .from('family_notices')
+          .insert([{ ...body, family_id: familyId, created_by: userId, id: uuidv4() }])
+          .select()
+          .single();
+        if (error) throw new Error(error.message);
+        return { data };
+      }
     }
 
     if (path === '/allowance/cycles/current') {
-      const { data } = await supabase.from('allowance_cycles').insert({ family_id: familyId, child_id: body.child_id, month: new Date().getMonth() + 1, year: new Date().getFullYear(), status: 'open' }).select();
-      return { data: data?.[0] || {} };
+      const { child_id } = body;
+      const month = new Date().getMonth() + 1;
+      const year = new Date().getFullYear();
+      const { data: existing } = await supabase
+        .from('allowance_cycles')
+        .select('*')
+        .eq('child_id', child_id)
+        .eq('month', month)
+        .eq('year', year)
+        .eq('status', 'open')
+        .maybeSingle();
+      if (existing) return { data: existing };
+      const { data: settings } = await supabase.from('allowance_settings').select('base_amount, allow_accumulation').eq('child_id', child_id).maybeSingle();
+      const base = settings?.base_amount ?? 0;
+      const { data: prevRow } = await supabase
+        .from('allowance_cycles')
+        .select('final_amount')
+        .eq('child_id', child_id)
+        .order('year', { ascending: false })
+        .order('month', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      const opening = settings?.allow_accumulation && prevRow?.final_amount != null ? Number(prevRow.final_amount) : 0;
+      const { data: inserted, error } = await supabase
+        .from('allowance_cycles')
+        .insert({
+          family_id: familyId,
+          child_id,
+          month,
+          year,
+          status: 'open',
+          opening_balance: opening,
+          base_amount: base,
+        })
+        .select()
+        .maybeSingle();
+      if (error) throw new Error(error.message);
+      return { data: inserted || {} };
     }
 
     if (path === '/allowance/transactions/manual') {
@@ -346,34 +619,125 @@ const api = {
 
   async put(url, body, config = {}) {
     const path = url.split('?')[0];
-    const parts = path.split('/');
-    const table = parts[1];
-    const id = parts[2];
-    const action = parts[3];
-    const familyId = await getFamilyId();
+    const parts = path.split('/').filter(Boolean);
     const { data: { session } } = await supabase.auth.getSession();
     const userId = session?.user?.id;
 
-    if (path === '/families/modules') {
-      const { data: family, error: fetchErr } = await supabase.from('families').select('active_modules').eq('id', familyId).single();
-      if (fetchErr) console.error("FamilyBase: Erro ao ler active_modules:", fetchErr);
-      
-      const defaultMods = { tasks: true, calendar: true, routines: true, medals: true, reports: true, shopping: true, mural: true, family_shop: true, allowance: true, piggy_bank: true, goals: true, notifications: true, health: true };
-      const currentMods = family?.active_modules || {};
-      const hasSavedMods = Object.keys(currentMods).length > 0;
-      
-      // Se nunca foi salvo, parte do princípio que todos estão ativos
-      const baseMods = hasSavedMods ? currentMods : defaultMods;
-      const nextMods = { ...baseMods, ...body.modules };
-      
-      console.log("FamilyBase: Tentando gravar novos módulos:", nextMods);
-      const { error: updateErr } = await supabase.from('families').update({ active_modules: nextMods }).eq('id', familyId);
-      if (updateErr) {
-        console.error("FamilyBase: Erro FATAL ao gravar no Supabase:", updateErr);
-        throw new Error(updateErr.message || "Erro no banco de dados");
+    if (path.startsWith('/push/')) {
+      return { data: { ok: true } };
+    }
+
+    if (path.startsWith('/master/')) {
+      const role = await getUserRole();
+      if (role !== 'master') throw new Error('Acesso negado');
+      if (/\/master\/families\/[^/]+\/status$/.test(path)) {
+        const fid = parts[2];
+        await supabase.from('families').update({ status: body.status }).eq('id', fid);
+        return { data: { ok: true } };
       }
-      
-      return { data: { modules: nextMods } };
+      if (/\/master\/users\/[^/]+\/status$/.test(path)) {
+        const uid = parts[2];
+        await supabase.from('users').update({ status: body.status }).eq('id', uid);
+        return { data: { ok: true } };
+      }
+      if (/\/master\/subscriptions\/[^/]+$/.test(path)) {
+        const fid = parts[2];
+        await supabase.from('families').update({ plan: body.plan, status: body.status }).eq('id', fid);
+        return { data: { ok: true } };
+      }
+      throw new Error('Operação master não suportada');
+    }
+
+    if (path.startsWith('/auth/password')) {
+      const newPassword = body?.newPassword;
+      if (!newPassword || String(newPassword).length < 4) throw new Error('Senha inválida');
+      const { error } = await supabase.auth.updateUser({ password: newPassword });
+      if (error) throw new Error(error.message);
+      if (userId) await supabase.from('users').update({ must_change_password: false }).eq('id', userId);
+      return { data: { ok: true } };
+    }
+
+    if (path.startsWith('/auth/avatar')) {
+      const familyId = await getFamilyId();
+      if (!familyId) throw new Error('Not authenticated');
+      const childMatch = path.match(/^\/auth\/avatar\/child\/([^/]+)$/);
+      const childId = childMatch ? childMatch[1] : null;
+      const bucket = 'avatars';
+      if (body instanceof FormData) {
+        const preset = body.get('avatar_preset');
+        const file = body.get('avatar');
+        if (file && typeof file === 'object' && file.size > 0) {
+          const ext = (file.name && String(file.name).split('.').pop()) || 'jpg';
+          const filePath = childId ? `${familyId}/child-${childId}-${Date.now()}.${ext}` : `${familyId}/user-${userId}-${Date.now()}.${ext}`;
+          const { error: upErr } = await supabase.storage.from(bucket).upload(filePath, file, { upsert: true, contentType: file.type || undefined });
+          if (upErr) throw new Error(upErr.message);
+          const rel = `${bucket}/${filePath}`;
+          if (childId) {
+            await supabase.from('children').update({ avatar_url: rel, avatar_preset: null }).eq('id', childId).eq('family_id', familyId);
+          } else {
+            await supabase.from('users').update({ avatar_url: rel }).eq('id', userId);
+          }
+          return { data: { avatar_url: rel, avatar_preset: preset || null } };
+        }
+        if (preset) {
+          if (childId) {
+            await supabase.from('children').update({ avatar_preset: preset, avatar_url: null }).eq('id', childId).eq('family_id', familyId);
+          } else {
+            await supabase.from('users').update({ avatar_preset: preset }).eq('id', userId);
+          }
+          return { data: { avatar_preset: preset } };
+        }
+      } else if (body && body.avatar_preset) {
+        if (childId) {
+          await supabase.from('children').update({ avatar_preset: body.avatar_preset }).eq('id', childId).eq('family_id', familyId);
+        } else {
+          await supabase.from('users').update({ avatar_preset: body.avatar_preset }).eq('id', userId);
+        }
+        return { data: { avatar_preset: body.avatar_preset } };
+      }
+      throw new Error('Envie avatar (ficheiro) ou avatar_preset');
+    }
+
+    const familyId = await getFamilyId();
+    if (!familyId) throw new Error('Not authenticated');
+
+    const table = parts[0];
+    const id = parts[1];
+    const action = parts[2];
+
+    if (path === '/families/modules') {
+      const mods = body?.modules || {};
+      for (const [module_key, is_enabled] of Object.entries(mods)) {
+        await supabase.from('family_modules').upsert(
+          {
+            family_id: familyId,
+            module_key,
+            is_enabled: !!is_enabled,
+            updated_at: new Date().toISOString(),
+            updated_by: userId,
+          },
+          { onConflict: 'family_id,module_key' },
+        );
+      }
+      return { data: { modules: mods } };
+    }
+
+    if (path === '/families' || path === '/families/') {
+      const { data, error } = await supabase.from('families').update({ ...body }).eq('id', familyId).select().single();
+      if (error) throw new Error(error.message);
+      return { data };
+    }
+
+    if (path === '/families/logo') {
+      if (!(body instanceof FormData) || !body.get('logo')) throw new Error('Envie logo (FormData)');
+      const file = body.get('logo');
+      const ext = (file.name && String(file.name).split('.').pop()) || 'png';
+      const filePath = `${familyId}/logo-${Date.now()}.${ext}`;
+      const { error: upErr } = await supabase.storage.from('family-images').upload(filePath, file, { upsert: true });
+      if (upErr) throw new Error(upErr.message);
+      const rel = `family-images/${filePath}`;
+      await supabase.from('families').update({ logo_url: rel }).eq('id', familyId);
+      return { data: { logo_url: rel } };
     }
 
     if (path === '/notifications/read-all') {
@@ -390,22 +754,101 @@ const api = {
       const { data } = await supabase.from('shopping_list').update({ is_bought: false, bought_by: null, price: 0, bought_at: null }).eq('id', id).eq('family_id', familyId).select().single();
       return { data };
     }
-    
-    if (table === 'tasks' && action === 'occurrences') {
-       const occId = parts[3];
-       const { data } = await supabase.from('task_occurrences').update(body).eq('id', occId).eq('family_id', familyId).select().single();
-       return { data };
+
+    const completeMatch = path.match(/^\/tasks\/occurrences\/([^/]+)\/complete$/);
+    if (completeMatch) {
+      const occId = completeMatch[1];
+      const { data: occ, error: oErr } = await supabase.from('task_occurrences').select('*, tasks(*)').eq('id', occId).eq('family_id', familyId).single();
+      if (oErr || !occ) throw new Error('Ocorrência não encontrada');
+      const task = occ.tasks;
+      if (task?.is_health_reminder) {
+        const raw = body?.health_intake ?? body?.intake;
+        if (raw == null || raw === '') throw new Error('Informe health_intake: taken ou skipped.');
+        const intake = raw === 'skipped' || raw === false || raw === 'não' || raw === 'nao' || raw === 'not_taken' ? 'skipped' : 'taken';
+        const { error } = await supabase
+          .from('task_occurrences')
+          .update({ status: 'completed', health_intake: intake, health_confirmed_by: userId, completed_at: new Date().toISOString() })
+          .eq('id', occId);
+        if (error) throw new Error(error.message);
+        return { data: { message: 'Registo guardado', status: 'completed', health_intake: intake } };
+      }
+      const newStatus = task?.requires_approval ? 'waiting_approval' : 'completed';
+      const { error } = await supabase
+        .from('task_occurrences')
+        .update({ status: newStatus, completed_at: new Date().toISOString() })
+        .eq('id', occId);
+      if (error) throw new Error(error.message);
+      return { data: { message: 'Ocorrência atualizada', status: newStatus } };
+    }
+
+    const approveMatch = path.match(/^\/tasks\/occurrences\/([^/]+)\/approve$/);
+    if (approveMatch) {
+      const occId = approveMatch[1];
+      const approved = !!body?.approved;
+      const patch = approved
+        ? { status: 'approved', approved_at: new Date().toISOString(), approved_by: userId }
+        : { status: 'rejected', rejected_at: new Date().toISOString(), rejected_by: userId, rejection_reason: body?.rejection_reason || null };
+      const { data, error } = await supabase.from('task_occurrences').update(patch).eq('id', occId).eq('family_id', familyId).select().single();
+      if (error) throw new Error(error.message);
+      return { data };
+    }
+
+    if (path.match(/^\/gamification\/medals\/[^/]+$/)) {
+      const mid = parts[2];
+      const { data, error } = await supabase.from('medals').update({ ...body }).eq('id', mid).select().single();
+      if (error) throw new Error(error.message);
+      return { data };
+    }
+
+    if (path.match(/^\/allowance\/rewards\/[^/]+$/)) {
+      const rid = parts[2];
+      const { data, error } = await supabase.from('rewards').update({ ...body }).eq('id', rid).eq('family_id', familyId).select().single();
+      if (error) throw new Error(error.message);
+      return { data };
+    }
+
+    if (path.match(/^\/allowance\/goals\/[^/]+$/)) {
+      const gid = parts[2];
+      const { data, error } = await supabase.from('savings_goals').update({ ...body }).eq('id', gid).eq('family_id', familyId).select().single();
+      if (error) throw new Error(error.message);
+      return { data };
+    }
+
+    if (path.match(/^\/allowance\/redemptions\/[^/]+\/approve$/)) {
+      const rid = parts[2];
+      const patch = { status: body?.approved ? 'approved' : 'rejected', approved_by: userId, approved_at: new Date().toISOString() };
+      const { data, error } = await supabase.from('redemptions').update(patch).eq('id', rid).select().single();
+      if (error) throw new Error(error.message);
+      return { data };
     }
 
     if (path.startsWith('/allowance/settings/')) {
-      const childId = path.split('/')[3];
-      const { data } = await supabase.from('allowance_settings').upsert({ ...body, family_id: familyId, child_id: childId }).select().single();
+      const segs = path.split('/').filter(Boolean);
+      const childId = segs[2];
+      const { data, error } = await supabase.from('allowance_settings').upsert({ ...body, family_id: familyId, child_id: childId }).select().single();
+      if (error) throw new Error(error.message);
       return { data: data || {} };
     }
 
     if (path.startsWith('/allowance/piggy-requests/') && path.endsWith('/review')) {
-      const reqId = path.split('/')[3];
-      const { data } = await supabase.from('piggy_requests').update({ status: body.approved ? 'approved' : 'rejected', review_note: body.review_note }).eq('id', reqId).select().single();
+      const segs = path.split('/').filter(Boolean);
+      const reqId = segs[2];
+      const { data, error } = await supabase
+        .from('piggy_requests')
+        .update({ status: body.approved ? 'approved' : 'rejected', review_note: body.review_note })
+        .eq('id', reqId)
+        .eq('family_id', familyId)
+        .select()
+        .single();
+      if (error) throw new Error(error.message);
+      return { data };
+    }
+
+    const occUpdateOnly = path.match(/^\/tasks\/occurrences\/([^/]+)$/);
+    if (occUpdateOnly) {
+      const occId = occUpdateOnly[1];
+      const { data, error } = await supabase.from('task_occurrences').update({ ...body }).eq('id', occId).eq('family_id', familyId).select().single();
+      if (error) throw new Error(error.message);
       return { data };
     }
 
@@ -416,9 +859,12 @@ const api = {
       if (safeBody.due_time === '') safeBody.due_time = null;
       if (safeBody.start_date === '') safeBody.start_date = null;
     } else if (table === 'calendar_events' || table === 'calendar') {
-      delete safeBody.child_id;
+      if (safeBody.child_id === '') safeBody.child_id = null;
       if (safeBody.start_time === '') safeBody.start_time = null;
       if (safeBody.end_time === '') safeBody.end_time = null;
+      if (safeBody.start_time != null && safeBody.time == null) safeBody.time = safeBody.start_time;
+      delete safeBody.start_time;
+      delete safeBody.end_time;
     } else if (table === 'grades') {
       if ('score' in safeBody) { safeBody.grade_value = safeBody.score; delete safeBody.score; }
       if ('max_score' in safeBody) { safeBody.max_value = safeBody.max_score; delete safeBody.max_score; }
@@ -445,13 +891,32 @@ const api = {
 
   async delete(url, config = {}) {
     const path = url.split('?')[0];
-    const parts = path.split('/');
-    const table = parts[1];
-    const id = parts[2];
+    const parts = path.split('/').filter(Boolean);
+
+    if (path.startsWith('/push/')) {
+      return { data: { success: true } };
+    }
+
     const familyId = await getFamilyId();
+    if (!familyId) throw new Error('Not authenticated');
+
+    const table = parts[0];
+    const id = parts[1];
+
+    if (path === '/families/logo') {
+      await supabase.from('families').update({ logo_url: null }).eq('id', familyId);
+      return { data: { success: true } };
+    }
+
+    if (path.match(/^\/gamification\/medals\/[^/]+$/)) {
+      const mid = parts[2];
+      await supabase.from('medals').delete().eq('id', mid);
+      return { data: { success: true } };
+    }
 
     if (path.startsWith('/allowance/piggy-requests/')) {
-      await supabase.from('piggy_requests').delete().eq('id', id).eq('family_id', familyId);
+      const rid = parts[2];
+      await supabase.from('piggy_requests').delete().eq('id', rid).eq('family_id', familyId);
       return { data: { success: true } };
     }
 

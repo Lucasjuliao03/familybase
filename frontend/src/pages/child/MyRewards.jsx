@@ -20,7 +20,7 @@ export default function MyRewards() {
   const handleRedeem = async (rewardId) => {
     try { await api.post(`/allowance/rewards/${rewardId}/redeem`); toast.success('Resgate solicitado! 🎉');
       api.get('/allowance/redemptions/list').then(r => setRedemptions(r.data));
-    } catch (err) { toast.error(err.response?.data?.error || t('error_occurred')); }
+    } catch (err) { toast.error(err?.message || err.response?.data?.error || t('error_occurred')); }
   };
 
   return (

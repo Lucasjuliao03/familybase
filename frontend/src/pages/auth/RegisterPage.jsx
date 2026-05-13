@@ -18,7 +18,7 @@ export default function RegisterPage() {
     try {
       await register(form);
     } catch (err) {
-      toast.error(err.response?.data?.error || t('error_occurred'));
+      toast.error(err?.message || err.response?.data?.error || t('error_occurred'));
     } finally { setLoading(false); }
   };
 

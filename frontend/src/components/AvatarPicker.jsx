@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import api, { apiOrigin } from '../services/api';
+import api, { publicAssetUrl } from '../services/api';
 
 const PRESET_AVATARS = [
   { id: 'astronaut', emoji: '🚀', label: 'Astronauta', color: '#6C5CE7' },
@@ -39,7 +39,7 @@ export default function AvatarPicker({ currentAvatarUrl, currentPreset, onSave, 
   const avatarSize = size === 'lg' ? 90 : 64;
 
   const getDisplaySrc = () => {
-    if (currentAvatarUrl) return `${apiOrigin}${currentAvatarUrl}`;
+    if (currentAvatarUrl) return publicAssetUrl(currentAvatarUrl);
     return null;
   };
 

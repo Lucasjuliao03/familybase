@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { useLanguage } from '../../contexts/LanguageContext';
-import api, { apiOrigin } from '../../services/api';
+import api, { publicAssetUrl } from '../../services/api';
 import { PRESET_AVATARS } from '../AvatarPicker';
 
 /**
@@ -38,7 +38,7 @@ export default function MobileNav({ navItems = [], pinnedCount = 4 }) {
   const hasMore = drawerItems.length > 0;
 
   const userAvatar = user?.avatar_url
-    ? <img src={`${apiOrigin}${user.avatar_url}`} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }} />
+    ? <img src={publicAssetUrl(user.avatar_url)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }} />
     : PRESET_AVATARS.find(a => a.id === user?.avatar_preset)?.emoji || user?.name?.[0] || '👤';
 
   return (
@@ -87,7 +87,7 @@ export default function MobileNav({ navItems = [], pinnedCount = 4 }) {
                 fontSize: '1.4rem', flexShrink: 0
               }}>
                 {family?.logo_url
-                  ? <img src={`${apiOrigin}${family.logo_url}`} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  ? <img src={publicAssetUrl(family.logo_url)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                   : (family?.emoji || '🏠')}
               </div>
               <div>

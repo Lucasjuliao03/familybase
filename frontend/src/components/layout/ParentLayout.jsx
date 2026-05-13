@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { Outlet, NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { useLanguage } from '../../contexts/LanguageContext';
-import api, { apiOrigin } from '../../services/api';
+import api, { publicAssetUrl } from '../../services/api';
 import { PRESET_AVATARS } from '../../components/AvatarPicker';
 import { anyModuleAllowed, moduleAllowed } from '../../lib/familyModules';
 import MobileNav from './MobileNav';
@@ -82,7 +82,7 @@ export default function ParentLayout() {
       <aside className={`app-sidebar ${collapsed ? 'collapsed' : ''} ${mobileOpen ? 'open' : ''}`}>
         <div className="sidebar-logo" style={{ flexDirection: 'column', alignItems: 'center', textAlign: 'center', gap: 6 }}>
           {family?.logo_url ? (
-            <img src={`${apiOrigin}${family.logo_url}`} alt="" style={{ height: collapsed ? 32 : 40, maxWidth: collapsed ? 40 : 160, objectFit: 'contain' }} />
+            <img src={publicAssetUrl(family.logo_url)} alt="" style={{ height: collapsed ? 32 : 40, maxWidth: collapsed ? 40 : 160, objectFit: 'contain' }} />
           ) : (
             <img src="/logo.png" alt="FamilyBase" style={{ height: collapsed ? 32 : 40 }} />
           )}
@@ -105,7 +105,7 @@ export default function ParentLayout() {
           <div className="sidebar-user">
             <div className="user-avatar" style={{ overflow: 'hidden', background: 'var(--bg)', color: 'var(--text)' }}>
               {user?.avatar_url ? (
-                <img src={`${apiOrigin}${user.avatar_url}`} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                <img src={publicAssetUrl(user.avatar_url)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
               ) : (
                 user?.avatar_preset ? PRESET_AVATARS.find(a => a.id === user.avatar_preset)?.emoji : (user?.name?.[0] || 'P')
               )}
@@ -135,7 +135,7 @@ export default function ParentLayout() {
           <div className="flex gap-16" style={{alignItems:'center'}}>
             <div className="flex gap-10" style={{ alignItems: 'center', marginRight: 4 }} title={family?.name || ''}>
               {family?.logo_url ? (
-                <img src={`${apiOrigin}${family.logo_url}`} alt="" style={{ width: 36, height: 36, borderRadius: 10, objectFit: 'cover', border: '1px solid var(--border)' }} />
+                <img src={publicAssetUrl(family.logo_url)} alt="" style={{ width: 36, height: 36, borderRadius: 10, objectFit: 'cover', border: '1px solid var(--border)' }} />
               ) : family?.emoji ? (
                 <span style={{ fontSize: '1.5rem', lineHeight: 1 }}>{family.emoji}</span>
               ) : null}

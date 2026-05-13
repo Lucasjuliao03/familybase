@@ -71,13 +71,17 @@ export function AuthProvider({ children }) {
         const { data: familyData } = await supabase.from('families').select('*').eq('id', profile.family_id).single();
         setFamily(familyData);
 
-        // Mescla os módulos ativos da família com os padrões
         const defaultMods = { tasks: true, calendar: true, routines: true, medals: true, reports: true, shopping: true, mural: true, family_shop: true, allowance: true, piggy_bank: true, goals: true, notifications: true, health: true };
-        const savedMods = familyData.active_modules || {};
-        
-        // Se a família nunca salvou nada, usa os padrões. Se salvou, usa os salvos.
-        const mergedMods = Object.keys(savedMods).length > 0 ? savedMods : defaultMods;
-        setModules(mergedMods);
+        const { data: fmRows } = await supabase.from('family_modules').select('module_key, is_enabled').eq('family_id', profile.family_id);
+        if (!fmRows?.length) {
+          setModules(defaultMods);
+        } else {
+          const mergedMods = { ...defaultMods };
+          fmRows.forEach((r) => {
+            if (r.module_key != null) mergedMods[r.module_key] = !!r.is_enabled;
+          });
+          setModules(mergedMods);
+        }
       }
 
       // Se for criança, busca o perfil de child
@@ -102,18 +106,22 @@ export function AuthProvider({ children }) {
   };
 
   const register = async (formData) => {
-    // Cadastro de família + gestor diretamente pelo frontend via RPC ou Supabase Auth
-    // Neste contexto BaaS, normalmente criamos via Edge Function ou uma lógica direta
     const { data, error } = await supabase.auth.signUp({
       email: formData.email,
       password: formData.password,
       options: {
-        data: { name: formData.name }
-      }
+        data: { name: formData.name, family_name: formData.familyName },
+      },
     });
     if (error) throw new Error(error.message);
-    // (A criação das tabelas 'users' e 'families' pode depender de Triggers no banco
-    // ou ser feita em seguida no frontend caso o RLS permita insert sem family_id).
+    if (data.session?.user) {
+      const { error: rpcErr } = await supabase.rpc('register_family_and_user', {
+        p_family_name: formData.familyName || null,
+        p_user_name: formData.name || null,
+      });
+      if (rpcErr) throw new Error(rpcErr.message);
+      await loadUserProfile(data.user.id, formData.email);
+    }
     return data;
   };
 

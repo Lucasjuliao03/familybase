@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useToast } from '../../contexts/ToastContext';
-import api from '../../services/api';
+import api, { publicAssetUrl } from '../../services/api';
 import { PRESET_AVATARS } from '../../components/AvatarPicker';
 
 const PREDEFINED_SUBJECTS = [
@@ -74,7 +74,7 @@ export default function GradeTracker() {
             <div key={name} className="stat-card" style={{borderLeft:`4px solid ${data.color}`, display: 'flex', gap: 16}}>
               <div className="stat-icon" style={{background:`${data.color}20`, fontSize:'1.8rem', width: 64, height: 64, borderRadius: '50%', overflow: 'hidden', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
                 {data.avatar_url ? (
-                  <img src={`http://localhost:3001${data.avatar_url}`} alt="" style={{width: '100%', height: '100%', objectFit: 'cover'}} />
+                  <img src={publicAssetUrl(data.avatar_url)} alt="" style={{width: '100%', height: '100%', objectFit: 'cover'}} />
                 ) : (
                   data.avatar_preset ? PRESET_AVATARS.find(a => a.id === data.avatar_preset)?.emoji : name[0]
                 )}
@@ -122,7 +122,7 @@ export default function GradeTracker() {
                 <td>
                   <div className="flex gap-8" style={{alignItems:'center'}}>
                     <div style={{width:24,height:24,borderRadius:'50%',background:g.child_color,display:'flex',alignItems:'center',justifyContent:'center',overflow:'hidden',fontSize:'0.75rem'}}>
-                      {g.avatar_url ? <img src={`http://localhost:3001${g.avatar_url}`} alt="" style={{width:'100%',height:'100%',objectFit:'cover'}} /> : (g.avatar_preset ? PRESET_AVATARS.find(a=>a.id===g.avatar_preset)?.emoji : g.child_name[0])}
+                      {g.avatar_url ? <img src={publicAssetUrl(g.avatar_url)} alt="" style={{width:'100%',height:'100%',objectFit:'cover'}} /> : (g.avatar_preset ? PRESET_AVATARS.find(a=>a.id===g.avatar_preset)?.emoji : g.child_name[0])}
                     </div>
                     {g.child_name}
                   </div>

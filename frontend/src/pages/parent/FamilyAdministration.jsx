@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useToast } from '../../contexts/ToastContext';
 import { useAuth } from '../../contexts/AuthContext';
-import api, { apiOrigin } from '../../services/api';
+import api, { publicAssetUrl } from '../../services/api';
 import AvatarPicker, { PRESET_AVATARS } from '../../components/AvatarPicker';
 import UserDisplayColorPicker from '../../components/UserDisplayColorPicker';
 import {
@@ -16,7 +16,7 @@ const COLOR_PRESETS = ['#6C5CE7', '#E84393', '#00B894', '#FDCB6E', '#74B9FF', '#
 
 function imgUrl(path) {
   if (!path) return null;
-  return `${apiOrigin}${path}`;
+  return publicAssetUrl(path);
 }
 
 const MODULE_ICONS = {

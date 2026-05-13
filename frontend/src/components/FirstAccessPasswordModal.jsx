@@ -26,17 +26,13 @@ export default function FirstAccessPasswordModal() {
     }
     setLoading(true);
     try {
-      const { data } = await api.put('/auth/password/first-access', { newPassword: pw });
-      if (data.token) {
-        localStorage.setItem('fb_token', data.token);
-        api.defaults.headers.common['Authorization'] = `Bearer ${data.token}`;
-      }
+      await api.put('/auth/password/first-access', { newPassword: pw });
       clearMustChangePassword();
       await fetchMe();
       setPw('');
       setPw2('');
     } catch (ex) {
-      setErr(ex.response?.data?.error || t('error_occurred'));
+      setErr(ex?.message || ex.response?.data?.error || t('error_occurred'));
     } finally {
       setLoading(false);
     }

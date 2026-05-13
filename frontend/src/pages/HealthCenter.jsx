@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../contexts/LanguageContext';
 import { useToast } from '../contexts/ToastContext';
-import api, { apiOrigin } from '../services/api';
+import api, { publicAssetUrl } from '../services/api';
 
 const RECORD_TYPES = ['flu', 'cold', 'headache', 'sore_throat', 'fever', 'cough', 'allergy', 'stomach_ache', 'malaise', 'other'];
 
@@ -62,7 +62,7 @@ function HealthAttachmentPicker({ urls, onChange, disabled, t, toast }) {
       <div className="flex gap-8 flex-wrap mt-8">
         {list.map((url) => (
           <div key={url} className="flex gap-8 align-center" style={{ alignItems: 'flex-start' }}>
-            <img src={`${apiOrigin}${url}`} alt="" style={{ maxWidth: 72, borderRadius: 6 }} />
+            <img src={publicAssetUrl(url)} alt="" style={{ maxWidth: 72, borderRadius: 6 }} />
             {!disabled && (
               <button type="button" className="btn btn-sm btn-ghost" onClick={() => onChange(list.filter((u) => u !== url))}>
                 {t('health_remove_attachment')}
@@ -422,7 +422,7 @@ export default function HealthCenter() {
                 ) : null}
                 <p>{t('health_severity')}: {t(`health_severity_${r.severity}`)} · {t('health_status_label')}: {t(`health_status_${r.status}`)}</p>
                 {imgList(r.attachment_urls).map((url) => (
-                  <img key={url} src={`${apiOrigin}${url}`} alt="" style={{ maxWidth: '100%', marginTop: 8, borderRadius: 8 }} />
+                  <img key={url} src={publicAssetUrl(url)} alt="" style={{ maxWidth: '100%', marginTop: 8, borderRadius: 8 }} />
                 ))}
                 {canManage && ['parent', 'relative'].includes(user.role) && (
                   <div className="flex gap-8 mt-12 flex-wrap">
@@ -481,7 +481,7 @@ export default function HealthCenter() {
                 {a.reason && <p className="mt-8" style={{ fontSize: '0.9rem' }}>{a.reason}</p>}
                 {a.diagnosis_notes && <p style={{ fontSize: '0.85rem' }}>{t('health_diagnosis')}: {a.diagnosis_notes}</p>}
                 {imgList(a.attachment_urls).map((url) => (
-                  <img key={url} src={`${apiOrigin}${url}`} alt="" style={{ maxWidth: '100%', marginTop: 8, borderRadius: 8 }} />
+                  <img key={url} src={publicAssetUrl(url)} alt="" style={{ maxWidth: '100%', marginTop: 8, borderRadius: 8 }} />
                 ))}
                 <div className="flex gap-8 mt-12 flex-wrap">
                   <button type="button" className="btn btn-sm btn-ghost" onClick={() => setModal({
@@ -581,9 +581,9 @@ export default function HealthCenter() {
                   </div>
                 )}
                 <div className="flex gap-8 mt-12" style={{ flexWrap: 'wrap' }}>
-                  {m.prescription_image_url && <img src={`${apiOrigin}${m.prescription_image_url}`} alt="Prescrição" style={{ height: 60, width: 60, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--border)' }} />}
+                  {m.prescription_image_url && <img src={publicAssetUrl(m.prescription_image_url)} alt="Prescrição" style={{ height: 60, width: 60, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--border)' }} />}
                   {imgList(m.attachment_urls).map((url) => (
-                    <img key={url} src={`${apiOrigin}${url}`} alt="Anexo" style={{ height: 60, width: 60, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--border)' }} />
+                    <img key={url} src={publicAssetUrl(url)} alt="Anexo" style={{ height: 60, width: 60, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--border)' }} />
                   ))}
                 </div>
                 {canManage && isParent && (
@@ -666,7 +666,7 @@ export default function HealthCenter() {
             attachmentItems.map((item) => (
               <div key={item.key} className="card">
                 <p style={{ fontSize: '0.9rem', marginBottom: 12 }}>{item.caption}</p>
-                <img src={`${apiOrigin}${item.url}`} alt="" style={{ maxWidth: 'min(100%, 360px)', borderRadius: 8 }} />
+                <img src={publicAssetUrl(item.url)} alt="" style={{ maxWidth: 'min(100%, 360px)', borderRadius: 8 }} />
               </div>
             ))
           )}
@@ -1071,7 +1071,7 @@ function MedicationModal({ modal, setModal, childrenList, adultsList = [], t, to
             <input type="file" accept="image/*" className="form-input" onChange={uploadRx} />
             {modal.prescription_image_url && (
               <div className="mt-8">
-                <img src={`${apiOrigin}${modal.prescription_image_url}`} alt="" style={{ maxWidth: 160, borderRadius: 8 }} />
+                <img src={publicAssetUrl(modal.prescription_image_url)} alt="" style={{ maxWidth: 160, borderRadius: 8 }} />
                 <button type="button" className="btn btn-sm btn-ghost ml-8" onClick={() => setModal((m) => ({ ...m, prescription_image_url: '' }))}>{t('health_remove_attachment')}</button>
               </div>
             )}
