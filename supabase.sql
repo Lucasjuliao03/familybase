@@ -1,5 +1,8 @@
 -- ==========================================
 -- FAMILYBASE - MIGRATION SCRIPT PARA SUPABASE
+-- Em produção / Vercel: depois de criar o projeto, execute também
+--   supabase_baas_complete_fix.sql
+-- (login, trigger auth→public.users, políticas master sem recursão RLS)
 -- ==========================================
 
 -- Habilita extensão pgcrypto para UUID se não estiver habilitada

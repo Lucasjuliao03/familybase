@@ -89,7 +89,7 @@ export function AuthProvider({ children }) {
         await supabase.auth.signOut();
         throw new Error(
           'Não foi possível ler o perfil na base de dados (erro do servidor). ' +
-          'No Supabase, execute o script supabase_fix_users_rls_recursion.sql (função get_current_user_family_id com SECURITY DEFINER).',
+          'No Supabase, execute o script supabase_baas_complete_fix.sql no SQL Editor.',
         );
       }
 
@@ -97,6 +97,25 @@ export function AuthProvider({ children }) {
         clearState();
         setLoading(false);
         return;
+      }
+
+      if (!profileRow.family_id) {
+        const { error: provErr } = await supabase.rpc('register_family_and_user', {
+          p_family_name: null,
+          p_user_name: null,
+        });
+        if (provErr) {
+          console.error('Criar família (RPC):', provErr.message);
+        } else {
+          const refill = await supabase.from('users').select('*').eq('id', userId).single();
+          if (!refill.error && refill.data) {
+            profileRow = refill.data;
+          }
+        }
+      }
+
+      if (!profileRow?.family_id) {
+        console.warn('Conta sem família associada; complete o registo ou execute o SQL de correção.');
       }
 
       setUser({ ...profileRow, email });
