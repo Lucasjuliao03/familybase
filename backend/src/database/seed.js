@@ -73,7 +73,7 @@ async function seed() {
 
   for (const task of tasks) {
     db.prepare(`INSERT INTO tasks (id, title, type, points, status, frequency, is_recurring, child_id, family_id) VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?)`).run(
-      uuidv4(), task.title, task.type, task.points, task.frequency || 'once', task.frequency && task.frequency !== 'once' ? 1 : 0, childIds[task.childIdx], familyId
+      uuidv4(), task.title, task.type, task.points, task.frequency || 'once', !!(task.frequency && task.frequency !== 'once'), childIds[task.childIdx], familyId
     );
   }
 
@@ -115,7 +115,7 @@ async function seed() {
 
   // Create allowance settings
   for (let i = 0; i < childIds.length; i++) {
-    db.prepare(`INSERT OR IGNORE INTO allowance_settings (id, child_id, family_id, model_type, base_amount, currency, allow_accumulation) VALUES (?, ?, ?, 'hybrid', ?, 'BRL', 1)`).run(
+    db.prepare(`INSERT OR IGNORE INTO allowance_settings (id, child_id, family_id, model_type, base_amount, currency, allow_accumulation) VALUES (?, ?, ?, 'hybrid', ?, 'BRL', TRUE)`).run(
       uuidv4(), childIds[i], familyId, (i + 1) * 20
     );
     // Create current open cycle

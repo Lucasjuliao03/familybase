@@ -4,6 +4,47 @@ require('dotenv').config();
 let pool;
 
 /**
+ * Colunas tipadas como BOOLEAN no Postgres: evita "operator does not exist: boolean = integer"
+ * em SQL herdado (ex.: col = 1).
+ */
+const PG_BOOLEAN_COLUMNS = new Set([
+  'is_recurring',
+  'is_active',
+  'is_enabled',
+  'is_premium',
+  'default_enabled',
+  'requires_approval',
+  'visible_on_calendar',
+  'generate_notification',
+  'affects_allowance',
+  'is_health_reminder',
+  'must_change_password',
+  'allow_accumulation',
+  'allow_negative_balance',
+  'require_parent_approval',
+  'visible_to_child',
+  'is_pinned',
+  'requires_read_confirmation',
+  'inactive',
+  'stayed_home',
+  'apply_discount_if_late',
+  'is_urgent',
+  'is_bought',
+  'is_read',
+]);
+
+function normalizeBooleanLiteralEquals(sql) {
+  let s = sql;
+  for (const col of PG_BOOLEAN_COLUMNS) {
+    const esc = col.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // t.col = 1  ou  col = 0
+    s = s.replace(new RegExp(`(\\b(?:[\\w]+\\.)?${esc}\\s*=\\s*)1\\b`, 'gi'), '$1TRUE');
+    s = s.replace(new RegExp(`(\\b(?:[\\w]+\\.)?${esc}\\s*=\\s*)0\\b`, 'gi'), '$1FALSE');
+  }
+  return s;
+}
+
+/**
  * SQL herdado de SQLite → PostgreSQL (pool Supabase).
  */
 function sqliteToPgSql(sql) {
@@ -11,6 +52,7 @@ function sqliteToPgSql(sql) {
   let s = sql;
   s = s.replace(/datetime\('now'\)/gi, 'CURRENT_TIMESTAMP');
   s = s.replace(/datetime\("now"\)/gi, 'CURRENT_TIMESTAMP');
+  s = normalizeBooleanLiteralEquals(s);
 
   if (/\bINSERT OR IGNORE INTO\s+task_occurrences\b/i.test(s)) {
     s = s.replace(/\bINSERT OR IGNORE INTO\s+task_occurrences\b/i, 'INSERT INTO task_occurrences');
@@ -76,4 +118,4 @@ function initDatabase() {
   return dbWrapper;
 }
 
-module.exports = { initDatabase };
+module.exports = { initDatabase, sqliteToPgSql, normalizeBooleanLiteralEquals };

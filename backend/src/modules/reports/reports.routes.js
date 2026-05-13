@@ -10,26 +10,28 @@ router.get('/dashboard', authMiddleware, parentOnly, async (req, res) => {
     const db = req.db; const fid = req.user.familyId;
     const children = await db.prepare('SELECT * FROM children WHERE family_id=? ORDER BY name').all(fid);
     let pendingTasks = { c: 0 }; let completedTasks = { c: 0 }; let approvedTasks = { c: 0 };
-    if (isEnabled(db, fid, 'tasks')) {
+    if (await isEnabled(db, fid, 'tasks')) {
       pendingTasks = await db.prepare('SELECT COUNT(*) as c FROM tasks WHERE family_id=? AND status=?').get(fid, 'pending');
       completedTasks = await db.prepare('SELECT COUNT(*) as c FROM tasks WHERE family_id=? AND status=?').get(fid, 'completed');
       approvedTasks = await db.prepare('SELECT COUNT(*) as c FROM tasks WHERE family_id=? AND status=?').get(fid, 'approved');
     }
     let pendingRedemptions = { c: 0 };
-    if (isEnabled(db, fid, 'family_shop')) {
+    if (await isEnabled(db, fid, 'family_shop')) {
       pendingRedemptions = await db.prepare('SELECT COUNT(*) as c FROM redemptions r JOIN rewards rw ON r.reward_id=rw.id WHERE rw.family_id=? AND r.status=?').get(fid, 'pending');
     }
     let upcomingEvents = [];
-    if (isEnabled(db, fid, 'calendar')) {
-      upcomingEvents = await db.prepare("SELECT ce.*,c.name as child_name,c.color as child_color FROM calendar_events ce LEFT JOIN children c ON ce.child_id=c.id WHERE ce.family_id=? AND ce.date>=date('now') ORDER BY ce.date LIMIT 5").all(fid);
+    if (await isEnabled(db, fid, 'calendar')) {
+      upcomingEvents = await db.prepare("SELECT ce.*,c.name as child_name,c.color as child_color FROM calendar_events ce LEFT JOIN children c ON ce.child_id=c.id WHERE ce.family_id=? AND ce.date >= CURRENT_DATE ORDER BY ce.date LIMIT 5").all(fid);
     }
     let recentHistory = [];
-    if (isEnabled(db, fid, 'medals') || isEnabled(db, fid, 'tasks')) {
+    if ((await isEnabled(db, fid, 'medals')) || (await isEnabled(db, fid, 'tasks'))) {
       recentHistory = await db.prepare('SELECT h.*,c.name as child_name,c.color as child_color, c.avatar_url, c.avatar_preset FROM history h JOIN children c ON h.child_id=c.id WHERE h.family_id=? ORDER BY h.created_at DESC LIMIT 10').all(fid);
-      if (!isEnabled(db, fid, 'tasks')) {
+      const tasksOn = await isEnabled(db, fid, 'tasks');
+      const medalsOn = await isEnabled(db, fid, 'medals');
+      if (!tasksOn) {
         recentHistory = recentHistory.filter((h) => h.type !== 'task');
       }
-      if (!isEnabled(db, fid, 'medals')) {
+      if (!medalsOn) {
         recentHistory = recentHistory.filter((h) => h.type !== 'medal');
       }
     }
@@ -50,7 +52,7 @@ router.get('/child/:childId', authMiddleware, async (req, res) => {
     const fid = req.user.familyId;
 
     let taskStats = { pending: 0, completed: 0, approved: 0, rejected: 0 };
-    if (isEnabled(db, fid, 'tasks')) {
+    if (await isEnabled(db, fid, 'tasks')) {
       taskStats = {
         pending: await db.prepare('SELECT COUNT(*) as c FROM tasks WHERE child_id=? AND status=?').get(cid, 'pending').c,
         completed: await db.prepare('SELECT COUNT(*) as c FROM tasks WHERE child_id=? AND status=?').get(cid, 'completed').c,
@@ -60,7 +62,7 @@ router.get('/child/:childId', authMiddleware, async (req, res) => {
     }
 
     let grades = [];
-    if (isEnabled(db, fid, 'grades')) {
+    if (await isEnabled(db, fid, 'grades')) {
       grades = await db.prepare('SELECT * FROM grades WHERE child_id=? ORDER BY date DESC').all(cid);
     }
     const gradesBySubject = {};
@@ -75,22 +77,25 @@ router.get('/child/:childId', authMiddleware, async (req, res) => {
     }
 
     let medals = [];
-    if (isEnabled(db, fid, 'medals')) {
+    if (await isEnabled(db, fid, 'medals')) {
       medals = await db.prepare('SELECT m.*,em.earned_at FROM earned_medals em JOIN medals m ON em.medal_id=m.id WHERE em.child_id=?').all(cid);
     }
     let allowance_settings = null;
     let allowance_cycles = [];
-    if (isEnabled(db, fid, 'allowance')) {
+    if (await isEnabled(db, fid, 'allowance')) {
       allowance_settings = await db.prepare('SELECT * FROM allowance_settings WHERE child_id=?').get(cid);
-      allowance_cycles = db.prepare('SELECT * FROM allowance_cycles WHERE child_id=? ORDER BY year DESC, month DESC LIMIT 12').all(cid);
+      allowance_cycles = await db.prepare('SELECT * FROM allowance_cycles WHERE child_id=? ORDER BY year DESC, month DESC LIMIT 12').all(cid);
     }
     let history = [];
-    if (isEnabled(db, fid, 'tasks') || isEnabled(db, fid, 'medals') || isEnabled(db, fid, 'grades')) {
+    const histTasksOn = await isEnabled(db, fid, 'tasks');
+    const histMedalsOn = await isEnabled(db, fid, 'medals');
+    const histGradesOn = await isEnabled(db, fid, 'grades');
+    if (histTasksOn || histMedalsOn || histGradesOn) {
       history = await db.prepare('SELECT * FROM history WHERE child_id=? ORDER BY created_at DESC LIMIT 30').all(cid);
       history = history.filter((h) => {
-        if (h.type === 'task' && !isEnabled(db, fid, 'tasks')) return false;
-        if (h.type === 'medal' && !isEnabled(db, fid, 'medals')) return false;
-        if (h.type === 'grade' && !isEnabled(db, fid, 'grades')) return false;
+        if (h.type === 'task' && !histTasksOn) return false;
+        if (h.type === 'medal' && !histMedalsOn) return false;
+        if (h.type === 'grade' && !histGradesOn) return false;
         return true;
       });
     }
@@ -106,13 +111,13 @@ router.get('/export/:type', authMiddleware, parentOnly, async (req, res) => {
     const { type } = req.params;
     const { child_id } = req.query;
 
-    if (!isEnabled(db, fid, 'reports')) {
+    if (!(await isEnabled(db, fid, 'reports'))) {
       return res.status(403).json({ error: 'Relatórios desativados para esta família', code: 'MODULE_DISABLED', module: 'reports' });
     }
-    if (type === 'tasks' && !isEnabled(db, fid, 'tasks')) {
+    if (type === 'tasks' && !(await isEnabled(db, fid, 'tasks'))) {
       return res.status(403).json({ error: 'Módulo de tarefas desativado', code: 'MODULE_DISABLED', module: 'tasks' });
     }
-    if (type === 'grades' && !isEnabled(db, fid, 'grades')) {
+    if (type === 'grades' && !(await isEnabled(db, fid, 'grades'))) {
       return res.status(403).json({ error: 'Módulo de notas desativado', code: 'MODULE_DISABLED', module: 'grades' });
     }
 

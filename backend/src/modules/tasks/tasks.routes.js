@@ -158,7 +158,7 @@ router.post('/', async (req, res) => {
     }
 
     const wantsRoutine = !!(is_recurring || (frequency && frequency !== 'once'));
-    if (wantsRoutine && !isEnabled(db, req.user.familyId, 'routines')) {
+    if (wantsRoutine && !(await isEnabled(db, req.user.familyId, 'routines'))) {
       return res.status(403).json({
         error: 'O módulo Rotinas está desativado para esta família',
         code: 'MODULE_DISABLED',
@@ -204,7 +204,7 @@ router.post('/', async (req, res) => {
     }
 
     // Notify child of new task
-    if (req.user.role !== 'child' && isEnabled(db, req.user.familyId, 'notifications')) {
+    if (req.user.role !== 'child' && (await isEnabled(db, req.user.familyId, 'notifications'))) {
       await db.prepare('INSERT INTO notifications (id,title,message,type,icon,child_id,family_id) VALUES (?,?,?,?,?,?,?)').run(
         uuidv4(), 'Nova tarefa!', `"${title}" foi adicionada!`, 'task', '📋', targetChildId, req.user.familyId
       );
@@ -228,7 +228,7 @@ router.put('/:id', parentOnly, async (req, res) => {
     const nextRecurring = is_recurring !== undefined ? !!is_recurring : !!task.is_recurring;
     const nextFreq = frequency !== undefined ? frequency : task.frequency;
     const wantsRoutine = !!(nextRecurring || (nextFreq && nextFreq !== 'once'));
-    if (wantsRoutine && !isEnabled(db, req.user.familyId, 'routines')) {
+    if (wantsRoutine && !(await isEnabled(db, req.user.familyId, 'routines'))) {
       return res.status(403).json({
         error: 'O módulo Rotinas está desativado para esta família',
         code: 'MODULE_DISABLED',
@@ -333,7 +333,7 @@ router.put('/occurrences/:id/complete', async (req, res) => {
       await awardPoints(db, occ, task, req.user);
     } else {
       // Notify parents for approval
-      if (isEnabled(db, req.user.familyId, 'notifications')) {
+      if (await isEnabled(db, req.user.familyId, 'notifications')) {
         const parents = await db.prepare("SELECT id FROM users WHERE family_id=? AND role IN ('parent','master')").all(req.user.familyId);
         const child = await db.prepare('SELECT name FROM children WHERE id=?').get(occ.child_id);
         for (const p of parents) {
@@ -368,7 +368,7 @@ router.put('/occurrences/:id/approve', parentOnly, async (req, res) => {
       if (rule && rule.affects_allowance && rule.discount_amount > 0) {
         await applyAllowanceDebit(db, occ, task, rule, req.user);
       }
-      if (isEnabled(db, req.user.familyId, 'notifications')) {
+      if (await isEnabled(db, req.user.familyId, 'notifications')) {
         await db.prepare('INSERT INTO notifications (id,title,message,type,icon,child_id,family_id) VALUES (?,?,?,?,?,?,?)').run(
           uuidv4(), 'Tarefa reprovada', `"${task.title}" foi reprovada.${rejection_reason ? ' Motivo: ' + rejection_reason : ''}`, 'task', '❌', occ.child_id, req.user.familyId
         );

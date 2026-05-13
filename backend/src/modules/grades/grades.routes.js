@@ -47,7 +47,7 @@ router.post('/', async (req, res) => {
     );
 
     // Check perfect score medal
-    if (score != null && parseFloat(score) >= parseFloat(max_score || 10) && isEnabled(db, req.user.familyId, 'medals')) {
+    if (score != null && parseFloat(score) >= parseFloat(max_score || 10) && (await isEnabled(db, req.user.familyId, 'medals'))) {
       const perfects = await db.prepare('SELECT COUNT(*) as c FROM grades WHERE child_id=? AND score>=max_score').get(targetChildId);
       const medals = await db.prepare('SELECT * FROM medals WHERE requirement_type=? AND requirement_value<=?').all('perfect_grade', perfects.c);
       for (const m of medals) {

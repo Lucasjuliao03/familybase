@@ -71,7 +71,7 @@ function canEditNotice(req, notice) {
 }
 
 async function notifyTargets(db, familyId, notice, actorUserId) {
-  if (!isEnabled(db, familyId, 'notifications')) return;
+  if (!(await isEnabled(db, familyId, 'notifications'))) return;
   const title = notice.title;
   const msg = (notice.description || '').slice(0, 200);
   const recipients = new Set();
@@ -213,7 +213,7 @@ router.post('/notices', async (req, res) => {
       JSON.stringify(target_user_ids || []),
       JSON.stringify(target_child_ids || []),
       start_datetime || null, due_datetime || null, notice_time || null,
-      is_recurring ? 1 : 0, recurrence_rule || null, is_pinned ? 1 : 0, requires_read_confirmation ? 1 : 0,
+      !!is_recurring, recurrence_rule || null, !!is_pinned, !!requires_read_confirmation,
       status || 'active', req.user.id,
     );
     const notice = await db.prepare('SELECT * FROM family_notices WHERE id=?').get(id);
@@ -250,10 +250,10 @@ router.put('/notices/:id', parentOnly, async (req, res) => {
       u.target_user_ids != null ? JSON.stringify(u.target_user_ids) : null,
       u.target_child_ids != null ? JSON.stringify(u.target_child_ids) : null,
       u.start_datetime, u.due_datetime, u.notice_time,
-      u.is_recurring !== undefined ? (u.is_recurring ? 1 : 0) : null,
+      u.is_recurring !== undefined ? !!u.is_recurring : null,
       u.recurrence_rule,
-      u.is_pinned !== undefined ? (u.is_pinned ? 1 : 0) : null,
-      u.requires_read_confirmation !== undefined ? (u.requires_read_confirmation ? 1 : 0) : null,
+      u.is_pinned !== undefined ? !!u.is_pinned : null,
+      u.requires_read_confirmation !== undefined ? !!u.requires_read_confirmation : null,
       u.status,
       req.params.id,
     );
