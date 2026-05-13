@@ -24,8 +24,11 @@ async function call(path: string, init: RequestInit = {}) {
   let body: any = null;
   try { body = txt ? JSON.parse(txt) : null; } catch { body = txt; }
   if (!res.ok) {
+    const causes = Array.isArray(body?.cause)
+      ? body.cause.map((c: unknown) => (typeof c === "object" && c && "message" in c ? (c as { message: string }).message : String(c))).join("; ")
+      : "";
     const msg = body?.message || body?.error || res.statusText || "Mercado Pago error";
-    const err = new Error(`MP ${res.status}: ${msg}`);
+    const err = new Error(causes ? `MP ${res.status}: ${msg} (${causes})` : `MP ${res.status}: ${msg}`);
     (err as any).status = res.status;
     (err as any).body = body;
     throw err;

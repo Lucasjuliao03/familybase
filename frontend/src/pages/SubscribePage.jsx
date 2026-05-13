@@ -78,8 +78,12 @@ export default function SubscribePage() {
                     payer_email: cardFormData?.formData?.payer?.email || user?.email,
                   }),
                 });
-                const body = await res.json();
-                if (!res.ok) throw new Error(body?.error || 'Falha ao criar assinatura.');
+                const body = await res.json().catch(() => ({}));
+                if (!res.ok) {
+                  const detail = body?.detail != null ? JSON.stringify(body.detail) : '';
+                  const msg = [body?.error, detail].filter(Boolean).join(' ');
+                  throw new Error(msg || `Erro ${res.status} ao criar assinatura.`);
+                }
 
                 toast.success('Assinatura confirmada! Bem-vindo de volta.');
                 await fetchMe();

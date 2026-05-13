@@ -47,6 +47,9 @@ Deno.serve(async (req) => {
     }
 
     const backUrl = Deno.env.get("MP_BACK_URL") || "https://example.com/subscribe/return";
+    // MP exige start_date/end_date em auto_recurring (JSON.stringify omitiria undefined → pedido inválido)
+    const start = new Date(Date.now() + 120_000);
+    const end = new Date(Date.now() + 10 * 365 * 24 * 60 * 60 * 1000);
     const subscription = await mpCreateSubscription({
       preapproval_plan_id: plan.mp_plan_id,
       payer_email: payer_email || profile.email || user.email!,
@@ -55,6 +58,8 @@ Deno.serve(async (req) => {
       amount: Number(plan.amount),
       currency_id: plan.currency || "BRL",
       back_url: backUrl,
+      start_date: start.toISOString(),
+      end_date: end.toISOString(),
       frequency: plan_code === "premium_anual" ? 12 : 1,
       frequency_type: "months",
     });

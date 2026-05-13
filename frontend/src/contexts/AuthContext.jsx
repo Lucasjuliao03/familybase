@@ -186,7 +186,17 @@ export function AuthProvider({ children }) {
         data: { name, family_name: familyName, profile_type: profileType },
       },
     });
-    if (error) throw new Error(error.message);
+    if (error) {
+      let hint = '';
+      if (error.message?.includes('already registered') || error.code === 'user_already_exists') {
+        hint = ' Este email já tem conta — faça login ou use outro email.';
+      } else if (/invalid/i.test(error.message || '') && /email/i.test(error.message || '')) {
+        hint =
+          ' O Supabase pode rejeitar alguns domínios (DNS/MX). Experimente Gmail/Outlook ou confira ' +
+          'Authentication → Providers → Email no painel Supabase.';
+      }
+      throw new Error(`${error.message}${hint}`);
+    }
 
     // 2. Se Supabase exige confirmação de email, não há sessão -> tentar login
     let session = data.session;
