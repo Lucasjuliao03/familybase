@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { NavLink, useLocation, useNavigate } from 'react-router-dom';
+import { NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { useLanguage } from '../../contexts/LanguageContext';
 import api, { publicAssetUrl } from '../../services/api';
@@ -11,12 +11,22 @@ import { PRESET_AVATARS } from '../AvatarPicker';
  *   navItems: [{to, icon, label}]
  *   pinnedCount: how many items appear directly in the bottom bar (default 4)
  */
-export default function MobileNav({ navItems = [], pinnedCount = 4 }) {
+export default function MobileNav({ navItems = [], pinnedCount: pinnedProp = 4 }) {
   const { user, family, logout } = useAuth();
   const { t, lang, switchLanguage } = useLanguage();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [narrowBar, setNarrowBar] = useState(false);
   const location = useLocation();
-  const navigate = useNavigate();
+
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 380px)');
+    const apply = () => setNarrowBar(mq.matches);
+    apply();
+    mq.addEventListener('change', apply);
+    return () => mq.removeEventListener('change', apply);
+  }, []);
+
+  const pinnedCount = narrowBar ? Math.min(pinnedProp, 3) : pinnedProp;
 
   // Close drawer on navigation
   useEffect(() => { setDrawerOpen(false); }, [location.pathname]);
@@ -52,21 +62,29 @@ export default function MobileNav({ navItems = [], pinnedCount = 4 }) {
             end={item.end}
             className={({ isActive }) => `mbb-item${isActive ? ' active' : ''}`}
           >
-            <span className="mbb-icon">{item.icon}</span>
-            <span>{item.label}</span>
+            <span className="mbb-icon-wrap" aria-hidden>
+              <span className="mbb-icon">{item.icon}</span>
+            </span>
+            <span className="mbb-label">{item.label}</span>
           </NavLink>
         ))}
 
         {hasMore && (
           <button
+            type="button"
             className={`mbb-item mbb-more${drawerOpen ? ' open' : ''}`}
             onClick={() => setDrawerOpen(v => !v)}
             aria-label="Mais opções"
           >
-            <span className="mbb-icon" style={{ transition: 'transform 0.25s', transform: drawerOpen ? 'rotate(45deg)' : 'none' }}>
-              {drawerOpen ? '✕' : '⋯'}
+            <span className="mbb-icon-wrap" aria-hidden>
+              <span
+                className="mbb-icon mbb-icon--more"
+                style={{ transition: 'transform 0.25s', transform: drawerOpen ? 'rotate(45deg)' : 'none' }}
+              >
+                {drawerOpen ? '✕' : '⋯'}
+              </span>
             </span>
-            <span>{drawerOpen ? 'Fechar' : 'Mais'}</span>
+            <span className="mbb-label">{drawerOpen ? 'Fechar' : 'Mais'}</span>
           </button>
         )}
       </nav>
@@ -110,8 +128,10 @@ export default function MobileNav({ navItems = [], pinnedCount = 4 }) {
                     className={`mobile-drawer-item${isActive ? ' active' : ''}`}
                     onClick={() => setDrawerOpen(false)}
                   >
-                    <span className="mdi-icon">{item.icon}</span>
-                    <span>{item.label}</span>
+                    <span className="mobile-drawer-icon-wrap" aria-hidden>
+                      <span className="mdi-icon">{item.icon}</span>
+                    </span>
+                    <span className="mobile-drawer-label">{item.label}</span>
                   </NavLink>
                 );
               })}

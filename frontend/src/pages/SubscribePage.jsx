@@ -30,6 +30,23 @@ function fmtBRL(v) {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
 }
 
+/** Sai da SPA/app-shell para páginas externas Stripe (Iframe / alguns navegadores). */
+function redirectStripeOrExternal(url) {
+  try {
+    if (
+      typeof window.top !== 'undefined'
+      && window.top
+      && window.self !== window.top
+    ) {
+      window.top.location.href = url;
+      return;
+    }
+    window.location.assign(url);
+  } catch {
+    window.location.href = url;
+  }
+}
+
 function statusBadge(label, tone = 'muted') {
   const tones = {
     active: { bg: '#00B89422', border: '#00B894', color: '#00B894' },
@@ -134,6 +151,12 @@ export default function SubscribePage() {
 
     let cancelled = false;
     (async () => {
+      const ac = new AbortController();
+      const syncTimeoutMs = 75000;
+      const tid =
+        typeof window !== 'undefined'
+          ? window.setTimeout(() => ac.abort(), syncTimeoutMs)
+          : null;
       try {
         setSubmitting(true);
         const { data: sessionData } = await supabase.auth.getSession();
@@ -146,6 +169,7 @@ export default function SubscribePage() {
             Authorization: `Bearer ${accessToken}`,
           },
           body: JSON.stringify({ session_id: sessionId }),
+          signal: ac.signal,
         });
         const body = await res.json().catch(() => ({}));
         if (!res.ok) {
@@ -164,21 +188,36 @@ export default function SubscribePage() {
       } catch (e) {
         if (!cancelled) {
           syncedSessionRef.current = null;
+          const isAbort =
+            e?.name === 'AbortError' || String(e?.message || '').includes('aborted');
           toast.error(
-            e?.message
-              || 'Não foi possível confirmar o pagamento. O webhook pode activar o acesso em breve.',
+            isAbort
+              ? 'A confirmação demorou demasiado. Se o pagamento já foi feito no Stripe, aguarde 1–2 min e actualize (o webhook deve activar o acesso).'
+              : (e?.message
+                || 'Não foi possível confirmar o pagamento. O webhook pode activar o acesso em breve.'),
           );
         }
         setSearchParams({}, { replace: true });
       } finally {
+        if (tid != null) window.clearTimeout(tid);
         if (!cancelled) setSubmitting(false);
       }
     })();
 
     return () => {
       cancelled = true;
+      syncedSessionRef.current = null;
     };
   }, [searchParams, setSearchParams, fetchMe, toast, loadStripeSummary]);
+
+  useEffect(() => {
+    if (!billingSuccess) return undefined;
+    const dest = isGestorContext ? '/parent/billing' : '/parent';
+    const timer = window.setTimeout(() => {
+      navigate(dest, { replace: true });
+    }, 4200);
+    return () => window.clearTimeout(timer);
+  }, [billingSuccess, isGestorContext, navigate]);
 
   async function openBillingPortal() {
     try {
@@ -199,7 +238,7 @@ export default function SubscribePage() {
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body?.error || `Erro ${res.status}`);
       if (!body?.url) throw new Error('Resposta sem URL do portal Stripe.');
-      window.location.href = body.url;
+      redirectStripeOrExternal(body.url);
     } catch (e) {
       toast.error(e?.message || 'Não foi possível abrir a gestão de cobrança.');
       setSubmitting(false);
@@ -212,13 +251,20 @@ export default function SubscribePage() {
       const { data: sessionData } = await supabase.auth.getSession();
       const accessToken = sessionData?.session?.access_token;
       const createUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/stripe-create-checkout-session`;
+      const checkoutReturnPath =
+        typeof window !== 'undefined' && window.location.pathname === '/parent/billing'
+          ? '/parent/billing'
+          : '/subscribe';
       const res = await fetch(createUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${accessToken}`,
         },
-        body: JSON.stringify({ plan_code: planCode }),
+        body: JSON.stringify({
+          plan_code: planCode,
+          checkout_return_path: checkoutReturnPath,
+        }),
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -229,7 +275,7 @@ export default function SubscribePage() {
       if (!body?.url) {
         throw new Error('Resposta inválida do servidor (sem URL de checkout).');
       }
-      window.location.href = body.url;
+      redirectStripeOrExternal(body.url);
     } catch (e) {
       toast.error(e?.message || 'Erro ao abrir o pagamento.');
       setSubmitting(false);
@@ -244,6 +290,16 @@ export default function SubscribePage() {
     })
     : null;
 
+  const sessionReturnId = searchParams.get('session_id');
+  const awaitingStripeConfirm =
+    !billingSuccess
+    && searchParams.get('checkout') === 'success'
+    && !!sessionReturnId
+    && !(
+      typeof sessionStorage !== 'undefined'
+      && sessionStorage.getItem(`stripe_ck_done_${sessionReturnId}`)
+    );
+
   if (billingSuccess) {
     return (
       <div className="trial-blocked billing-subscribe billing-subscribe--wide">
@@ -253,6 +309,9 @@ export default function SubscribePage() {
           <p className="trial-blocked__desc" style={{ marginBottom: 18 }}>
             A sua assinatura recorrente foi activada. Pode gerir método de pagamento e facturas com segurança no
             Stripe, ou entrar já na Base Familiar.
+          </p>
+          <p className="billing-subscribe__muted" style={{ fontSize: '0.88rem', marginBottom: 14 }}>
+            A app abre o painel em seguida automaticamente — ou use o botão abaixo.
           </p>
           <div className="billing-subscribe__actions">
             <button
@@ -278,6 +337,23 @@ export default function SubscribePage() {
 
   return (
     <div className="trial-blocked billing-subscribe billing-subscribe--wide">
+      {awaitingStripeConfirm && (
+        <div
+          className="billing-subscribe__overlay-fixed"
+          role="alert"
+          aria-live="assertive"
+        >
+          <div className="billing-subscribe__overlay-card trial-blocked__card">
+            <div className="trial-blocked__icon" aria-hidden>⏳</div>
+            <p style={{ margin: 0, fontWeight: 600 }}>
+              A confirmar o pagamento…
+            </p>
+            <p className="billing-subscribe__muted" style={{ fontSize: '0.88rem', marginTop: 10 }}>
+              Aguarde. Não feche esta página; em seguida a app actualiza o acesso.
+            </p>
+          </div>
+        </div>
+      )}
       <div className="trial-blocked__card billing-subscribe__card">
         <div className="billing-subscribe__hero">
           <div className="trial-blocked__icon">{expired ? '⛔' : '💳'}</div>

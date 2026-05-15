@@ -1,7 +1,7 @@
 // Abre Stripe Checkout em modo subscription. Resposta: { url } para redirecionar o browser.
 // ⚠️ CORS/preflight: em supabase/config.toml esta função tem verify_jwt = false para o OPTIONS
 //    passar sem token; o POST continua a exigir Authorization (validado em userFromAuthHeader).
-// POST { plan_code: "premium_mensal" | "premium_anual" }
+// POST { plan_code: "premium_mensal" | "premium_anual", checkout_return_path?: "/subscribe" | "/parent/billing" }
 //
 // Secrets: STRIPE_SECRET_KEY, SITE_URL,
 // Opcional lookup keys (prioritário): STRIPE_LOOKUP_KEY_PREMIUM_MENSAL, STRIPE_LOOKUP_KEY_PREMIUM_ANUAL
@@ -43,6 +43,22 @@ function stripeCustomerMissingOrInvalid(e: unknown): boolean {
     m.includes("the customer specified does not exist")
   );
 }
+
+/** Paths permitidos onde o Stripe redirecciona depois do pagamento (pathname só). */
+const CHECKOUT_RETURN_PATHS = new Set(["/subscribe", "/parent/billing"]);
+
+function sanitizeCheckoutReturnPath(raw: unknown): string {
+  if (typeof raw !== "string") return "/subscribe";
+  const noQuery = raw.trim().split("?")[0].split("#")[0];
+  if (
+    !noQuery.startsWith("/") || noQuery.includes("..") || noQuery.includes(":")
+  ) {
+    return "/subscribe";
+  }
+  return CHECKOUT_RETURN_PATHS.has(noQuery) ? noQuery : "/subscribe";
+}
+
+Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return corsPreflightResponse();
   if (req.method !== "POST") return json({ error: "method_not_allowed" }, 405);
 
@@ -61,6 +77,8 @@ function stripeCustomerMissingOrInvalid(e: unknown): boolean {
     if (!plan_code || !["premium_mensal", "premium_anual"].includes(plan_code)) {
       return json({ error: "invalid_plan", plan_code }, 400);
     }
+
+    const returnPath = sanitizeCheckoutReturnPath(body?.checkout_return_path);
 
     type FamilyRow = {
       id: string;
@@ -166,8 +184,8 @@ function stripeCustomerMissingOrInvalid(e: unknown): boolean {
       client_reference_id: family.id,
       line_items: [{ price, quantity: 1 }],
       success_url:
-        `${site}/subscribe?checkout=success&session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${site}/subscribe?checkout=cancelled`,
+        `${site}${returnPath}?checkout=success&session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${site}${returnPath}?checkout=cancelled`,
       locale: "pt-BR",
       metadata: {
         family_id: family.id,
