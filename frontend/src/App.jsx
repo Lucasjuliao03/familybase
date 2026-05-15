@@ -45,11 +45,9 @@ const MasterDashboard  = lazy(() => import('./pages/master/MasterDashboard'));
 const SubscribePage    = lazy(() => import('./pages/SubscribePage'));
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Spinner inline para os guards (antes de qualquer chunk carregar)
-const Spinner = () => (
-  <div className="flex-center" style={{ minHeight: '100vh' }}>
-    <div className="animate-bounce-in" style={{ fontSize: '3rem' }}>🏠</div>
-  </div>
+/** Loader único durante auth / guards (evita “casa estática”; PageLoader já tem spinner). */
+const AuthLoading = ({ message }) => (
+  <PageLoader message={message ?? 'A carregar…'} />
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -88,7 +86,7 @@ function userCanManageFamilyBilling(user, effectiveSubscription) {
 function SubscribeGateway() {
   const { user, loading, effectiveSubscription } = useAuth();
   if (!user) return <Navigate to="/login" replace />;
-  if (loading) return <PageLoader />;
+  if (loading) return <AuthLoading message="A preparar conta…" />;
   if (user.role === 'master') return <Navigate to="/master" replace />;
 
   const canPay = userCanManageFamilyBilling(user, effectiveSubscription);
@@ -124,7 +122,7 @@ function ProtectedRoute({ children, allowedRoles }) {
 
 function GestorRoute({ children }) {
   const { user, loading } = useAuth();
-  if (loading) return <Spinner />;
+  if (loading) return <AuthLoading />;
   if (!user) return <Navigate to="/login" replace />;
   if (user.role !== 'parent') return <Navigate to="/parent" replace />;
   const ap = user.access_profile ?? user.accessProfile ?? 'gestor';
@@ -135,7 +133,7 @@ function GestorRoute({ children }) {
 function ModuleRoute({ module: moduleKey, anyOf, children }) {
   const { user, modules, loading } = useAuth();
   const base = user?.role === 'child' ? '/child' : '/parent';
-  if (loading) return <Spinner />;
+  if (loading) return <AuthLoading />;
   if (anyOf?.length) {
     if (!anyModuleAllowed(modules, anyOf)) return <Navigate to={base} replace />;
   } else if (moduleKey && !moduleAllowed(modules, moduleKey)) {
@@ -147,7 +145,7 @@ function ModuleRoute({ module: moduleKey, anyOf, children }) {
 // ─────────────────────────────────────────────────────────────────────────────
 function AppRoutes() {
   const { user, loading } = useAuth();
-  if (loading) return <Spinner />;
+  if (loading) return <AuthLoading message="A iniciar sessão…" />;
 
   const defaultPath = () => {
     if (!user) return '/login';

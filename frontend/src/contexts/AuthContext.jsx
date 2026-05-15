@@ -90,6 +90,9 @@ export function AuthProvider({ children }) {
 
   const [effectiveSubscription, setEffectiveSubscription] = useState(null);
   const profileInflightRef = useRef(null);
+  const profileLoadGenerationRef = useRef(0);
+  /** Invalida hides antigos (StrictMode unmount antes de terminar hydrate). */
+  const authHydrateSeqRef = useRef(0);
 
   const clearState = useCallback(() => {
     setUser(null);
@@ -99,132 +102,163 @@ export function AuthProvider({ children }) {
     setEffectiveSubscription(null);
   }, []);
 
+  const PROFILE_LOAD_TIMEOUT_MS = 38_000;
+
+  function rejectAfter(ms, message) {
+    return new Promise((_, rej) => {
+      setTimeout(() => rej(new Error(message)), ms);
+    });
+  }
+
   const loadUserProfile = useCallback(async (userId, emailHint) => {
     const prev = profileInflightRef.current;
-    if (prev?.userId === userId && prev.promise) return prev.promise;
+    // Utilizador diferente: novo carregamento (não reutilizar promessa pendente de outra conta).
+    if (prev?.userId && prev.userId !== userId) {
+      profileInflightRef.current = null;
+    }
+    if (profileInflightRef.current?.userId === userId && profileInflightRef.current?.promise) {
+      return profileInflightRef.current.promise;
+    }
+
+    const generation = ++profileLoadGenerationRef.current;
 
     const promise = (async () => {
       try {
-        const { data: profile, error } = await supabase
-          .from('users')
-          .select('*')
-          .eq('id', userId)
-          .single();
+        await Promise.race([
+          (async () => {
+            const { data: profile, error } = await supabase
+              .from('users')
+              .select('*')
+              .eq('id', userId)
+              .single();
 
-        let profileRow = profile;
+            let profileRow = profile;
 
-        if (error?.code === 'PGRST116') {
-          const { error: rpcErr } = await supabase.rpc('register_family_and_user', {
-            p_family_name: null,
-            p_user_name: null,
-          });
-          const retry = await supabase.from('users').select('*').eq('id', userId).single();
-          if (!rpcErr && !retry.error && retry.data) {
-            profileRow = retry.data;
-          } else {
-            console.warn('Sem linha em public.users para:', emailHint, rpcErr?.message || retry.error?.message || '');
-            clearState();
-            return;
-          }
-        } else if (error) {
-          console.error('Erro ao carregar public.users:', error.code, error.message, error.details);
-          await supabase.auth.signOut({ scope: 'local' }).catch(() => {});
-          throw new Error(
-            'Não foi possível ler o perfil na base de dados (erro do servidor). ' +
-            'No Supabase, execute o script supabase_baas_complete_fix.sql no SQL Editor.',
-          );
-        }
-
-        if (!profileRow) {
-          clearState();
-          return;
-        }
-
-        if (!profileRow.family_id) {
-          const { error: provErr } = await supabase.rpc('register_family_and_user', {
-            p_family_name: null,
-            p_user_name: null,
-          });
-          if (provErr) {
-            console.error('Criar família (RPC):', provErr.message);
-          } else {
-            const refill = await supabase.from('users').select('*').eq('id', userId).single();
-            if (!refill.error && refill.data) {
-              profileRow = refill.data;
+            if (error?.code === 'PGRST116') {
+              const { error: rpcErr } = await supabase.rpc('register_family_and_user', {
+                p_family_name: null,
+                p_user_name: null,
+              });
+              const retry = await supabase.from('users').select('*').eq('id', userId).single();
+              if (!rpcErr && !retry.error && retry.data) {
+                profileRow = retry.data;
+              } else {
+                console.warn('[auth] Sem linha em public.users (registo?):', rpcErr?.message || retry.error?.message || '');
+                if (generation === profileLoadGenerationRef.current) clearState();
+                return;
+              }
+            } else if (error) {
+              console.error('Erro ao carregar public.users:', error.code, error.message);
+              await supabase.auth.signOut({ scope: 'local' }).catch(() => {});
+              throw new Error(
+                'Não foi possível ler o perfil na base de dados (erro do servidor). ' +
+                  'No Supabase, execute o script supabase_baas_complete_fix.sql no SQL Editor.',
+              );
             }
-          }
-        }
 
-        if (!profileRow?.family_id) {
-          console.warn('Conta sem família associada; complete o registo ou execute o SQL de correção.');
-        }
+            if (!profileRow) {
+              if (generation === profileLoadGenerationRef.current) clearState();
+              return;
+            }
 
-        const emailResolved =
-          emailHint ||
-          profileRow.email ||
-          '';
+            if (!profileRow.family_id) {
+              const { error: provErr } = await supabase.rpc('register_family_and_user', {
+                p_family_name: null,
+                p_user_name: null,
+              });
+              if (provErr) {
+                console.error('[auth] RPC register_family:', provErr.message);
+              } else {
+                const refill = await supabase.from('users').select('*').eq('id', userId).single();
+                if (!refill.error && refill.data) {
+                  profileRow = refill.data;
+                }
+              }
+            }
 
-        setUser({ ...profileRow, email: emailResolved });
-        setMustChangePassword(!!profileRow.must_change_password);
+            if (!profileRow?.family_id) {
+              console.warn('[auth] Conta sem família; complete registo ou SQL de correção.');
+            }
 
-        const fid = profileRow.family_id;
-        const wantsChildRow = profileRow.role === 'child';
+            if (generation !== profileLoadGenerationRef.current) return;
 
-        const familyQ = fid
-          ? supabase.from('families').select('*').eq('id', fid).maybeSingle()
-          : Promise.resolve({ data: null });
-        const modsQ = fid
-          ? supabase.from('family_modules').select('module_key, is_enabled').eq('family_id', fid)
-          : Promise.resolve({ data: [] });
-        const childQ = wantsChildRow
-          ? supabase.from('children').select('*').eq('user_id', userId).maybeSingle()
-          : Promise.resolve({ data: null });
+            const emailResolved = emailHint || profileRow.email || '';
 
-        const [{ data: familyData }, { data: fmRows }, { data: cData }] = await Promise.all([
-          familyQ,
-          modsQ,
-          childQ,
+            setUser({ ...profileRow, email: emailResolved });
+            setMustChangePassword(!!profileRow.must_change_password);
+
+            const fid = profileRow.family_id;
+            const wantsChildRow = profileRow.role === 'child';
+
+            const familyQ = fid
+              ? supabase.from('families').select('*').eq('id', fid).maybeSingle()
+              : Promise.resolve({ data: null });
+            const modsQ = fid
+              ? supabase.from('family_modules').select('module_key, is_enabled').eq('family_id', fid)
+              : Promise.resolve({ data: [] });
+            const childQ = wantsChildRow
+              ? supabase.from('children').select('*').eq('user_id', userId).maybeSingle()
+              : Promise.resolve({ data: null });
+
+            const [{ data: familyData }, { data: fmRows }, { data: cData }] = await Promise.all([
+              familyQ,
+              modsQ,
+              childQ,
+            ]);
+
+            if (generation !== profileLoadGenerationRef.current) return;
+
+            let resolvedFamily = familyData;
+
+            try {
+              const { data: effData, error: effErr } = await supabase.rpc('get_effective_subscription');
+              if (!effErr && effData != null && typeof effData === 'object') {
+                if (generation !== profileLoadGenerationRef.current) return;
+                setEffectiveSubscription(effData);
+                const fidEFF = effData.family_id ?? fid;
+                if (resolvedFamily && fidEFF && String(resolvedFamily.id) === String(fidEFF)) {
+                  resolvedFamily = {
+                    ...resolvedFamily,
+                    subscription_status: effData.subscription_status ?? resolvedFamily.subscription_status,
+                    trial_ends_at: effData.trial_ends_at ?? resolvedFamily.trial_ends_at,
+                  };
+                }
+              } else {
+                throw effErr || new Error('rpc_effective_subscription');
+              }
+            } catch (_) {
+              if (generation !== profileLoadGenerationRef.current) return;
+              setEffectiveSubscription(buildEffectiveSubscriptionFallback(profileRow, resolvedFamily ?? null, userId));
+            }
+
+            if (generation !== profileLoadGenerationRef.current) return;
+
+            setFamily(resolvedFamily ?? null);
+
+            if (!fid || !fmRows?.length) {
+              setModules({ ...DEFAULT_MODULES });
+            } else {
+              const mergedMods = { ...DEFAULT_MODULES };
+              fmRows.forEach((r) => {
+                if (r.module_key != null) mergedMods[r.module_key] = !!r.is_enabled;
+              });
+              setModules(mergedMods);
+            }
+
+            setChildProfile(wantsChildRow ? (cData ?? null) : null);
+          })(),
+          rejectAfter(PROFILE_LOAD_TIMEOUT_MS, 'profile_load_timeout'),
         ]);
-
-        let resolvedFamily = familyData;
-
-        try {
-          const { data: effData, error: effErr } = await supabase.rpc('get_effective_subscription');
-          if (!effErr && effData != null && typeof effData === 'object') {
-            setEffectiveSubscription(effData);
-            const fidEFF = effData.family_id ?? fid;
-            if (resolvedFamily && fidEFF && String(resolvedFamily.id) === String(fidEFF)) {
-              resolvedFamily = {
-                ...resolvedFamily,
-                subscription_status: effData.subscription_status ?? resolvedFamily.subscription_status,
-                trial_ends_at: effData.trial_ends_at ?? resolvedFamily.trial_ends_at,
-              };
-            }
-          } else {
-            throw effErr || new Error('rpc_effective_subscription');
-          }
-        } catch (_) {
-          setEffectiveSubscription(buildEffectiveSubscriptionFallback(profileRow, resolvedFamily ?? null, userId));
-        }
-
-        setFamily(resolvedFamily ?? null);
-
-        if (!fid || !fmRows?.length) {
-          setModules({ ...DEFAULT_MODULES });
-        } else {
-          const mergedMods = { ...DEFAULT_MODULES };
-          fmRows.forEach((r) => {
-            if (r.module_key != null) mergedMods[r.module_key] = !!r.is_enabled;
-          });
-          setModules(mergedMods);
-        }
-
-        setChildProfile(wantsChildRow ? cData ?? null : null);
       } catch (err) {
-        console.error('Erro ao carregar perfil:', err);
-        throw err;
+        const msg = String(err?.message || err);
+        if (msg === 'profile_load_timeout') {
+          console.error('[auth] Tempo esgotado ao carregar o perfil. Verifique rede / Supabase e actualize.');
+        } else {
+          console.error('Erro ao carregar perfil:', err);
+          throw err;
+        }
       } finally {
-        setLoading(false);
+        if (generation === profileLoadGenerationRef.current) setLoading(false);
       }
     })();
 
@@ -237,30 +271,69 @@ export function AuthProvider({ children }) {
   }, [clearState]);
 
   useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (_event, session) => {
-        try {
-          if (session?.user) {
-            const em =
-              session.user.email ||
-              session.user.user_metadata?.email ||
-              session.user.new_email ||
-              '';
-            await loadUserProfile(session.user.id, em);
-          } else {
-            clearState();
-          }
-        } catch (e) {
-          console.error('Auth state + perfil:', e);
-          await supabase.auth.signOut({ scope: 'local' }).catch(() => {});
+    const hydrateId = ++authHydrateSeqRef.current;
+
+    async function hydrateFromStorage() {
+      try {
+        setLoading(true);
+        const {
+          data: { session },
+          error,
+        } = await supabase.auth.getSession();
+        if (hydrateId !== authHydrateSeqRef.current) return;
+        if (error) throw error;
+        if (session?.user) {
+          const em =
+            session.user.email ||
+            session.user.user_metadata?.email ||
+            session.user.new_email ||
+            '';
+          await loadUserProfile(session.user.id, em);
+        } else {
           clearState();
-        } finally {
-          setLoading(false);
         }
-      },
-    );
+      } catch (e) {
+        if (hydrateId === authHydrateSeqRef.current) {
+          console.error('[auth] hydrate getSession:', e);
+          clearState();
+        }
+      } finally {
+        if (hydrateId === authHydrateSeqRef.current) setLoading(false);
+      }
+    }
+
+    hydrateFromStorage();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(async (event, session) => {
+      /** StrictMode faz subscribe/unsubscribe: INITIAL_SESSION pode perder-se; hydrateFromStorage garante entrada. */
+      if (event === 'INITIAL_SESSION') return;
+      /** Evitar re-fetch completo a cada renovação silenciosa de token → loops e flashes. */
+      if (event === 'TOKEN_REFRESHED') return;
+
+      try {
+        if (event === 'SIGNED_OUT' || !session?.user) {
+          clearState();
+          return;
+        }
+        const em =
+          session.user.email ||
+          session.user.user_metadata?.email ||
+          session.user.new_email ||
+          '';
+        await loadUserProfile(session.user.id, em);
+      } catch (e) {
+        console.error('[auth] onAuthStateChange', event, e);
+        await supabase.auth.signOut({ scope: 'local' }).catch(() => {});
+        clearState();
+      } finally {
+        setLoading(false);
+      }
+    });
 
     return () => {
+      authHydrateSeqRef.current += 1;
       subscription?.unsubscribe();
     };
   }, [loadUserProfile, clearState]);
