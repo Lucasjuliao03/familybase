@@ -91,6 +91,8 @@ export function AuthProvider({ children }) {
   const [effectiveSubscription, setEffectiveSubscription] = useState(null);
   const profileInflightRef = useRef(null);
   const profileLoadGenerationRef = useRef(0);
+  /** Evita re-fetch completo logo após recuperação de sessão (same tab / visibility). */
+  const profileFreshRef = useRef({ uid: null, at: 0 });
   /** Invalida hides antigos (StrictMode unmount antes de terminar hydrate). */
   const authHydrateSeqRef = useRef(0);
 
@@ -102,7 +104,7 @@ export function AuthProvider({ children }) {
     setEffectiveSubscription(null);
   }, []);
 
-  const PROFILE_LOAD_TIMEOUT_MS = 38_000;
+  const PROFILE_LOAD_TIMEOUT_MS = 70_000;
 
   function rejectAfter(ms, message) {
     return new Promise((_, rej) => {
@@ -110,7 +112,11 @@ export function AuthProvider({ children }) {
     });
   }
 
-  const loadUserProfile = useCallback(async (userId, emailHint) => {
+  const loadUserProfile = useCallback(async (userId, emailHint, opts = {}) => {
+    const force = !!opts?.force;
+    if (force) {
+      profileInflightRef.current = null;
+    }
     const prev = profileInflightRef.current;
     // Utilizador diferente: novo carregamento (não reutilizar promessa pendente de outra conta).
     if (prev?.userId && prev.userId !== userId) {
@@ -246,13 +252,18 @@ export function AuthProvider({ children }) {
             }
 
             setChildProfile(wantsChildRow ? (cData ?? null) : null);
+            profileFreshRef.current = { uid: userId, at: Date.now() };
           })(),
           rejectAfter(PROFILE_LOAD_TIMEOUT_MS, 'profile_load_timeout'),
         ]);
       } catch (err) {
         const msg = String(err?.message || err);
         if (msg === 'profile_load_timeout') {
-          console.error('[auth] Tempo esgotado ao carregar o perfil. Verifique rede / Supabase e actualize.');
+          profileLoadGenerationRef.current += 1;
+          console.warn(
+            '[auth] Carregamento do perfil excedeu o tempo seguro. Mantém-se a sessão — se a UI falhar, actualize a página. ' +
+              '(Rede lenta, RPC get_effective_subscription ou RLS no projeto.)',
+          );
         } else {
           console.error('Erro ao carregar perfil:', err);
           throw err;
@@ -314,7 +325,17 @@ export function AuthProvider({ children }) {
 
       try {
         if (event === 'SIGNED_OUT' || !session?.user) {
+          profileFreshRef.current = { uid: null, at: 0 };
           clearState();
+          return;
+        }
+        const uid = session.user.id;
+        const fresh = profileFreshRef.current;
+        if (
+          (event === 'SIGNED_IN' || event === 'USER_UPDATED')
+          && fresh.uid === uid
+          && Date.now() - fresh.at < 15000
+        ) {
           return;
         }
         const em =
@@ -322,7 +343,7 @@ export function AuthProvider({ children }) {
           session.user.user_metadata?.email ||
           session.user.new_email ||
           '';
-        await loadUserProfile(session.user.id, em);
+        await loadUserProfile(uid, em);
       } catch (e) {
         console.error('[auth] onAuthStateChange', event, e);
         await supabase.auth.signOut({ scope: 'local' }).catch(() => {});
@@ -428,7 +449,7 @@ export function AuthProvider({ children }) {
 
   const fetchMe = async () => {
     const { data: { user } } = await supabase.auth.getUser();
-    if (user) await loadUserProfile(user.id, user.email);
+    if (user) await loadUserProfile(user.id, user.email, { force: true });
   };
 
   const clearMustChangePassword = () => setMustChangePassword(false);

@@ -1,0 +1,649 @@
+Assinaturas com plano associado
+Assinaturas com plano associado são utilizadas quando é necessário utilizar a mesma assinatura em ocasiões diferentes e organizá-las em grupos identificáveis. Por exemplo, para uma assinatura mensal e anual de uma academia.
+
+A integração de assinaturas com plano associado é feita em duas etapas. Na primeira, é preciso criar um plano que será associado à assinatura e na segunda, a criação da assinatura.
+
+Criar plano
+O plano de assinatura permite definir, entre outros atributos, o título, valor e frequência das assinaturas criadas pelo vendedor. Para criar um plano e associá-lo à uma assinatura, veja o endpoint /preapproval_plan, preencha os atributos necessários e execute a requisição ou, se preferir, utilize o curl abaixo.
+
+Importante
+Ao executar a API, o plano estará criado e você terá acesso ao preapproval_plan_id, que na resposta à API, será exibido apenas como id. Este atributo é mandatório para a criação da assinatura.
+curl -X POST \
+
+      'https://api.mercadopago.com/preapproval_plan' \
+      -H 'Authorization: Bearer YOUR_ACCESS_TOKEN' \
+      -H 'Content-Type: application/json' \ 
+      -d '{
+  "reason": "Yoga classes",
+  "auto_recurring": {
+    "frequency": 1,
+    "frequency_type": "months",
+    "repetitions": 12,
+    "billing_day": 10,
+    "billing_day_proportional": true,
+    "free_trial": {
+      "frequency": 1,
+      "frequency_type": "months"
+    },
+    "transaction_amount": 10,
+    "currency_id": "ARS"
+  },
+  "payment_methods_allowed": {
+    "payment_types": [
+      {}
+    ],
+    "payment_methods": [
+      {}
+    ]
+  },
+  "back_url": "https://www.yoursite.com"
+}'
+Importante
+Uma assinatura com plano associado sempre deverá ser criada com seu card_token_id e com status Authorized.
+Pronto! Você já criou o plano de assinatura com plano associado. Para finalizar a integração, você precisará criar assinatura agora.
+
+Criar assinatura
+Assinatura é uma autorização do pagador para cobranças recorrentes com um meio de pagamento definido (cartão de crédito, por exemplo). Ao realizar a assinatura de um produto/serviço, o cliente concorda com a cobrança periódica de determinado valor pelo período de tempo definido.
+
+Para criar uma assinatura, primeiro você precisará ter o valor preapproval_plan_id.
+
+Em seguida, você pode prosseguir com a integração de duas maneiras: você pode acessar o endpoint /preapproval e preencher os atributos conforme indicado na tabela de parâmetros, ou você também pode usar o curl que fornecemos abaixo.
+
+curl -X POST \
+      'https://api.mercadopago.com/preapproval' \
+      -H 'Authorization: Bearer YOUR_ACCESS_TOKEN' \
+      -H 'Content-Type: application/json' \ 
+      -d '{
+  "preapproval_plan_id": "2c938084726fca480172750000000000",
+  "reason": "Yoga classes",
+  "external_reference": "YG-1234",
+  "payer_email": "test_user@testuser.com",
+  "card_token_id": "e3ed6f098462036dd2cbabe314b9de2a",
+  "auto_recurring": {
+    "frequency": 1,
+    "frequency_type": "months",
+    "start_date": "2020-06-02T13:07:14.260Z",
+    "end_date": "2022-07-20T15:59:52.581Z",
+    "transaction_amount": 10,
+    "currency_id": "ARS"
+  },
+  "back_url": "https://www.mercadopago.com.ar",
+  "status": "authorized"
+}'
+Ao finalizar o preenchimento dos atributos, execute a requisição e pronto! A assinatura com plano associado terá sido criada.;;;Assinaturas com pagamento autorizado
+Assinaturas com pagamento autorizado permitem que a parcela de uma assinatura seja gerada e cobrada com base na recorrência definida, fazendo com que o mecanismo de assinatura agende e crie os pagamentos automaticamente com base no meio de pagamento definido no ato da criação da assinatura.
+
+Para oferecer assinaturas sem um plano associado e com pagamento autorizado, envie um POST com os atributos necessários ao endpoint /preapproval e atente-se ao parâmetro status, que deverá ser preenchido com o valor authorized. Se preferir, utilize o curl disponível abaixo.
+
+curl -X POST \
+      'https://api.mercadopago.com/preapproval'\
+       -H 'Content-Type: application/json' \
+       -H 'Authorization: Bearer TEST-2151****' \ 
+       -H 'X-scope: stage' \
+       --data-raw '{
+            "back_url": "https://www.google.com",
+            "reason": "Test Subscription",
+            "auto_recurring": {
+                "frequency": 1,
+                "frequency_type": "months",
+                "start_date": "2020-06-02T13:07:14.260Z",
+                "end_date": "2022-07-20T15:59:52.581Z",
+                "transaction_amount": 10,
+                "currency_id": "ARS"
+            },
+            "payer_email": "test_user+1020927396@testuser.com",
+            "card_token_id": "{{CARD_TOKEN}}",
+            "status": "authorized"
+}'
+Importante
+Para comprovar a validade do cartão, realizamos um pagamento com um valor mínimo. Se o pagamento obter sucesso, procedemos com a realização da devolução desse pagamento. O valor pode diferir conforme cada país.
+Lógica de novas tentativas de cobrança
+Ao automatizar a recorrência de suas cobranças, são criados pagamentos autorizados que terão uma data de débito configurada com base na periodicidade definida na assinatura. A primeira parcela é cobrada até o período aproximado de uma hora após a assinatura.
+
+Status de pagamento
+Três alternativas podem surgir na hora em que a parcela é cobrada com base no resultado do seu pagamento:
+
+O pagamento é feito com sucesso assim a parcela será processada no status processed e não ocorrerá uma nova tentativa de cobrança.
+
+O pagamento está sendo processado portanto, a parcela permanecerá pendente em status waiting for gateway até que o pagamento seja resolvido.
+
+O pagamento é recusado portanto, a parcela permanecerá em status de recycling enquanto a parcela não estiver vencida ou não tiver atingido o número máximo de novas tentativas. Caso contrário, será processada com o status processed.
+
+Pagamentos recusados
+Quando uma parcela permanece no status de recycling ela entra em um esquema de nova tentativa com um máximo de 4 possibilidades, no qual a parcela é cobrada novamente. O resultado pode ser qualquer um dos dois pontos mencionados acima.
+
+Se o pagamento for recusado, ele é atualizado para uma nova data de cobrança adicionando 1 das 4 possibilidades dentro de dez dias como uma janela de tempo de nova tentativa à última data disponível.
+
+Por padrão, o pagamento é tentado novamente dentro de uma janela de 10 dias. Caso a parcela tenha uma data de vencimento, a janela de tempo é ajustada a essa data e mantém a lógica de 4 tentativas.
+
+Pagamentos em processamento
+Se uma parcela está com o status waiting for gateway e quando o pagamento é resolvido resulta em rejeitado e a data de vencimento é cumprida, a parcela passará automaticamente a processada com o status processed. Caso contrário, entrará no esquema de nova tentativa.
+
+Caso a parcela não possa ser cobrada na quarta tentativa, ela estará automaticamente no status processed associada a um pagamento recusado.
+
+Após 3 parcelas com pagamentos recusados a assinatura será automaticamente cancelada e a conta do vendedor será notificada do cancelamento da assinatura por e-mail.
+
+Importante
+O resultado de uma assinatura não afeta a geração e o processamento das parcelas restantes para a mesma assinatura.;;Contas de teste
+Utilize contas de teste para garantir que sua integração dê suporte a todos os fluxos e cenários possíveis. Elas têm os mesmos recursos de uma conta real do Mercado Pago, o que permite testar o funcionamento das integrações que você está desenvolvendo.
+
+Para integrações com Checkout Pro, Checkout Transparente > Orders, Código QR e Point, as contas de teste são criadas automaticamente após a criação da aplicação. Caso utilize outro produto ou prefira criá-las manualmente, siga as instruções abaixo.
+
+Importante
+Integrações com Checkout Bricks não suportam usuários de teste para testes de integração. Por esse motivo, você não poderá acessar esta seção a partir de uma aplicação criada para este produto. Para mais informações, acesse a documentação Realizar compra teste com Checkout Bricks.
+Para realizar um teste é preciso ter pelo menos duas contas:
+
+Vendedor: conta necessária para configurar a aplicação e as credenciais para a cobrança. Esta é a sua conta de usuário.
+Comprador: conta necessária para testar o processo de compra.
+Integrador: conta utilizada em integrações no modelo marketplace.
+Além dessas contas, é importante também utilizar os cartões de teste para testar a integração de pagamento e simular o processo de compra, assim como o saldo na conta do Mercado Pago do usuário de teste. Veja mais detalhes abaixo.
+
+formulário de criação do usuário teste
+
+Para criar contas e testar o funcionamento das integrações, siga os passos abaixo.
+
+No Devsite, navegue até Suas integrações e clique no card correspondente à sua aplicação.
+Na página da aplicação, vá até a seção Contas de teste e clique no botão + Criar conta de teste.
+Na tela "Criar nova conta", selecione o país de operação da conta. Essa informação não poderá ser editada posteriormente e, além disso, os usuários Comprador e Vendedor precisam ser do mesmo país.
+Em seguida, insira uma descrição para identificar a conta. Por exemplo: "Vendedor - loja 1".
+A seguir, selecione o tipo de conta que deseja criar, podendo ser: Vendedor, Comprador ou Integrador.
+Caso a conta de teste solicite, preencha com um valor fictício em dinheiro que servirá como referência para você testar suas aplicações. Esse valor aparecerá como saldo na conta do Mercado Pago do usuário de teste e poderá ser utilizado para simulação de pagamentos, assim como com os cartões de teste.
+Autorize o uso dos seus dados pessoais conforme a Declaração de Privacidade e certifique que sua conta usa as ferramentas do Mercado Pago de acordo com os Termos e condições marcando a caixa de seleção.
+Clique em Criar conta de teste.
+Pronto! A conta de teste foi criada e será exibida na tabela com as informações abaixo.
+
+lista de usuários de teste
+
+Identificação da conta: Descrição para identificação da conta de teste.
+Tipo de conta: Classificador do tipo de conta. Pode ser: Vendedor, Comprador ou Integrador.
+País: Local de origem da conta selecionado em seu cadastro.
+User ID: Número de identificação do usuário (criado automaticamente).
+Usuário: Username da conta de teste gerado automaticamente. Esse é o username utilizado para fazer login com o test user.
+Senha: Senha de acesso à conta do usuário de teste gerada automaticamente. Para gerar uma nova senha, clique nos 3 pontos verticais ao final da linha da tabela e selecione a opção Gerar nova senha.
+Código: Número de 6 dígitos que você deve inserir caso seja solicitada verificação por e-mail ao fazer login com a conta de teste.
+Nota
+Para editar a identificação da conta ou adicionar mais dinheiro fictício para testar suas aplicações, clique nos 3 pontos verticais ao final da linha da tabela e selecione a opção Editar dados. É possível criar até 15 contas de usuários de teste simultaneamente, no entanto, ainda não é possível deletá-las.
+Validar login com contas de teste
+Se ao fazer login com contas de teste for solicitada autenticação por e-mail, insira o Código de 6 dígitos da conta de teste, que você pode encontrar em Suas integrações > Sua aplicação > Contas de teste.
+
+Importante
+Para acessar o User ID ou o Access Token de uma conta de teste, é necessário criar previamente uma aplicação. Para isso, consulte a documentação Painel do Desenvolvedor. Caso tenha dúvidas sobre como obter o User ID ou o Access Token, consulte Detalhes da aplicação ou Credenciais.
+Tenha em mente que ao fazer login com uma conta de teste, você não terá acesso a determinadas seções do Painel do desenvolvedor, como "Credenciais de teste" ou "Qualidade de integração". São seções que não são necessárias para este tipo de conta e também podem interferir na sua utilização adequada.;;;Cartões de teste
+O Mercado Pago fornece cartões de teste que permitirão que você teste pagamentos sem usar um cartão real.
+
+Seus dados, como número, código de segurança e data de validade, podem ser combinados com os dados relativos ao titular do cartão, que permitirão que você teste diferentes cenários de pagamento. Ou seja, você pode usar as informações de qualquer cartão de teste e testar resultados de pagamento diferentes a partir dos dados do titular.
+
+A seguir, você pode ver os dados dos cartões de débito e crédito de teste. Selecione aquele que você quer usar para testar sua integração.
+
+Tipo de cartão	Bandeira	Número	Código de segurança	Data de vencimento
+Cartão de crédito	Mastercard	5031 4332 1540 6351	123	11/30
+Cartão de crédito	Visa	4235 6477 2802 5682	123	11/30
+Cartão de crédito	American Express	3753 651535 56885	1234	11/30
+Cartão de débito	Elo	5067 7667 8388 8311	123	11/30
+Em seguida, escolha qual cenário de pagamento testar e preencha os campos do titular do cartão (Nome e sobrenome, Tipo e número de documento) conforme indicado na tabela abaixo.
+
+Status de pagamento	Nome e sobrenome do titular	Documento de identidade
+Pagamento aprovado	APRO	(CPF) 12345678909
+Recusado por erro geral	OTHE	(CPF) 12345678909
+Pagamento pendente	CONT	-
+Recusado com validação para autorizar	CALL	-
+Recusado por quantia insuficiente	FUND	-
+Recusado por código de segurança inválido	SECU	-
+Recusado por problema com a data de vencimento	EXPI	-
+Recusado por erro no formulário	FORM	-
+Rejeitado por falta de card_number	CARD	-
+Rejeitado por parcelas inválidas	INST	-
+Rejeitado por pagamento duplicado	DUPL	-
+Rejeitado por cartão desabilitado	LOCK	-
+Rejeitado por tipo de cartão não permitido	CTNA	-
+Rejeitado devido a tentativas excedidas de pin do cartão	ATTE	-
+Rejeitado por estar na lista negra	BLAC	-
+Não suportado	UNSU	-
+Usado para aplicar regra de valores	TEST	-;;;Notificações
+As notificações são mensagens enviadas pelo servidor do Mercado Pago a partir de eventos realizados em sua aplicação. Para que essas notificações sejam enviadas, é necessário ativar diferentes tópicos de notificação, seja em Suas integrações ou ao criar um pagamento. Isso permitirá que você obtenha informações sobre os diferentes eventos ocorridos.
+
+A ativação desses tópicos dependerá da solução do Mercado Pago que foi integrada e das necessidades de negócio, conforme mostrado na tabela a seguir:
+
+Eventos	Nome em Suas integrações	Tópico	Produtos associados
+Criação e atualização de pagamentos	Orders (Mercado Pago)	order	Checkout Transparente
+Mercado Pago Point
+QR Code
+Criação e atualização de pagamentos	Pagamentos	payment	Checkout Transparente (legacy)
+Checkout Pro
+Checkout Bricks
+Assinaturas
+Mercado Pago Point (legacy e somente para IPN)
+Wallet Connect
+Pagamento recorrente de uma assinatura (criação - atualização)	Planos e assinaturas	subscription_authorized_payment	Assinaturas
+Vinculação de uma assinatura (criação - atualização)	Planos e assinaturas	subscription_preapproval	Assinaturas
+Vinculação de um plano de assinatura (criação - atualização)	Planos e assinaturas	subscription_preapproval_plan	Assinaturas
+Vinculação e desvinculação de contas que se conectaram através de OAuth	Vinculação de aplicações	mp-connect	Todos os produtos que tenham OAuth implementado
+Transações com Wallet Connect	Wallet Connect	wallet_connect	Wallet Connect
+Alertas de fraude após o processamento de um pedido	Alertas de fraude	stop_delivery_op_wh / delivery_cancellation	Checkout Transparente
+Checkout Pro
+Criação de estornos e reclamações	Reclamações	topic_claims_integration_wh	Checkout Transparente
+Checkout Pro
+Checkout Bricks
+Assinaturas
+Mercado Pago Point
+QR Code
+Wallet Connect
+Recuperação e atualização de informações de cartões no Mercado Pago	Card Updater	topic_card_id_wh	Checkout Pro
+Checkout Transparente
+Checkout Bricks
+Criação, fechamento ou expiração de ordens comerciais.	Ordens comerciais	topic_merchant_order_wh / merchant_order	Checkout Pro
+QR Code (legacy)
+Abertura de chargebacks, mudanças de status e modificações referentes às liberações de dinheiro	Chargebacks	topic_chargebacks_wh / chargebacks	Checkout Pro
+Checkout Transparente
+Checkout Bricks
+Finalização, cancelamento ou erros ao processar intenções de pagamento de dispositivos Mercado Pago Point.	Integrações Point	point_integration_wh / point_integration_ipn	Mercado Pago Point (legacy)
+Após configuradas, as notificações permitem programar o backend da sua loja para diversas ações, como: atualizar o status de pedidos quando um pagamento é criado, enviar um e-mail de confirmação quando um pedido é atualizado no Mercado Pago, atualizar o cadastro de um cliente quando um plano de assinatura é vinculado, entre outras ações conforme os eventos detalhados na tabela acima.
+
+Existem dois tipos de notificações disponíveis para configuração, como detalhado na tabela abaixo.
+
+Tipo	Descrição
+Webhooks	Recomendadas. Utiliza HTTP REST para notificar instantaneamente as atualizações e oferece maior segurança na integração por meio de uma assinatura secreta. Este método de validação garante que as notificações recebidas são enviadas pelo Mercado Pago.
+Para saber como configurar e simular o envio dessas notificações, leia a documentação de Webhooks.
+IPN	Permite que sua aplicação receba notificações do Mercado Pago sobre o status de um pagamento, chargeback ou merchant order, por meio de uma chamada HTTP POST. Tenha em mente que a notificação pode demorar alguns instantes para ser enviada e não permite realizar a validação mediante o header x-Signature.
+Importante: As notificações IPN serão descontinuadas em breve. Por isso, recomendamos a utilização das notificações Webhooks.Webhooks
+Webhooks (também conhecido como retorno de chamada web) são um método simples que permite a uma aplicação ou sistema fornecer informações em tempo real sempre que um evento ocorre. É uma forma passiva de receber dados entre dois sistemas por meio de uma solicitação HTTP POST.
+
+As notificações Webhooks podem ser configuradas para cada uma das aplicações criadas em Suas integrações. Você também poderá configurar uma URL de teste que, junto com suas credenciais de teste, permitirá testar o funcionamento correto das suas notificações antes de sair à produção.
+
+Uma vez configuradas, as notificações Webhooks serão enviadas sempre que ocorrer um ou mais eventos cadastrados. Isso evita a necessidade de verificações constantes, prevenindo a sobrecarga do sistema e a perda de dados em situações críticas.
+
+Para configurar as notificações Webhooks, escolha entre uma das opções abaixo:
+
+Tipo de configuração	Descrição
+Configuração via Suas integrações	Permite configurar notificações para cada aplicação, identificar contas diferentes se necessário, e validar a origem da notificação utilizando uma assinatura secreta (exceto para notificações de integrações com QR Code) .
+Configuração durante a criação de pagamentos	Permite a configuração específica das notificações para cada pagamento, preferência ou pedidos comerciais. Não é permitido configurar para integrações com Mercado Pago Point.
+Importante
+As URLs configuradas durante a criação do pagamento terão prioridade sobre aquelas configuradas através de Suas integrações.
+Uma vez que as notificações estiverem configuradas, consulte as ações necessárias após receber uma notificação para validar se foram devidamente recebidas.
+
+Configuração via Suas integrações
+Configure notificações para cada aplicação diretamente em Suas integrações de forma eficiente e segura. Nesta documentação, explicaremos como:
+
+Indicar URLs e configurar eventos
+Validar origem da notificação
+Simular o recebimento da notificação
+Importante
+Este método de configuração não está disponível para integrações com QR Code e nem Assinaturas. Para configurar notificações com alguma dessas duas integrações, utilize o método Configuração durante a criação de pagamentos.
+1. Indicar URLs e configurar eventos
+Para configurar as notificações Webhooks via Suas integrações, é necessário indicar as URLs onde elas serão recebidas e especificar os eventos para os quais deseja receber notificações.
+
+Para isso, siga as etapas descritas abaixo.
+
+Acesse Suas integrações e selecione a aplicação para a qual deseja ativar as notificações. Caso ainda não tenha criado uma aplicação, acesse a documentação Painel do Desenvolvedor e siga as instruções.
+No menu à esquerda, vá até Webhooks > Configurar notificações e configure as URLs que serão usadas para receber as notificações. Recomendamos utilizar uma URL diferente para o modo de teste e o modo produção:
+URL modo teste: fornece uma URL que permite testar o correto funcionamento das notificações dessa aplicação durante a fase de teste ou desenvolvimento. O teste dessas notificações deverá ser realizado exclusivamente com as credenciais de teste de usuários produtivos.
+URL modo produção: fornece uma URL para receber notificações com sua integração produtiva. Essas notificações deverão ser configuradas com credenciais produtivas.
+webhooks
+
+Nota
+Caso seja necessário identificar múltiplas contas, adicione o parâmetro ?cliente=(nomedovendedor) ao final da URL indicada para identificar os vendedores.
+Selecione os eventos para os quais deseja receber notificações em formato json através de um HTTP POST para a URL especificada anteriormente. Um evento pode ser qualquer atualização no objeto relatado, incluindo alterações de status ou atributos. Consulte a tabela abaixo para ver os eventos configuráveis, considerando a solução do Mercado Pago integrada e suas necessidades de negócio.
+Eventos	Nome em Suas integrações	Tópico	Produtos associados
+Criação e atualização de pagamentos	Order (Mercado Pago)	orders	Checkout Transparente
+Mercado Pago Point
+QR Code
+Criação e atualização de pagamentos	Pagamentos	payment	Checkout Transparente (legacy)
+Checkout Pro
+Checkout Bricks
+Assinaturas
+Wallet Connect
+Pagamento recorrente de uma assinatura (criação - atualização)	Planos e assinaturas	subscription_authorized_payment	Assinaturas
+Vinculação de uma assinatura (criação - atualização)	Planos e assinaturas	subscription_preapproval	Assinaturas
+Vinculação de um plano de assinatura (criação - atualização)	Planos e assinaturas	subscription_preapproval_plan	Assinaturas
+Vinculação e desvinculação de contas que se conectaram através de OAuth	Vinculação de aplicações	mp-connect	Todos os produtos que tenham OAuth implementado
+Transações com Wallet Connect	Wallet Connect	wallet_connect	Wallet Connect
+Alertas de fraude após o processamento de um pedido	Alertas de fraude	stop_delivery_op_wh	Checkout Transparente
+Checkout Pro
+Criação de estornos e reclamações	Reclamações	topic_claims_integration_wh	Checkout Transparente
+Checkout Pro
+Checkout Bricks
+Assinaturas
+Mercado Pago Point
+QR Code
+Wallet Connect
+Recuperação e atualização de informações de cartões no Mercado Pago	Card Updater	topic_card_id_wh	Checkout Pro
+Checkout Transparente
+Checkout Bricks
+Criação, fechamento ou expiração de ordens comerciais	Ordens comerciais	topic_merchant_order_wh	Checkout Pro
+QR Code (legacy)
+Abertura de chargebacks, mudanças de status e modificações referentes às liberações de dinheiro	Chargebacks	topic_chargebacks_wh	Checkout Pro
+Checkout Transparente
+Checkout Bricks
+Finalização, cancelamento ou erros ao processar intenções de pagamento de dispositivos Mercado Pago Point.	Integrações Point	point_integration_wh	Mercado Pago Point (legacy)
+Importante
+Em caso de dúvidas sobre quais tópicos ativar ou quais eventos serão notificados, consulte a documentação Informações adicionais sobre notificações.
+Por fim, clique e Salvar para gerar uma assinatura secreta exclusiva para a sua aplicação, permitindo validar a autenticidade das notificações recebidas e garantir que tenham sido enviadas pelo Mercado Pago. A assinatura gerada não tem prazo de validade e sua renovação periódica não é obrigatória, embora seja altamente recomendável. Para renová-la, clique no botão de redefinição ao lado da assinatura.
+Importante
+As notificações de Código QR não podem ser verificadas utilizando a assinatura secreta, por isso, prossiga diretamente com a etapa de simulação de recebimento de notificações. Para integrações com Código QR que necessitam verificar a origem das notificações, entre em contato com Soporte do Mercado Pago.
+2. Validar origem da notificação
+As notificações enviadas pelo Mercado Pago serão semelhantes ao exemplo abaixo para um alerta do tópico payment:
+
+{
+ "id": 12345,
+ "live_mode": true,
+ "type": "payment",
+ "date_created": "2015-03-25T10:04:58.396-04:00",
+ "user_id": 44444,
+ "api_version": "v1",
+ "action": "payment.created",
+ "data": {
+     "id": "999999999"
+ }
+}
+O Mercado Pago sempre incluirá a assinatura secreta nas notificações Webhooks recebidas na URL cadastrada. Isso permitirá validar a sua autenticidade, proporcionando maior segurança e prevenindo possíveis fraudes.
+
+Esta assinatura será enviada no header x-signature, conforme o exemplo abaixo.
+
+`ts=1704908010,v1=618c85345248dd820d5fd456117c2ab2ef8eda45a0282ff693eac24131a5e839`
+Para configurar essa validação, é necessário extrair a chave contida no header e compará-la com a chave fornecida para sua aplicação em Suas integrações. Para isso, siga as etapas abaixo. No final, disponibilizamos alguns SDKs com um exemplo de código completo para facilitar o processo:
+
+Para extrair o timestamp (ts) e a assinatura do header x-signature, divida o conteúdo do header pelo caractere ,, o que resultará em uma lista de 2 elementos. O valor para o prefixo ts é o timestamp (em milissegundos) da notificação, e v1 é a assinatura encriptada. Seguindo o exemplo apresentado acima, ts=1704908010 e v1=618c85345248dd820d5fd456117c2ab2ef8eda45a0282ff693eac24131a5e839.
+Utilizando o template e as descrições abaixo, substitua os parâmetros pelos dados recebidos na sua notificação.
+id:[data.id_url];request-id:[x-request-id_header];ts:[ts_header];
+Parâmetros com sufixo _url são provenientes de query params. Exemplo: [data.id_url]. Deve ser substituído pelo valor correspondente ao ID do evento (data.id) e, neste caso, se o ``data.id_url` for alfanumérico, obritatoriamente deverá ser enviado em minúsculas. Esse query param poderá ser encontrado na notificação recebida.
+[ts_header] representa o valor ts extraído do header x-signature.
+[x-request-id_header] deve ser substituído pelo valor recebido no header x-request-id.
+Importante
+Se algum dos valores mostrados no modelo acima não estiver presente na sua notificação, você deve removê-lo.
+Em Suas integrações, selecione a aplicação integrada e navegue até a seção de Webhooks para visualizar a assinatura secreta gerada.
+Crie a contra chave para validação. Para isso, calcule um HMAC (Código de Autenticação de Mensagem Baseado em Hash) utilizando a função de hash SHA256 em base hexadecimal. Utilize a assinatura secreta como chave e o template preenchido com os respectivos valores como mensagem.
+$cyphedSignature = hash_hmac('sha256', $data, $key);
+Por fim, compare a chave gerada com a chave extraída do header, assegurando que correspondam exatamente. Além disso, é possível usar o timestamp extraído do header para compará-lo com um timestamp gerado no momento do recebimento da notificação. Isso permite estabelecer uma margem de tolerância para atrasos no recebimento da mensagem.
+Veja exemplos de códigos completos abaixo:
+
+<?php
+// Obtain the x-signature value from the header
+$xSignature = $_SERVER['HTTP_X_SIGNATURE'];
+$xRequestId = $_SERVER['HTTP_X_REQUEST_ID'];
+
+// Obtain Query params related to the request URL
+$queryParams = $_GET;
+
+// Extract the "data.id" from the query params
+$dataID = isset($queryParams['data.id']) ? $queryParams['data.id'] : '';
+
+// Separating the x-signature into parts
+$parts = explode(',', $xSignature);
+
+// Initializing variables to store ts and hash
+$ts = null;
+$hash = null;
+
+// Iterate over the values to obtain ts and v1
+foreach ($parts as $part) {
+    // Split each part into key and value
+    $keyValue = explode('=', $part, 2);
+    if (count($keyValue) == 2) {
+        $key = trim($keyValue[0]);
+        $value = trim($keyValue[1]);
+        if ($key === "ts") {
+            $ts = $value;
+        } elseif ($key === "v1") {
+            $hash = $value;
+        }
+    }
+}
+
+// Obtain the secret key for the user/application from Mercadopago developers site
+$secret = "your_secret_key_here";
+
+// Generate the manifest string
+$manifest = "id:$dataID;request-id:$xRequestId;ts:$ts;";
+
+// Create an HMAC signature defining the hash type and the key as a byte array
+$sha = hash_hmac('sha256', $manifest, $secret);
+if ($sha === $hash) {
+    // HMAC verification passed
+    echo "HMAC verification passed";
+} else {
+    // HMAC verification failed
+    echo "HMAC verification failed";
+}
+?>
+3. Simular o recebimento da notificação
+Para garantir que as notificações estejam configuradas corretamente, é necessário simular o recebimento delas. Para isso, siga os seguintes passos:
+
+Após configurar as URLs e os eventos desejados, clique em Salvar para salvar a configuração.
+Após isso, clique em Simular para testar se a URL indicada está recebendo as notificações corretamente.
+Na tela de simulação, selecione a URL a ser testada, podendo ser uma URL de teste ou de produção.
+Em seguida, selecione o tipo de evento desejado e insira a identificação que será enviada no corpo da notificação.
+Por fim, clique em Enviar teste para verificar a solicitação, a resposta dada pelo servidor e a descrição do evento.
+Configuração durante a criação de pagamentos
+Durante o processo de criação de pagamentos, preferências ou ordens comerciais, é possível configurar a URL de notificação de maneira específica para cada pagamento, utilizando o campo notification_url e implementando o receptor de notificações necessário.
+
+Importante
+Este método não permite configurar notificações para o tópico de point_integration_wh utilizando este método. Para ativá-lo, utilize as configurações de Suas integrações.
+A seguir, explicamos como realizar esta configuração utilizando nossos SDKs.
+
+No campo notification_url, informe a URL que receberá as notificações, conforme o exemplo abaixo. Para receber notificações exclusivamente via Webhooks e não via IPN, adicione o parâmetro source_news=webhooks à notification_url. Por exemplo: https://www.yourserver.com/notifications?source_news=webhooks.
+<?php 
+$client = new PaymentClient();
+
+        $body = [
+            'transaction_amount' => 100,
+            'token' => 'token',
+            'description' => 'description',
+            'installments' => 1,
+            'payment_method_id' => 'visa',
+            'notification_url' => 'http://test.com',
+            'payer' => array(
+                'email' => 'test@test.com',
+                'identification' => array(
+                    'type' => 'CPF',
+                    'number' => '19119119100'
+                )
+            )
+        ];
+
+$client->create(body);
+?>
+Implemente o receptor de notificações utilizando o seguinte código como exemplo:
+<?php
+ MercadoPago\SDK::setAccessToken("ENV_ACCESS_TOKEN");
+ switch($_POST["type"]) {
+     case "payment":
+         $payment = MercadoPago\Payment::find_by_id($_POST["data"]["id"]);
+         break;
+     case "plan":
+         $plan = MercadoPago\Plan::find_by_id($_POST["data"]["id"]);
+         break;
+     case "subscription":
+         $plan = MercadoPago\Subscription::find_by_id($_POST["data"]["id"]);
+         break;
+     case "invoice":
+         $plan = MercadoPago\Invoice::find_by_id($_POST["data"]["id"]);
+         break;
+     case "point_integration_wh":
+         // $_POST contém as informações relacionadas à notificação.
+         break;
+ }
+?>
+Após realizar as configurações necessárias, a notificação Webhooks será entregue com formato JSON. Veja o exemplo de notificação do tópico de payments e as descrições das informações enviadas na tabela abaixo.
+
+Importante
+Os pagamentos de teste, criados com credenciais de teste, não enviarão notificações. A única maneira de testar o recebimento de notificações é por meio da Configuração via Suas integrações.
+{
+ "id": 12345,
+ "live_mode": true,
+ "type": "payment",
+ "date_created": "2015-03-25T10:04:58.396-04:00",
+ "user_id": 44444,
+ "api_version": "v1",
+ "action": "payment.created",
+ "data": {
+     "id": "999999999"
+ }
+}
+Atributo	Descrição	Exemplo no JSON
+id	ID de notificação	12345
+live_mode	Indica se a URL informada é válida	true
+type	Tipo de notificação recebida de acordo com o tópico previamente selecionado (payments, mp-connect, subscription, claim, automatic-payments, etc.)	payment
+date_created	Data de criação do recurso notificado	2015-03-25T10:04:58.396-04:00
+user_id	Identificador do vendedor	44444
+api_version	Valor que indica a versão da API que envia a notificação.	v1
+action	Evento notificado, indicando se é uma atualização de recurso ou a criação de um novo	payment.created
+data.id	ID do pagamento, do merchant_order ou da reclamação	999999999
+Importante
+Para obter o formato de notificações para tópicos diferentes de payment, como point_integration_wh, topic_claims_integration_wh e topic_card_id_wh, consulte Informações adicionais sobre notificações.
+Ações necessárias após receber uma notificação
+Ao receber uma notificação em sua plataforma, o Mercado Pago aguarda uma resposta para validar se você a recebeu corretamente. Para isso, é necessário retornar um status HTTP STATUS 200 (OK) ou 201 (CREATED).
+
+O tempo de espera para a confirmação da recepção das notificações será de 22 segundos. Se essa confirmação não for enviada, o sistema entenderá que a notificação não foi recebida e realizará novas tentativas de envio a cada 15 minutos, até receber uma resposta. Após a terceira tentativa, o prazo será prorrogado, mas os envios continuarão acontecendo.
+
+Após responder à notificação e confirmar seu recebimento, é possível obter as informações completas do recurso notificado fazendo uma requisição ao endpoint correspondente da API. Para identificar qual endpoint utilizar, confira a tabela abaixo:
+
+Tipo	URL	Documentação
+order	https://api.mercadopago.com/v1/orders/{id}	Obter order por ID (para Checkout Transparente)
+order	https://api.mercadopago.com/v1/orders/{order_id}	Obter order por ID (para Mercado Pago Point)
+order	https://api.mercadopago.com/v1/orders/{order_id}	Obter order por ID (para QR Code)
+payment	https://api.mercadopago.com/v1/payments/[ID]	Obter pagamento para Checkout Transparente, Checkout Pro ou Assinaturas
+subscription_preapproval	https://api.mercadopago.com/preapproval/search	Obter assinatura
+subscription_preapproval_plan	https://api.mercadopago.com/preapproval_plan/search	Obter plano de assinatura
+subscription_authorized_payment	https://api.mercadopago.com/authorized_payments/[ID]	Obter dados de fatura
+topic_claims_integration_wh	https://api.mercadopago.com/post-purchase/v1/claims/[claim_id]	Obter detalhes da reclamação
+topic_merchant_order_wh	https://api.mercadopago.com/merchant_orders/[ID]	Obter pedido comercial para Checkout Pro o para QR Code (deprecado)
+topic_chargebacks_wh	https://api.mercadopago.com/v1/chargebacks/[ID]	Obter estorno
+Com essas informações, você poderá realizar as atualizações necessárias na sua plataforma como, por exemplo, atualizar um pagamento aprovado.
+
+Painel de notificações
+O painel de notificações permite ao usuário visualizar os eventos disparados sobre uma determinada integração, verificar o status e obter informações detalhadas desses eventos.
+
+Este painel será exibido assim que você configurar suas notificações Webhooks, e você pode acessá-lo a qualquer momento clicando em Webhooks dentro de Suas integrações.
+
+Entre as informações disponíveis estão a porcentagem de notificações entregues, bem como uma visão rápida das URLs e dos eventos configurados.
+
+Além disso, você encontrará uma lista completa das últimas notificações enviadas e seus detalhes, como status da entrega (sucesso ou falha), ação (ação associada ao evento disparado), evento (tipo de evento disparado) e data e hora. Se desejar, é possível filtrar esses resultados exibidos por status da entrega e por período (data e hora).;;;;IPN
+IPN (Instant Payment Notification) é um mecanismo que permite que uma aplicação receba notificações do Mercado Pago sobre o status de um pagamento, chargebacks e merchant_orders. Essas notificações são enviadas através de uma chamada HTTP POST, informando sobre as transações.
+
+Importante
+As notificações IPN serão descontinuadas. Além disso, apesar de receber o header x-Signature, elas não permitem a validação por meio da chave secreta para confirmar que foram enviadas pelo Mercado Pago. Para realizar essa validação de origem, recomendamos migrar para as notificações Webhooks, que agora também enviam os tópicos merchant_order e chargebacks.
+As notificações IPN podem ser configuradas de duas maneiras:
+
+Modo de configuração	Descrição
+Configuração através de Suas integrações	Poderá ser configurada apenas uma URL de notificação por conta (dependendo da aplicação, mais de uma aplicação pode usar essa URL).
+Configuração durante a criação de pagamentos, preferências ou ordens comerciais	Isso pode ser realizado a partir do campo notification_url. A URL poderá ser diferente para cada objeto.
+Nesta documentação explicaremos as configurações necessárias para o recebimento das notificações IPN, além de apresentar quais são as ações necessárias para que o Mercado Pago valide o correto recebimento das mensagens.
+
+Configuração via Suas integrações
+Configure notificações diretamente via Suas integrações de forma eficiente e segura.
+
+Indicar URLs e configurar eventos
+Para configurar as notificações IPN via Suas integrações, é necessário indicar as URLs onde elas serão recebidas e especificar os eventos para os quais deseja receber notificações.
+
+Importante
+Ao configurar as notificações IPN via Suas integrações, você está configurando a URL e os Eventos de todos os aplicativos da sua conta do Mercado Pago.
+Para configurar URLS e eventos, siga as etapas descritas abaixo:
+
+Acesse Suas integrações e selecione uma das aplicações para configurar as notificações para toda a sua conta. Caso ainda não tenha criado uma aplicação, acesse a documentação Painel do Desenvolvedor e siga as instruções para fazê-lo.
+No menu à esquerda, clique em IPN e configure a URL de produção que será usada para receber as notificações. Leve em consideração que é possível testar se a URL indicada está recebendo as notificações corretamente. Isso permite verificar a solicitação, a resposta do servidor e a descrição do evento.
+ipn
+
+Nota
+Caso seja necessário identificar múltiplas contas, adicione o parâmetro ?cliente=(nomedovendedor) ao final da URL indicada para identificar os vendedores.
+Selecione os eventos para os quais deseja receber notificações em formato JSON através de um HTTP POST para a URL especificada anteriormente. Um evento pode ser qualquer atualização no objeto relatado, incluindo alterações de status ou atributos. Consulte a tabela abaixo para ver os eventos configuráveis, considerando a solução do Mercado Pago integrada e suas necessidades de negócio.
+Eventos	Nome em Suas integrações	Tópico	Produtos associados
+Criação e atualização de pagamentos	Pagamentos	payment	Checkout Transparente (legacy)
+Checkout Pro
+Checkout Bricks
+Assinaturas
+Mercado Pago Point (legacy)
+Wallet Connect
+Finalização, cancelamento ou erro ao processar tentativas de pagamento nos dispositivos Mercado Pago Point.	Integrações Point	point_integration_ipn	Mercado Pago Point (legacy)
+Alertas de fraude após o processamento de um pedido	Alertas de fraude	delivery_cancellation	Checkout Transparente (legacy)
+Checkout Pro
+Criação, fechamento ou expiração de pedidos.	Ordens comerciais	merchant_order	Checkout Pro
+QR Code (legacy)
+Abertura de estornos, alterações de status e modificações relacionadas às liberações de dinheiro.	Estornos	chargebacks	Checkout Pro
+Checkout Transparente (legacy)
+Checkout Bricks
+Importante
+Em caso de dúvidas sobre quais tópicos ativar ou quais eventos serão notificados, consulte a documentação Informações adicionais sobre notificações.
+Por fim, clique em Salvar.
+Configuração durante a criação de pagamentos
+Durante o processo de criação de pagamentos, preferências ou ordens comerciais, é possível configurar a URL de notificação de maneira específica para cada pagamento. Para isso, utilize o campo notification_url e implemente o receptor de notificações necessário.
+
+Importante
+Este método não permite configurar notificações para o tópico point_integration_ipn. Para ativá-lo, utilize as configurações via Suas integrações.
+A seguir, explicamos como realizar esta configuração utilizando nossoss SDKs.
+
+No campo notificaction_url, indique a URL do qual serão recebidas as notificações como exemplificado abaixo. Para receber notificações exclusivamente via IPN e não via Webhooks, adicione o parâmetro source_news=ipn à notification_url. Por exemplo: https://www.yourserver.com/notifications?source_news=ipn.
+<?php
+   require_once 'vendor/autoload.php';
+
+
+   MercadoPago\SDK::setAccessToken("YOUR_ACCESS_TOKEN");
+
+
+   $payment = new MercadoPago\Payment();
+   $payment->transaction_amount = (float)$_POST['transactionAmount'];
+   $payment->token = $_POST['token'];
+   $payment->description = $_POST['description'];
+   $payment->installments = (int)$_POST['installments'];
+   $payment->payment_method_id = $_POST['paymentMethodId'];
+   $payment->issuer_id = (int)$_POST['issuer'];
+   $payment->notification_url = `http://requestbin.fullcontact.com/1ogudgk1`;
+   ...
+   $response = array(
+       'status' => $payment->status,
+       'status_detail' => $payment->status_detail,
+       'id' => $payment->id
+   );
+   echo json_encode($response);
+
+
+?>
+Implemente o receptor de notificações utilizando o seguinte código como exemplo:
+<?php
+  MercadoPago\SDK::setAccessToken("ENV_ACCESS_TOKEN");
+  $merchant_order = null;
+  switch($_GET["topic"]) {
+      case "payment":
+          $payment = MercadoPago\Payment::find_by_id($_GET["id"]);
+          // Get the payment and the corresponding merchant_order reported by the IPN.
+          $merchant_order = MercadoPago\MerchantOrder::find_by_id($payment->order->id);
+          break;
+      case "merchant_order":
+          $merchant_order = MercadoPago\MerchantOrder::find_by_id($_GET["id"]);
+          break;
+  }
+  $paid_amount = 0;
+  foreach ($merchant_order->payments as $payment) { 
+      if ($payment['status'] == 'approved'){
+          $paid_amount += $payment['transaction_amount'];
+      }
+  }
+   // If the payment's transaction amount is equal (or bigger) than the merchant_order's amount you can release your items
+  if($paid_amount >= $merchant_order->total_amount){
+      if (count($merchant_order->shipments)>0) { // The merchant_order has shipments
+          if($merchant_order->shipments[0]->status == "ready_to_ship") {
+              print_r("Totally paid. Print the label and release your item.");
+          }
+      } else { // The merchant_order don't has any shipments
+          print_r("Totally paid. Release your item.");
+      }
+  } else {
+      print_r("Not paid yet. Do not release your item.");
+  }
+ ?>
+Após realizar as configurações, o Mercado Pago notificará essa URL com dois parâmetros sempre que um recurso for criado ou atualizado. Por exemplo, se configurar a URL https://www.yoursite.com/notifications, você receberá as notificações de pagamento desta maneira: https://www.yoursite.com/notifications?topic=payment&id=123456789.
+Campo	Descrição
+topic	Identifica o tipo de recurso, podendo ser payment, chargebacks, merchant_order ou point_integration_ipn.
+id	Identificador único do recurso notificado.
+Ações necessárias após receber uma notificação
+Ao receber uma notificação em sua plataforma, o Mercado Pago aguarda uma resposta para validar se você a recebeu corretamente. Para isso, é necessário retornar um status HTTP STATUS 200 (OK) ou 201 (CREATED).
+
+O tempo de espera para a confirmação da recepção das notificações será de 22 segundos. Se essa confirmação não for enviada, o sistema entenderá que a notificação não foi recebida e realizará novas tentativas de envio a cada 15 minutos, até receber uma resposta. Após a terceira tentativa, o prazo será prorrogado, mas os envios continuarão acontecendo.
+
+Após responder à notificação e confirmar seu recebimento, é possível obter as informações completas do recurso notificado fazendo uma requisição ao endpoint correspondente da API. Para identificar qual endpoint utilizar, confira a tabela abaixo:
+
+Tópico	URL	Documentação
+payment	https://api.mercadopago.com/v1/payments/[ID]	Obter pagamento
+point_integration_ipn	https://api.mercadopago.com/point/integration-api/payment-intents/{paymentintentid}	Obter intenção de pagamento
+merchant_orders	https://api.mercadopago.com/merchant_orders/[ID]	Obter pedido comercial para Checkout Pro o para QR Code (deprecado)
+chargebacks	https://api.mercadopago.com/v1/chargebacks/[ID]	Obter estorno
+Com essas informações, você poderá realizar as atualizações necessárias na sua plataforma como, por exemplo, atualizar um pagamento aprovado.

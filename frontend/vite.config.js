@@ -34,7 +34,8 @@ export default defineConfig({
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
         runtimeCaching: [
           {
-            urlPattern: /^https:\/\/.*\.supabase\.co\/.*/i,
+            // NUNCA incluir /auth/v1/ — cache de refresh token quebra sessão e gera erros no bundle (ex.: pages-child).
+            urlPattern: /^https:\/\/[a-z0-9-]+\.supabase\.co\/(rest\/v1|storage\/v1|functions\/v1)\//i,
             handler: 'NetworkFirst',
             options: { cacheName: 'supabase-api', networkTimeoutSeconds: 10 },
           },

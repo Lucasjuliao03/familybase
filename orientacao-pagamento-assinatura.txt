@@ -1,0 +1,347 @@
+================================================================================
+  ORIENTAÇÃO — PAGAMENTO E ASSINATURA (MERCADO PAGO)
+  Projeto: Base Familiar | Integração com Supabase Edge Functions
+================================================================================
+
+────────────────────────────────────────────────────────────────────────────────
+1) COMO ESTÁ NO NOSSO CÓDIGO (RESUMO)
+────────────────────────────────────────────────────────────────────────────────
+
+  • Plano (preapproval_plan): criado pela Edge Function "mp-create-plan", que
+    grava o id do MP na tabela "mp_plans" (codes: premium_mensal, premium_anual).
+
+  • Assinatura (preapproval): criada pela Edge Function "mp-create-subscription",
+    com preapproval_plan_id, card_token_id, payer_email, status authorized, etc.
+
+  • Frontend: Checkout Bricks (Card Payment) em SubscribePage.jsx; variável
+    VITE_MP_PUBLIC_KEY no .env do frontend.
+
+  • Backend (Edge): MP_ACCESS_TOKEN, MP_BACK_URL e opcionalmente valores de
+    plano (MP_PLAN_MENSAL_AMOUNT, MP_PLAN_ANUAL_AMOUNT).
+
+  • Webhook: função "mp-webhook" — tópicos úteis: subscription_preapproval,
+    payment, subscription_authorized_payment. Secret: MP_WEBHOOK_SECRET.
+
+────────────────────────────────────────────────────────────────────────────────
+2) ERRO "Card token service not found" (HTTP 404)
+────────────────────────────────────────────────────────────────────────────────
+
+  Significa quase sempre desalinhamento entre:
+
+    - A PUBLIC KEY usada no Bricks (VITE_MP_PUBLIC_KEY), e
+    - O ACCESS TOKEN usado na Edge Function (MP_ACCESS_TOKEN).
+
+  Ambos têm de ser da MESMA aplicação no painel Mercado Pago Developers
+  (Credenciais de produção OU credenciais de teste — nunca misturar).
+
+  Não misturar também:
+    - Token de uma conta MP com cartão/token gerado por outra aplicação;
+    - Chave APP_USR-... do vendedor A com Access Token do vendedor B.
+
+  Contas / cartões de teste: usar usuários de teste e cartões de teste
+  conforme documentação oficial (secção mais abaixo).
+
+================================================================================
+DOCUMENTAÇÃO DE REFERÊNCIA — MERCADO PAGO (TEXTO FORNECIDO / ADAPTADO)
+================================================================================
+
+────────────────────────────────────────────────────────────────────────────────
+ASSINATURAS COM PLANO ASSOCIADO
+────────────────────────────────────────────────────────────────────────────────
+
+Assinaturas com plano associado são utilizadas quando é necessário utilizar a
+mesma assinatura em ocasiões diferentes e organizá-las em grupos identificáveis.
+Por exemplo, para uma assinatura mensal e anual de uma academia.
+
+A integração de assinaturas com plano associado é feita em duas etapas. Na primeira,
+é preciso criar um plano que será associado à assinatura e na segunda, a criação
+da assinatura.
+
+--- Criar plano ---
+
+O plano de assinatura permite definir, entre outros atributos, o título, valor e
+frequência das assinaturas criadas pelo vendedor. Para criar um plano e associá-lo
+à uma assinatura, veja o endpoint /preapproval_plan, preencha os atributos
+necessários e execute a requisição ou, se preferir, utilize o curl abaixo.
+
+IMPORTANTE
+Ao executar a API, o plano estará criado e você terá acesso ao preapproval_plan_id,
+que na resposta à API, será exibido apenas como id. Este atributo é mandatório para
+a criação da assinatura.
+
+curl -X POST \
+      'https://api.mercadopago.com/preapproval_plan' \
+      -H 'Authorization: Bearer YOUR_ACCESS_TOKEN' \
+      -H 'Content-Type: application/json' \
+      -d '{
+  "reason": "Yoga classes",
+  "auto_recurring": {
+    "frequency": 1,
+    "frequency_type": "months",
+    "repetitions": 12,
+    "billing_day": 10,
+    "billing_day_proportional": true,
+    "free_trial": {
+      "frequency": 1,
+      "frequency_type": "months"
+    },
+    "transaction_amount": 10,
+    "currency_id": "ARS"
+  },
+  "payment_methods_allowed": {
+    "payment_types": [
+      {}
+    ],
+    "payment_methods": [
+      {}
+    ]
+  },
+  "back_url": "https://www.yoursite.com"
+}'
+
+IMPORTANTE
+Uma assinatura com plano associado sempre deverá ser criada com seu card_token_id
+e com status Authorized.
+
+Pronto! Você já criou o plano de assinatura com plano associado. Para finalizar a
+integração, você precisará criar assinatura agora.
+
+--- Criar assinatura ---
+
+Assinatura é uma autorização do pagador para cobranças recorrentes com um meio de
+pagamento definido (cartão de crédito, por exemplo). Ao realizar a assinatura de um
+produto/serviço, o cliente concorda com a cobrança periódica de determinado valor
+pelo período de tempo definido.
+
+Para criar uma assinatura, primeiro você precisará ter o valor preapproval_plan_id.
+
+Em seguida, você pode prosseguir com a integração de duas maneiras: você pode
+acessar o endpoint /preapproval e preencher os atributos conforme indicado na tabela
+de parâmetros, ou você também pode usar o curl que fornecemos abaixo.
+
+curl -X POST \
+      'https://api.mercadopago.com/preapproval' \
+      -H 'Authorization: Bearer YOUR_ACCESS_TOKEN' \
+      -H 'Content-Type: application/json' \
+      -d '{
+  "preapproval_plan_id": "2c938084726fca480172750000000000",
+  "reason": "Yoga classes",
+  "external_reference": "YG-1234",
+  "payer_email": "test_user@testuser.com",
+  "card_token_id": "e3ed6f098462036dd2cbabe314b9de2a",
+  "auto_recurring": {
+    "frequency": 1,
+    "frequency_type": "months",
+    "start_date": "2020-06-02T13:07:14.260Z",
+    "end_date": "2022-07-20T15:59:52.581Z",
+    "transaction_amount": 10,
+    "currency_id": "ARS"
+  },
+  "back_url": "https://www.mercadopago.com.ar",
+  "status": "authorized"
+}'
+
+Ao finalizar o preenchimento dos atributos, execute a requisição e pronto!
+A assinatura com plano associado terá sido criada.
+
+────────────────────────────────────────────────────────────────────────────────
+ASSINATURAS COM PAGAMENTO AUTORIZADO (SEM PLANO PRÉ-DEFINIDO NO MESMO FLUXO)
+────────────────────────────────────────────────────────────────────────────────
+
+Assinaturas com pagamento autorizado permitem que a parcela de uma assinatura seja
+gerada e cobrada com base na recorrência definida, fazendo com que o mecanismo de
+assinatura agende e crie os pagamentos automaticamente com base no meio de
+pagamento definido no ato da criação da assinatura.
+
+Para oferecer assinaturas sem um plano associado e com pagamento autorizado, envie
+um POST com os atributos necessários ao endpoint /preapproval e atente-se ao
+parâmetro status, que deverá ser preenchido com o valor authorized. Se preferir,
+utilize o curl disponível abaixo.
+
+curl -X POST \
+      'https://api.mercadopago.com/preapproval'\
+       -H 'Content-Type: application/json' \
+       -H 'Authorization: Bearer TEST-2151****' \
+       -H 'X-scope: stage' \
+       --data-raw '{
+            "back_url": "https://www.google.com",
+            "reason": "Test Subscription",
+            "auto_recurring": {
+                "frequency": 1,
+                "frequency_type": "months",
+                "start_date": "2020-06-02T13:07:14.260Z",
+                "end_date": "2022-07-20T15:59:52.581Z",
+                "transaction_amount": 10,
+                "currency_id": "ARS"
+            },
+            "payer_email": "test_user+1020927396@testuser.com",
+            "card_token_id": "{{CARD_TOKEN}}",
+            "status": "authorized"
+}'
+
+IMPORTANTE
+Para comprovar a validade do cartão, realizamos um pagamento com um valor mínimo.
+Se o pagamento obter sucesso, procedemos com a realização da devolução desse pagamento.
+O valor pode diferir conforme cada país.
+
+--- Lógica de novas tentativas de cobrança ---
+
+Ao automatizar a recorrência de suas cobranças, são criados pagamentos autorizados
+que terão uma data de débito configurada com base na periodicidade definida na
+assinatura. A primeira parcela é cobrada até o período aproximado de uma hora após a
+assinatura.
+
+--- Status de pagamento ---
+
+Três alternativas podem surgir na hora em que a parcela é cobrada com base no
+resultado do seu pagamento:
+
+• O pagamento é feito com sucesso assim a parcela será processada no status
+  processed e não ocorrerá uma nova tentativa de cobrança.
+
+• O pagamento está sendo processado portanto, a parcela permanecerá pendente em
+  status waiting for gateway até que o pagamento seja resolvido.
+
+• O pagamento é recusado portanto, a parcela permanecerá em status de recycling
+  enquanto a parcela não estiver vencida ou não tiver atingido o número máximo de
+  novas tentativas. Caso contrário, será processada com o status processed.
+
+--- Pagamentos recusados ---
+
+Quando uma parcela permanece no status de recycling ela entra em um esquema de nova
+tentativa com um máximo de 4 possibilidades, na qual a parcela é cobrada novamente.
+O resultado pode ser qualquer um dos dois pontos mencionados acima.
+
+Se o pagamento for recusado, ele é atualizado para uma nova data de cobrança
+adicionando 1 das 4 possibilidades dentro de dez dias como uma janela de tempo de
+nova tentativa à última data disponível.
+
+Por padrão, o pagamento é tentado novamente dentro de uma janela de 10 dias. Caso a
+parcela tenha uma data de vencimento, a janela de tempo é ajustada a essa data e
+mantém a lógica de 4 tentativas.
+
+--- Pagamentos em processamento ---
+
+Se uma parcela está com o status waiting for gateway e quando o pagamento é
+resolvido resulta em rejeitado e a data de vencimento é cumprida, a parcela passará
+automaticamente a processada com o status processed. Caso contrário, entrará no
+esquema de nova tentativa.
+
+Caso a parcela não possa ser cobrada na quarta tentativa, ela estará automaticamente
+no status processed associada a um pagamento recusado.
+
+Após 3 parcelas com pagamentos recusados a assinatura será automaticamente cancelada
+e a conta do vendedor será notificada do cancelamento da assinatura por e-mail.
+
+IMPORTANTE
+O resultado de uma assinatura não afeta a geração e o processamento das parcelas
+restantes para a mesma assinatura.
+
+────────────────────────────────────────────────────────────────────────────────
+CONTAS DE TESTE
+────────────────────────────────────────────────────────────────────────────────
+
+Utilize contas de teste para garantir que sua integração dê suporte a todos os fluxos
+e cenários possíveis. Elas têm os mesmos recursos de uma conta real do Mercado Pago.
+
+Para integrações com Checkout Pro, Checkout Transparente > Orders, Código QR e Point,
+as contas de teste são criadas automaticamente após a criação da aplicação. Caso
+utilize outro produto ou prefira criá-las manualmente, siga as instruções no Devsite.
+
+IMPORTANTE — Checkout Bricks
+Integrações com Checkout Bricks não suportam usuários de teste para testes de
+integração nos mesmos termos que outros produtos. Por esse motivo, você pode não
+acessar certas secções da documentação ligadas a esse fluxo na mesma forma.
+Para mais informações, acesse a documentação oficial para realizar compra teste com
+Checkout Bricks.
+
+Para realizar um teste é preciso ter pelo menos duas contas:
+
+  • Vendedor: conta necessária para configurar a aplicação e as credenciais para a cobrança.
+  • Comprador: conta necessária para testar o processo de compra.
+  • Integrador: conta utilizada em integrações no modelo marketplace.
+
+Além dessas contas, é importante também utilizar os cartões de teste para testar o
+pagamento e simular o processo de compra, assim como o saldo na conta do Mercado
+Pago do usuário de teste.
+
+Passos sugeridos (resumo):
+
+1. No Devsite, navegue até Suas integrações e clique na sua aplicação.
+2. Na seção Contas de teste, criar conta (Comprador / Vendedor / Integrador).
+3. Escolher o país — Comprador e Vendedor do mesmo país quando aplicável.
+
+Validar login com contas de teste: se for solicitada verificação por e-mail,
+insira o Código de 6 dígitos da conta em Suas integrações > Sua aplicação >
+Contas de teste.
+
+IMPORTANTE
+Para integrações de assinatura + token de cartão, mantenha Public Key e Access Token
+sempre emparelhados na mesma aplicação e ambiente (teste/produção).
+
+────────────────────────────────────────────────────────────────────────────────
+CARTÕES DE TESTE (EXEMPLOS — CONSULTE SEMPRE A DOC ATUALIZADA NO SITE DO MP)
+────────────────────────────────────────────────────────────────────────────────
+
+Tipo de cartão         Bandeira      Número                  CVV     Vencimento
+Cartão de crédito      Mastercard    5031 4332 1540 6351      123     11/30
+Cartão de crédito      Visa          4235 6477 2802 5682      123     11/30
+Cartão de crédito      Amex          3753 651535 56885        1234    11/30
+Cartão de débito       Elo           5067 7667 8388 8311      123     11/30
+
+Cenários de titular (exemplos na documentação MP):
+
+  APRO  — pagamento aprovado (com CPF de teste conforme doc)
+  OTHE  — recusado por erro geral
+  CONT  — pendente
+  (outros códigos: CALL, FUND, SECU, EXPI, FORM, etc.)
+
+────────────────────────────────────────────────────────────────────────────────
+NOTIFICAÇÕES / WEBHOOKS / IPN (RESUMO)
+────────────────────────────────────────────────────────────────────────────────
+
+As notificações são mensagens enviadas pelo servidor do Mercado Pago a partir de
+eventos. É necessário ativar tópicos conforme a solução integrada.
+
+Eventos relevantes para assinaturas (exemplos):
+
+  • Pagamentos                    — tópico payment
+  • Pagamento recorrente (fatura) — subscription_authorized_payment
+  • Assinatura (preapproval)      — subscription_preapproval
+  • Plano de assinatura           — subscription_preapproval_plan
+
+Tipos:
+
+  • Webhooks — recomendadas; HTTP REST; validação com assinatura secreta (x-signature).
+  • IPN — HTTP POST; serão descontinuadas; preferir Webhooks.
+
+Validação Webhooks (ideia geral):
+  - Header x-signature com ts=...,v1=...
+  - Montar manifest: id:[data.id];request-id:[x-request-id];ts:[ts];
+  - HMAC-SHA256 com a chave secreta da aplicação e comparar com v1.
+
+Após receber notificação: responder HTTP 200 ou 201 em até ~22 segundos.
+
+Consultar recurso conforme tipo (exemplos):
+
+  • payment     — GET .../v1/payments/[ID]
+  • preapproval — GET/consultas em /preapproval conforme doc
+
+IMPORTANTE da documentação MP
+Para Webhooks configurados apenas em "Suas integrações": pode não estar disponível da
+mesma forma para todos os produtos (ex.: limitações mencionadas para QR Code /
+Assinaturas em alguns pontos da doc). Para assinaturas, verifique sempre a página
+oficial atual e configure também notification_url onde aplicável durante a criação
+do recurso quando necessário.
+
+---
+
+IPN
+IPN permite receber POST sobre pagamentos etc. Migrar para Webhooks quando possível.
+
+Configuração via Suas integrações ou durante criação (notification_url). Responder 200/201.
+
+---
+
+Fim do ficheiro de orientação (conteúdo composto pela documentação fornecida + notas do projeto).
+

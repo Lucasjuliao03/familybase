@@ -39,6 +39,11 @@ self.addEventListener('fetch', (event) => {
   // Skip non-GET and chrome-extension requests
   if (request.method !== 'GET' || url.protocol === 'chrome-extension:') return;
 
+  // Nunca cachear/interceptar Auth do Supabase (_recoverAndRefresh pode falhar com resposta stale)
+  if (url.hostname.endsWith('.supabase.co') && url.pathname.startsWith('/auth/v1/')) {
+    return;
+  }
+
   // API calls: Network only (no caching sensitive data)
   if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/uploads/')) {
     return; // let browser handle normally
