@@ -95,6 +95,16 @@ export function AuthProvider({ children }) {
   const profileFreshRef = useRef({ uid: null, at: 0 });
   /** Invalida hides antigos (StrictMode unmount antes de terminar hydrate). */
   const authHydrateSeqRef = useRef(0);
+  const userRef = useRef(null);
+  const loadingRef = useRef(true);
+
+  useEffect(() => {
+    userRef.current = user;
+  }, [user]);
+
+  useEffect(() => {
+    loadingRef.current = loading;
+  }, [loading]);
 
   const clearState = useCallback(() => {
     setUser(null);
@@ -264,6 +274,8 @@ export function AuthProvider({ children }) {
             '[auth] Carregamento do perfil excedeu o tempo seguro. Mantém-se a sessão — se a UI falhar, actualize a página. ' +
               '(Rede lenta, RPC get_effective_subscription ou RLS no projeto.)',
           );
+          // IMPORTANT: após incrementar a geração, o finally abaixo não desliga loading — fazemo-lo aqui
+          setLoading(false);
         } else {
           console.error('Erro ao carregar perfil:', err);
           throw err;
@@ -358,6 +370,69 @@ export function AuthProvider({ children }) {
       subscription?.unsubscribe();
     };
   }, [loadUserProfile, clearState]);
+
+  /**
+   * PWA / WebView ao fundo pode suspender a rede; ao voltar, refrescar token e garantir perfil quando necessário.
+   */
+  useEffect(() => {
+    if (typeof document === 'undefined' || typeof window === 'undefined') return undefined;
+
+    let debTimer;
+
+    const reconcile = async () => {
+      if (document.visibilityState !== 'visible') return;
+      try {
+        const { data: sessWrap, error: sessErr } = await supabase.auth.getSession();
+        if (sessErr) return;
+        const session = sessWrap?.session;
+        if (!session?.user?.id) return;
+
+        await supabase.auth.refreshSession().catch(() => {});
+        const { data: refreshed } = await supabase.auth.getSession();
+        const active = refreshed?.session ?? session;
+        const uid = active?.user?.id;
+        if (!uid) return;
+
+        const em =
+          active.user.email ||
+          active.user.user_metadata?.email ||
+          active.user.new_email ||
+          '';
+        const u = userRef.current;
+        const loadingNow = loadingRef.current;
+
+        /* Re-hidrata se ainda está a carregar, não há utilizador ou o estado não bate certo com a sessão em memória. */
+        if (loadingNow || !u || u.id !== uid) {
+          await loadUserProfile(uid, em, { force: true }).catch(console.warn);
+        }
+      } catch (e) {
+        console.warn('[auth] resume/visibility reconcile:', e);
+      }
+    };
+
+    const schedule = () => {
+      clearTimeout(debTimer);
+      debTimer = setTimeout(() => {
+        reconcile();
+      }, 280);
+    };
+
+    document.addEventListener('visibilitychange', schedule);
+
+    /* Volta pela cache de página (Firefox/Safari). */
+    const onPageshow = (ev) => {
+      if (ev.persisted) schedule();
+    };
+    window.addEventListener('pageshow', onPageshow);
+    window.addEventListener('online', schedule);
+
+    return () => {
+      document.removeEventListener('visibilitychange', schedule);
+      window.removeEventListener('pageshow', onPageshow);
+      window.removeEventListener('online', schedule);
+      clearTimeout(debTimer);
+    };
+  }, [loadUserProfile]);
 
   const login = async (email, password) => {
     try {
