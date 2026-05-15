@@ -38,35 +38,95 @@ Deno.serve(async (req) => {
       return json({ error: "invalid_plan", plan_code }, 400);
     }
 
+    type FamilyJoin = {
+      id: string;
+      gestor_user_id: string | null;
+      stripe_customer_id: string | null;
+    };
+
     const sb = adminClient();
     const { data: profile, error: profErr } = await sb
       .from("users")
-      .select("id, family_id, email, role, access_profile")
+      .select(
+        `
+        id,
+        family_id,
+        email,
+        role,
+        access_profile,
+        families (
+          id,
+          gestor_user_id,
+          stripe_customer_id
+        )
+      `,
+      )
       .eq("id", user.id)
-      .single();
-    if (profErr || !profile?.family_id) return json({ error: "no_family" }, 400);
+      .maybeSingle();
+
+    if (profErr) {
+      console.error("[stripe-create-checkout-session] profile_error", profErr);
+      return json({ error: "profile_load_failed" }, 502);
+    }
+    if (!profile) {
+      return json(
+        {
+          error: "profile_not_found",
+          hint_pt:
+            "A sessão é válida, mas não há linha em public.users para o id do JWT (sub). Confirma que o frontend usa o mesmo projecto Supabase que as Edge Functions e que existe public.users.id igual a auth.uid. Compara debug.auth_user_id com o user_id obtido por email no SQL Editor.",
+          debug: { auth_user_id: user.id },
+        },
+        400,
+      );
+    }
+    if (!profile.family_id) {
+      return json(
+        {
+          error: "no_family",
+          hint_pt:
+            "public.users.family_id está vazio para este utilizador. Liga o utilizador a uma família (onboarding/admin) e tenta novamente.",
+          debug: { auth_user_id: user.id },
+        },
+        400,
+      );
+    }
     if (profile.role !== "parent" && profile.role !== "master") {
       return json({ error: "only_parents_can_subscribe" }, 403);
     }
 
-    const { data: family, error: famErr } = await sb
-      .from("families")
-      .select("id, gestor_user_id, stripe_customer_id")
-      .eq("id", profile.family_id)
-      .single();
-    if (famErr || !family) {
+    const nested = profile.families as FamilyJoin | FamilyJoin[] | null;
+    let family = Array.isArray(nested) ? nested[0] : nested;
+
+    if (!family?.id) {
+      const fid =
+        typeof profile.family_id === "string"
+          ? profile.family_id.trim()
+          : String(profile.family_id);
       console.error(
-        "[stripe-create-checkout-session] family_missing",
-        JSON.stringify({ family_id: profile.family_id, famErr }),
+        "[stripe-create-checkout-session] family_embed_missing_or_orphan",
+        JSON.stringify({
+          auth_user_id: user.id,
+          users_family_id: fid,
+        }),
       );
-      return json(
-        {
-          error: "family_not_found",
-          hint_pt:
-            "O teu utilizador tem family_id na tabela users, mas não existe linha em families com esse id. Executa o diagnóstico em supabase/diagnostico_usuario_familia.sql no SQL Editor.",
-        },
-        400,
-      );
+      const { data: famFallback } = await sb
+        .from("families")
+        .select("id, gestor_user_id, stripe_customer_id")
+        .eq("id", fid)
+        .maybeSingle();
+      if (!famFallback) {
+        return json(
+          {
+            error: "family_not_found",
+            hint_pt:
+              "Este JWT (debug.auth_user_id) tem users.family_id, mas não foi possível ler a linha correspondente em public.families. Se no SQL Editor a família aparece quando filtras por outro utilizador/email, não estás autenticado com esse mesmo public.users.id. Compara debug.auth_user_id com user_id na query WHERE email = '...'. Executa também supabase/diagnostico_usuario_familia.sql por id/email.",
+            debug: { auth_user_id: user.id, users_family_id: fid },
+          },
+          400,
+        );
+      }
+      // Fallback se o embed `families` falhar mas a linha existir na tabela families
+      family = famFallback as FamilyJoin;
     }
 
     const profileAp = profile.access_profile ?? "gestor";

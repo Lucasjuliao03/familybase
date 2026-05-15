@@ -222,7 +222,9 @@ export default function SubscribePage() {
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
-        throw new Error(body?.error || `Erro ${res.status} ao iniciar pagamento.`);
+        throw new Error(
+          body?.hint_pt || body?.error || `Erro ${res.status} ao iniciar pagamento.`,
+        );
       }
       if (!body?.url) {
         throw new Error('Resposta inválida do servidor (sem URL de checkout).');
