@@ -1,12 +1,12 @@
 // Customer Billing Portal — gerir método de pagamento / facturas no Stripe.
 // POST { return_url?: string }  (default: SITE_URL/parent com JWT válido)
 
-import { corsHeaders, json } from "../_shared/cors.ts";
+import { corsPreflightResponse, json } from "../_shared/cors.ts";
 import { getStripe, publicSiteUrl } from "../_shared/stripeClient.ts";
 import { adminClient, userFromAuthHeader } from "../_shared/supabaseAdmin.ts";
 
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+  if (req.method === "OPTIONS") return corsPreflightResponse();
   if (req.method !== "POST") return json({ error: "method_not_allowed" }, 405);
 
   try {

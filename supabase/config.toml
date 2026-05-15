@@ -1,0 +1,25 @@
+# Configuração Supabase Edge Functions — ver https://supabase.com/docs/guides/functions/function-configuration
+#
+# CORS no browser envia primeiro OPTIONS (preflight) SEM Authorization.
+# Com verify_jwt=true no gateway, esse OPTIONS falha com 401 e o browser bloqueia
+# ("preflight não passa na verificação de acesso").
+#
+# Desactivamos JWT no GATEWAY; cada handler valida o Bearer JWT no código.
+
+[functions.stripe-create-checkout-session]
+verify_jwt = false
+
+[functions.stripe-sync-checkout-session]
+verify_jwt = false
+
+[functions.stripe-create-portal-session]
+verify_jwt = false
+
+[functions.stripe-get-billing-summary]
+verify_jwt = false
+
+[functions.stripe-cancel-subscription]
+verify_jwt = false
+
+[functions.stripe-webhook]
+verify_jwt = false

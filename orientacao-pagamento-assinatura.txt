@@ -37,6 +37,14 @@
 
   • Funções mp-* (Mercado Pago) ficam legacy; não ligadas ao fluxo de subscrição actual.
 
+  • **CORS (Vercel / browser)** — Antes da redeploy, garante que `supabase/config.toml`
+    no repo está presente com `verify_jwt = false` nas funções `stripe-*` chamadas pela
+    app. Razão: o navegador envia primeiro `OPTIONS` sem header Authorization; se o
+    gateway Supabase exigir JWT aqui, a preflight devolve 401 e vês erro de política CORS.
+    Os handlers continuam a validar JWT no próprio código.
+
+  • **SITE_URL** no Supabase Secrets deve ser o mesmo domínio do frontend onde abres a
+    app (ex.: https://familybase-three.vercel.app ), sem barra no fim, para os redirects do Stripe Checkout.
 ────────────────────────────────────────────────────────────────────────────────
 2) O QUE FAZER NO STRIPE (FORA DO REPO)
 ────────────────────────────────────────────────────────────────────────────────

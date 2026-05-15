@@ -3,13 +3,13 @@
 //
 // Valida que a sessão pertence à família do utilizador e sincroniza `families`.
 
-import { corsHeaders, json } from "../_shared/cors.ts";
+import { corsPreflightResponse, json } from "../_shared/cors.ts";
 import { getStripe } from "../_shared/stripeClient.ts";
 import { applyStripeSubscriptionToFamily } from "../_shared/stripeFamilySync.ts";
 import { adminClient, userFromAuthHeader } from "../_shared/supabaseAdmin.ts";
 
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+  if (req.method === "OPTIONS") return corsPreflightResponse();
   if (req.method !== "POST") return json({ error: "method_not_allowed" }, 405);
 
   try {

@@ -14,13 +14,13 @@
 // (O Stripe não envia JWT do utilizador ao Supabase.)
 
 import Stripe from "https://esm.sh/stripe@14.21.0?target=deno";
-import { corsHeaders, json } from "../_shared/cors.ts";
+import { corsPreflightResponse, json } from "../_shared/cors.ts";
 import { getStripe } from "../_shared/stripeClient.ts";
 import { applyStripeSubscriptionToFamily } from "../_shared/stripeFamilySync.ts";
 import { adminClient } from "../_shared/supabaseAdmin.ts";
 
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+  if (req.method === "OPTIONS") return corsPreflightResponse();
 
   const secret = Deno.env.get("STRIPE_WEBHOOK_SECRET");
   if (!secret) {

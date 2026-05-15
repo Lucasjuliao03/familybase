@@ -1,4 +1,6 @@
 // Abre Stripe Checkout em modo subscription. Resposta: { url } para redirecionar o browser.
+// ⚠️ CORS/preflight: em supabase/config.toml esta função tem verify_jwt = false para o OPTIONS
+//    passar sem token; o POST continua a exigir Authorization (validado em userFromAuthHeader).
 // POST { plan_code: "premium_mensal" | "premium_anual" }
 //
 // Secrets: STRIPE_SECRET_KEY, SITE_URL,
@@ -7,7 +9,7 @@
 // Opcional Stripe Tax: STRIPE_AUTOMATIC_TAX_ENABLED=true (activa também colecta de morada)
 
 import Stripe from "https://esm.sh/stripe@14.21.0?target=deno";
-import { corsHeaders, json } from "../_shared/cors.ts";
+import { corsPreflightResponse, json } from "../_shared/cors.ts";
 import {
   checkoutAutomaticTaxEnabled,
   getStripe,
@@ -17,7 +19,7 @@ import {
 import { adminClient, userFromAuthHeader } from "../_shared/supabaseAdmin.ts";
 
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+  if (req.method === "OPTIONS") return corsPreflightResponse();
   if (req.method !== "POST") return json({ error: "method_not_allowed" }, 405);
 
   try {
@@ -52,7 +54,20 @@ Deno.serve(async (req) => {
       .select("id, gestor_user_id, stripe_customer_id")
       .eq("id", profile.family_id)
       .single();
-    if (famErr || !family) return json({ error: "family_not_found" }, 400);
+    if (famErr || !family) {
+      console.error(
+        "[stripe-create-checkout-session] family_missing",
+        JSON.stringify({ family_id: profile.family_id, famErr }),
+      );
+      return json(
+        {
+          error: "family_not_found",
+          hint_pt:
+            "O teu utilizador tem family_id na tabela users, mas não existe linha em families com esse id. Executa o diagnóstico em supabase/diagnostico_usuario_familia.sql no SQL Editor.",
+        },
+        400,
+      );
+    }
 
     const profileAp = profile.access_profile ?? "gestor";
     if (profile.role === "parent") {
