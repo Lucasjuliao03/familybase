@@ -21,14 +21,25 @@ Deno.serve(async (req) => {
       .single();
     if (!profile?.family_id) return json({ error: "no_family" }, 400);
 
-    const { data: fam } = await sb
+    const { data: famRaw, error: famErr } = await sb
       .from("families")
-      .select(
-        "subscription_id, subscription_status, plan_id, stripe_customer_id, gestor_user_id",
-      )
+      .select("*")
       .eq("id", profile.family_id)
-      .single();
-    if (!fam) return json({ error: "family_not_found" }, 400);
+      .maybeSingle();
+    if (famErr) {
+      console.error("[stripe-get-billing-summary] family_query_error", famErr);
+      return json({ error: "family_query_failed" }, 502);
+    }
+    if (!famRaw) return json({ error: "family_not_found" }, 400);
+
+    type FamBillingFields = {
+      subscription_id?: string | null;
+      subscription_status?: string | null;
+      plan_id?: string | null;
+      stripe_customer_id?: string | null;
+      gestor_user_id?: string | null;
+    };
+    const fam = famRaw as FamBillingFields;
 
     if (profile.role === "parent") {
       if ((profile.access_profile ?? "gestor") !== "gestor") {

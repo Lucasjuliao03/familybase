@@ -18,7 +18,31 @@ import {
 } from "../_shared/stripeClient.ts";
 import { adminClient, userFromAuthHeader } from "../_shared/supabaseAdmin.ts";
 
-Deno.serve(async (req) => {
+/** Mensagem Stripe (Node/Deno) para diagnóstico no browser. */
+function errMessage(e: unknown): string {
+  if (e && typeof e === "object" && "message" in e) {
+    return String((e as { message: unknown }).message);
+  }
+  return String(e);
+}
+
+/** Customer id na BD pode ser outra conta Stripe ou ter sido apagado — repetir só com email. */
+function stripeCustomerMissingOrInvalid(e: unknown): boolean {
+  const m = errMessage(e).toLowerCase();
+  const code =
+    typeof e === "object" &&
+    e !== null &&
+    "code" in e &&
+    typeof (e as { code?: string }).code === "string"
+      ? (e as { code?: string }).code
+      : "";
+  return (
+    code === "resource_missing" ||
+    m.includes("no such customer") ||
+    m.includes("customer was deleted") ||
+    m.includes("the customer specified does not exist")
+  );
+}
   if (req.method === "OPTIONS") return corsPreflightResponse();
   if (req.method !== "POST") return json({ error: "method_not_allowed" }, 405);
 
@@ -38,29 +62,17 @@ Deno.serve(async (req) => {
       return json({ error: "invalid_plan", plan_code }, 400);
     }
 
-    type FamilyJoin = {
+    type FamilyRow = {
       id: string;
       gestor_user_id: string | null;
-      stripe_customer_id: string | null;
+      stripe_customer_id?: string | null;
     };
 
     const sb = adminClient();
+    // Duas queries directas evitam relação ambígua users↔families (membership vs gestor).
     const { data: profile, error: profErr } = await sb
       .from("users")
-      .select(
-        `
-        id,
-        family_id,
-        email,
-        role,
-        access_profile,
-        families (
-          id,
-          gestor_user_id,
-          stripe_customer_id
-        )
-      `,
-      )
+      .select("id, family_id, email, role, access_profile")
       .eq("id", user.id)
       .maybeSingle();
 
@@ -94,39 +106,42 @@ Deno.serve(async (req) => {
       return json({ error: "only_parents_can_subscribe" }, 403);
     }
 
-    const nested = profile.families as FamilyJoin | FamilyJoin[] | null;
-    let family = Array.isArray(nested) ? nested[0] : nested;
+    const fid =
+      typeof profile.family_id === "string"
+        ? profile.family_id.trim()
+        : String(profile.family_id);
 
-    if (!family?.id) {
-      const fid =
-        typeof profile.family_id === "string"
-          ? profile.family_id.trim()
-          : String(profile.family_id);
-      console.error(
-        "[stripe-create-checkout-session] family_embed_missing_or_orphan",
-        JSON.stringify({
-          auth_user_id: user.id,
-          users_family_id: fid,
-        }),
+    // `*` evita erro 42703 se a migração `stripe_billing.sql` (stripe_customer_id) ainda não correu na BD.
+    const { data: famRow, error: famErr } = await sb
+      .from("families")
+      .select("*")
+      .eq("id", fid)
+      .maybeSingle();
+
+    if (famErr) {
+      console.error("[stripe-create-checkout-session] family_query_error", famErr);
+      return json(
+        {
+          error: "family_query_failed",
+          hint_pt:
+            "Erro ao ler public.families (ver Logs da função). Confirma que as migrações da app estão aplicadas no mesmo projecto Supabase.",
+          debug: { auth_user_id: user.id, users_family_id: fid },
+        },
+        502,
       );
-      const { data: famFallback } = await sb
-        .from("families")
-        .select("id, gestor_user_id, stripe_customer_id")
-        .eq("id", fid)
-        .maybeSingle();
-      if (!famFallback) {
-        return json(
-          {
-            error: "family_not_found",
-            hint_pt:
-              "Este JWT (debug.auth_user_id) tem users.family_id, mas não foi possível ler a linha correspondente em public.families. Se no SQL Editor a família aparece quando filtras por outro utilizador/email, não estás autenticado com esse mesmo public.users.id. Compara debug.auth_user_id com user_id na query WHERE email = '...'. Executa também supabase/diagnostico_usuario_familia.sql por id/email.",
-            debug: { auth_user_id: user.id, users_family_id: fid },
-          },
-          400,
-        );
-      }
-      // Fallback se o embed `families` falhar mas a linha existir na tabela families
-      family = famFallback as FamilyJoin;
+    }
+
+    const family = famRow as FamilyRow | null;
+    if (!family?.id) {
+      return json(
+        {
+          error: "family_not_found",
+          hint_pt:
+            "Este utilizador tem users.family_id mas não há linha em public.families com esse id (dados inconsistentes ou projecto BD errado). Executa supabase/diagnostico_usuario_familia.sql.",
+          debug: { auth_user_id: user.id, users_family_id: fid },
+        },
+        400,
+      );
     }
 
     const profileAp = profile.access_profile ?? "gestor";
@@ -181,7 +196,28 @@ Deno.serve(async (req) => {
       sessionParams.billing_address_collection = "required";
     }
 
-    const session = await stripe.checkout.sessions.create(sessionParams);
+    let session: Stripe.Response<Stripe.Checkout.Session>;
+    try {
+      session = await stripe.checkout.sessions.create(sessionParams);
+    } catch (first: unknown) {
+      if (
+        stripeCustomerMissingOrInvalid(first) &&
+        sessionParams.customer &&
+        payerEmail
+      ) {
+        console.warn(
+          "[stripe-create-checkout-session] customer_inválido_na_bd, retentar com email:",
+          errMessage(first),
+        );
+        const retry: Stripe.Checkout.SessionCreateParams = { ...sessionParams };
+        delete retry.customer;
+        delete retry.customer_update;
+        retry.customer_email = payerEmail;
+        session = await stripe.checkout.sessions.create(retry);
+      } else {
+        throw first;
+      }
+    }
 
     if (!session.url) {
       return json({ error: "stripe_no_url", session_id: session.id }, 502);

@@ -40,25 +40,33 @@ Deno.serve(async (req) => {
       return json({ error: "forbidden" }, 403);
     }
 
-    const { data: family } = await sb
+    const { data: family, error: famErr } = await sb
       .from("families")
-      .select("id, gestor_user_id, stripe_customer_id")
+      .select("*")
       .eq("id", profile.family_id)
-      .single();
+      .maybeSingle();
+    if (famErr) {
+      console.error("[stripe-create-portal-session] family_query_error", famErr);
+      return json({ error: "family_query_failed" }, 502);
+    }
     if (!family) return json({ error: "family_not_found" }, 400);
 
+    const famRecord = family as {
+      gestor_user_id?: string | null;
+      stripe_customer_id?: string | null;
+    };
     const profileAp = profile.access_profile ?? "gestor";
     if (profile.role === "parent") {
       if (profileAp !== "gestor") {
         return json({ error: "only_gestor_can_manage" }, 403);
       }
-      const gid = family.gestor_user_id;
+      const gid = famRecord.gestor_user_id;
       if (gid != null && gid !== user.id) {
         return json({ error: "only_family_billing_gestor" }, 403);
       }
     }
 
-    const customerId = family.stripe_customer_id;
+    const customerId = famRecord.stripe_customer_id;
     if (!customerId?.startsWith("cus_")) {
       return json({ error: "no_stripe_customer" }, 400);
     }
