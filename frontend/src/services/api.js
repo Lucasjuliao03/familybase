@@ -328,8 +328,9 @@ function pickCalendarRow(body, familyId, userId, withId) {
   return omitUndefined(row);
 }
 
+/** Sem `plan`, `subscription_status`, `trial_*`: estes campos só podem mudar por Edge Functions/webhook/RPC. */
 const FAMILY_PATCH_KEYS = new Set([
-  'name', 'language', 'plan', 'status', 'contact_email', 'contact_phone', 'emoji', 'primary_color', 'secondary_color', 'logo_url',
+  'name', 'language', 'contact_email', 'contact_phone', 'emoji', 'primary_color', 'secondary_color', 'logo_url',
 ]);
 
 function pickFamilyPatch(body) {

@@ -29,12 +29,30 @@ Deno.serve(async (req) => {
 
     const { data: profile, error: profErr } = await sb
       .from("users")
-      .select("id, family_id, email, role")
+      .select("id, family_id, email, role, access_profile")
       .eq("id", user.id)
       .single();
     if (profErr || !profile?.family_id) return json({ error: "no_family" }, 400);
     if (profile.role !== "parent" && profile.role !== "master") {
       return json({ error: "only_parents_can_subscribe" }, 403);
+    }
+
+    const { data: family, error: famErr } = await sb
+      .from("families")
+      .select("id, gestor_user_id")
+      .eq("id", profile.family_id)
+      .single();
+    if (famErr || !family) return json({ error: "family_not_found" }, 400);
+
+    const profileAp = profile.access_profile ?? "gestor";
+    if (profile.role === "parent") {
+      if (profileAp !== "gestor") {
+        return json({ error: "only_gestor_can_subscribe" }, 403);
+      }
+      const gid = family.gestor_user_id;
+      if (gid != null && gid !== user.id) {
+        return json({ error: "only_family_billing_gestor" }, 403);
+      }
     }
 
     const { data: plan, error: planErr } = await sb
@@ -80,6 +98,20 @@ Deno.serve(async (req) => {
       amount: plan.amount,
       payload: subscription,
     });
+
+    await sb.from("payment_events").insert({
+      family_id: profile.family_id,
+      user_id: user.id,
+      gateway: "mercadopago",
+      event_type: "create_subscription_attempt",
+      event_id: subscription?.id || null,
+      payload: subscription as unknown as Record<string, unknown>,
+      processed: true,
+    }).catch(() => {/* tabela opcional até migrar DB */});
+
+    console.log(
+      `[mp-create-subscription] ok family=${profile.family_id} mp_status=${subscription?.status} plan=${plan_code}`,
+    );
 
     return json({ ok: true, subscription, status: subscription?.status });
   } catch (e) {

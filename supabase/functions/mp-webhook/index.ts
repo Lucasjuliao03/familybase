@@ -71,6 +71,17 @@ Deno.serve(async (req) => {
 
     await sb.from("mp_webhook_events").insert({ event_id: eventId, type, payload });
 
+    const logPaymentEv = async (familyId: string | null, eventType: string, details: Record<string, unknown>) => {
+      await sb.from("payment_events").insert({
+        family_id: familyId,
+        gateway: "mercadopago",
+        event_type: eventType,
+        event_id: eventId,
+        payload: details as any,
+        processed: true,
+      }).catch((e) => console.error("[mp-webhook] payment_events insert:", (e as any)?.message));
+    };
+
     // Processar consoante o tópico
     if (type === "subscription_preapproval" || type === "preapproval") {
       const preapp = await mpGetPreapproval(dataId);
@@ -95,6 +106,7 @@ Deno.serve(async (req) => {
           subscription_id: preapp?.id,
           payload: preapp,
         });
+        await logPaymentEv(familyId, `preapproval_${status}`, { subscription_id: preapp?.id, status });
       }
     } else if (type === "payment") {
       const payment = await mpGetPayment(dataId);
@@ -122,6 +134,10 @@ Deno.serve(async (req) => {
             subscription_status: "past_due",
           }).eq("id", familyId);
         }
+        await logPaymentEv(familyId, `payment_${payment?.status || "unknown"}`, {
+          mp_payment_id: dataId || null,
+          status: payment?.status,
+        });
       }
     }
 

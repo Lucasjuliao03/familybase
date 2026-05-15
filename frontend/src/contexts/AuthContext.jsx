@@ -19,6 +19,67 @@ const DEFAULT_MODULES = {
   health: true,
 };
 
+/** Fallback cliente se RPC get_effective_subscription ainda não estiver deployado. */
+function buildEffectiveSubscriptionFallback(profileRow, resolvedFamily, userId) {
+  const fam = resolvedFamily;
+  if (!fam || !profileRow?.family_id) {
+    return {
+      ok: true,
+      has_access: false,
+      reason: 'no_family',
+      family_id: profileRow?.family_id ?? null,
+      gestor_id: null,
+      subscription_status: null,
+      trial_ends_at: null,
+      can_manage_billing: false,
+      is_billing_contact: false,
+    };
+  }
+  const sub = fam.subscription_status || 'trial';
+  let hasAccess = false;
+  let reason = 'no_subscription';
+  const endsTs = fam.trial_ends_at ? new Date(fam.trial_ends_at).getTime() : null;
+  const trialAlive = endsTs != null && !Number.isNaN(endsTs) ? endsTs >= Date.now() : false;
+
+  if (sub === 'active') {
+    hasAccess = true;
+    reason = 'subscription_active';
+  } else if (sub === 'trial') {
+    if (trialAlive || fam.trial_ends_at == null) {
+      hasAccess = true;
+      reason = 'trial_active';
+    } else {
+      reason = 'trial_expired';
+    }
+  } else if (sub === 'past_due') {
+    reason = 'subscription_past_due';
+  } else if (sub === 'expired' || sub === 'cancelled') {
+    reason = 'subscription_blocked';
+  }
+
+  let canManage = false;
+  if (profileRow.role === 'parent') {
+    const ap = profileRow.access_profile ?? profileRow.accessProfile ?? 'gestor';
+    const isGestProf = ap === 'gestor';
+    if (isGestProf) {
+      const gid = fam.gestor_user_id;
+      canManage = !gid ? true : gid === userId;
+    }
+  }
+
+  return {
+    ok: true,
+    has_access: hasAccess,
+    reason,
+    family_id: fam.id,
+    gestor_id: fam.gestor_user_id ?? null,
+    subscription_status: fam.subscription_status,
+    trial_ends_at: fam.trial_ends_at,
+    can_manage_billing: canManage,
+    is_billing_contact: canManage,
+  };
+}
+
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [family, setFamily] = useState(null);
@@ -27,6 +88,7 @@ export function AuthProvider({ children }) {
   const [modules, setModules] = useState({});
   const [loading, setLoading] = useState(true);
 
+  const [effectiveSubscription, setEffectiveSubscription] = useState(null);
   const profileInflightRef = useRef(null);
 
   const clearState = useCallback(() => {
@@ -34,7 +96,7 @@ export function AuthProvider({ children }) {
     setFamily(null);
     setChildProfile(null);
     setModules({});
-    setMustChangePassword(false);
+    setEffectiveSubscription(null);
   }, []);
 
   const loadUserProfile = useCallback(async (userId, emailHint) => {
@@ -126,12 +188,23 @@ export function AuthProvider({ children }) {
 
         let resolvedFamily = familyData;
 
-        if (resolvedFamily?.subscription_status === 'trial' && resolvedFamily?.trial_ends_at && fid) {
-          const ends = new Date(resolvedFamily.trial_ends_at).getTime();
-          if (Number.isFinite(ends) && ends < Date.now()) {
-            await supabase.from('families').update({ subscription_status: 'expired' }).eq('id', fid);
-            resolvedFamily = { ...resolvedFamily, subscription_status: 'expired' };
+        try {
+          const { data: effData, error: effErr } = await supabase.rpc('get_effective_subscription');
+          if (!effErr && effData != null && typeof effData === 'object') {
+            setEffectiveSubscription(effData);
+            const fidEFF = effData.family_id ?? fid;
+            if (resolvedFamily && fidEFF && String(resolvedFamily.id) === String(fidEFF)) {
+              resolvedFamily = {
+                ...resolvedFamily,
+                subscription_status: effData.subscription_status ?? resolvedFamily.subscription_status,
+                trial_ends_at: effData.trial_ends_at ?? resolvedFamily.trial_ends_at,
+              };
+            }
+          } else {
+            throw effErr || new Error('rpc_effective_subscription');
           }
+        } catch (_) {
+          setEffectiveSubscription(buildEffectiveSubscriptionFallback(profileRow, resolvedFamily ?? null, userId));
         }
 
         setFamily(resolvedFamily ?? null);
@@ -208,9 +281,11 @@ export function AuthProvider({ children }) {
     const password = String(formData.password || '');
     const familyName = formData.familyName || null;
     const name = formData.name || null;
-    const profileType = (formData.profileType || 'pai').toLowerCase();
-
-    // 1. signUp em Auth
+    const profileNorm = String(formData.profileType || 'pai').toLowerCase().replace(/ã/g, 'a').trim();
+    if (!['pai', 'mae'].includes(profileNorm)) {
+      throw new Error('O registo público só é permitido para Pai ou Mãe (gestor principal). Para filhos, o gestor cria o acesso na administração da família.');
+    }
+    const profileType = profileNorm;
     let data;
     try {
       const { data: signUpData, error } = await supabase.auth.signUp({
@@ -289,6 +364,7 @@ export function AuthProvider({ children }) {
     <AuthContext.Provider value={{
       user,
       family,
+      effectiveSubscription,
       childProfile,
       mustChangePassword,
       modules,

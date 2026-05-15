@@ -17,6 +17,7 @@ import MasterLayout from './components/layout/MasterLayout';
 // ─── Auth (carregadas imediatamente — rota inicial para não-logados) ──────────
 import LoginPage    from './pages/auth/LoginPage';
 import RegisterPage from './pages/auth/RegisterPage';
+import BillingWaitGestorPage from './pages/BillingWaitGestorPage';
 
 // ─── Páginas pai — lazy (chunk: pages-parent) ─────────────────────────────────
 const ParentDashboard      = lazy(() => import('./pages/parent/ParentDashboard'));
@@ -59,17 +60,60 @@ function isTrialExpired(family) {
   if (family.subscription_status === 'trial' && family.trial_ends_at) {
     return new Date(family.trial_ends_at).getTime() < Date.now();
   }
+  const s = family.subscription_status;
+  if (s === 'past_due' || s === 'cancelled') return true;
   return false;
 }
 
+/** Bloqueado por trial/assinatura ao nível da família (fallback se RPC falhar). */
+function isFamilyBillingBlocked(family, effectiveSubscription) {
+  if (effectiveSubscription && typeof effectiveSubscription.has_access === 'boolean') {
+    return !effectiveSubscription.has_access;
+  }
+  return isTrialExpired(family);
+}
+
+/** Quem pode abrir checkout /manage plano (= gestor financeiro da família). */
+function userCanManageFamilyBilling(user, effectiveSubscription) {
+  if (effectiveSubscription?.can_manage_billing === true) return true;
+  if (effectiveSubscription?.can_manage_billing === false) return false;
+  if (!user || user.role === 'child' || user.role === 'relative') return false;
+  if (user.role === 'parent') {
+    const ap = user.access_profile ?? user.accessProfile ?? 'gestor';
+    return ap === 'gestor';
+  }
+  return false;
+}
+
+function SubscribeGateway() {
+  const { user, loading, effectiveSubscription } = useAuth();
+  if (!user) return <Navigate to="/login" replace />;
+  if (loading) return <PageLoader />;
+  if (user.role === 'master') return <Navigate to="/master" replace />;
+
+  const canPay = userCanManageFamilyBilling(user, effectiveSubscription);
+  if (!canPay) return <BillingWaitGestorPage />;
+
+  return (
+    <Suspense fallback={<PageLoader />}>
+      <SubscribePage />
+    </Suspense>
+  );
+}
+
 function ProtectedRoute({ children, allowedRoles }) {
-  const { user, family, loading } = useAuth();
+  const { user, family, effectiveSubscription, loading } = useAuth();
   if (loading) return <Spinner />;
   if (!user) return <Navigate to="/login" replace />;
-  // Master nunca bloqueado; restantes redirecionados para /subscribe quando trial expira
-  if (user.role !== 'master' && isTrialExpired(family)) {
-    return <Navigate to="/subscribe" replace />;
+
+  if (user.role !== 'master') {
+    const blocked = isFamilyBillingBlocked(family, effectiveSubscription);
+    if (blocked) {
+      const dest = userCanManageFamilyBilling(user, effectiveSubscription) ? '/subscribe' : '/billing-wait-gestor';
+      return <Navigate to={dest} replace />;
+    }
   }
+
   if (allowedRoles && !allowedRoles.includes(user.role)) {
     if (user.role === 'master') return <Navigate to="/master" replace />;
     if (user.role === 'child')  return <Navigate to="/child"  replace />;
@@ -119,9 +163,11 @@ function AppRoutes() {
 
       {/* ── Assinatura (acessível também durante o trial) ──────────────── */}
       <Route path="/subscribe" element={
-        user
-          ? <Suspense fallback={<PageLoader />}><SubscribePage /></Suspense>
-          : <Navigate to="/login" replace />
+        user ? <SubscribeGateway /> : <Navigate to="/login" replace />
+      } />
+
+      <Route path="/billing-wait-gestor" element={
+        user ? <BillingWaitGestorPage /> : <Navigate to="/login" replace />
       } />
 
       {/* ── PARENT & RELATIVE ──────────────────────────────────────────── */}

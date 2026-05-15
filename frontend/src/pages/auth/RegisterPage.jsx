@@ -5,10 +5,8 @@ import { useLanguage } from '../../contexts/LanguageContext';
 import { useToast } from '../../contexts/ToastContext';
 
 const PROFILES = [
-  { id: 'pai',   label: 'Pai',   emoji: '👨',     hint: 'Gestor da família' },
-  { id: 'mae',   label: 'Mãe',   emoji: '👩',     hint: 'Gestora da família' },
-  { id: 'filho', label: 'Filho', emoji: '👦',     hint: 'Tarefas e recompensas' },
-  { id: 'filha', label: 'Filha', emoji: '👧',     hint: 'Tarefas e recompensas' },
+  { id: 'pai',   label: 'Pai',   emoji: '👨', hint: 'Gestor principal e responsável financeiro' },
+  { id: 'mae',   label: 'Mãe',   emoji: '👩', hint: 'Gestora principal e responsável financeiro' },
 ];
 
 export default function RegisterPage() {
@@ -31,7 +29,7 @@ export default function RegisterPage() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!form.profileType) {
-      toast.error('Selecione o seu perfil (Pai, Mãe, Filho ou Filha)');
+      toast.error('Selecione se entra como Pai ou Mãe (gestor principal).');
       return;
     }
     if (form.password !== form.confirmPassword) {
@@ -157,7 +155,7 @@ export default function RegisterPage() {
 
           <div className="trial-callout">
             <strong>🎁 Teste grátis de 7 dias</strong>
-            <span>Aceda a todas as funcionalidades sem cartão de crédito.</span>
+            <span>A família inteira usa o mesmo plano. Contas de crianças são criadas pelo gestor no painel da família.</span>
           </div>
 
           <button

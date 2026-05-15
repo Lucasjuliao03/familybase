@@ -520,8 +520,9 @@ ALTER TABLE public.families ADD COLUMN IF NOT EXISTS trial_ends_at       TIMESTA
 ALTER TABLE public.families ADD COLUMN IF NOT EXISTS subscription_id     TEXT;
 ALTER TABLE public.families ADD COLUMN IF NOT EXISTS plan_id             TEXT;
 ALTER TABLE public.families ADD COLUMN IF NOT EXISTS plan                TEXT DEFAULT 'free';
+ALTER TABLE public.families ADD COLUMN IF NOT EXISTS gestor_user_id UUID REFERENCES public.users(id) ON DELETE SET NULL;
 
--- subscription_status: 'trial', 'active', 'expired', 'cancelled', 'past_due'
+-- gestor_user_id = responsável financeiro (fonte única de assinatura/trial por família)
 
 -- 17.2 Coluna profile_type em users (pai/mae/filho/filha)
 ALTER TABLE public.users ADD COLUMN IF NOT EXISTS profile_type TEXT;
@@ -604,14 +605,26 @@ BEGIN
   v_fn := COALESCE(NULLIF(trim(p_family_name), ''), NULLIF(trim(meta->>'family_name'), ''), 'Minha família');
   v_un := COALESCE(NULLIF(trim(p_user_name), ''),  NULLIF(trim(meta->>'name'), ''), split_part(v_email, '@', 1), 'Utilizador');
 
-  -- Criar família com trial de 7 dias
-  INSERT INTO public.families (name, plan, status, subscription_status, trial_started_at, trial_ends_at)
-  VALUES (v_fn, 'free', 'trial', 'trial', now(), now() + INTERVAL '7 days')
+  IF v_role = 'child' THEN
+    RAISE EXCEPTION 'Contas Filho/Filha são criadas pelo gestor no painel de administração da família.';
+  END IF;
+
+  -- Criar família com trial + gestor único financeiro (= este utilizador pai/mãe)
+  INSERT INTO public.families (
+    name, plan, status, subscription_status,
+    trial_started_at, trial_ends_at,
+    gestor_user_id
+  )
+  VALUES (
+    v_fn, 'free', 'trial', 'trial',
+    now(), now() + INTERVAL '7 days',
+    v_uid
+  )
   RETURNING id INTO v_fid;
 
-  -- Criar/atualizar utilizador
-  INSERT INTO public.users (id, name, email, role, family_id, status, must_change_password, profile_type, avatar_preset)
-  VALUES (v_uid, v_un, v_email, v_role, v_fid, 'active', false, v_profile, v_avatar)
+  -- Criar/atualizar utilizador (pai/mãe fundador são sempre gestor de facturação)
+  INSERT INTO public.users (id, name, email, role, family_id, status, must_change_password, profile_type, avatar_preset, access_profile)
+  VALUES (v_uid, v_un, v_email, v_role, v_fid, 'active', false, v_profile, v_avatar, 'gestor')
   ON CONFLICT (id) DO UPDATE SET
     name = COALESCE(EXCLUDED.name, public.users.name),
     email = COALESCE(EXCLUDED.email, public.users.email),
@@ -620,14 +633,8 @@ BEGIN
     status = 'active',
     profile_type = EXCLUDED.profile_type,
     avatar_preset = COALESCE(public.users.avatar_preset, EXCLUDED.avatar_preset),
+    access_profile = COALESCE(public.users.access_profile, EXCLUDED.access_profile),
     updated_at = now();
-
-  -- Se for criança/filho, criar registo em children
-  IF v_role = 'child' THEN
-    INSERT INTO public.children (id, family_id, user_id, name, color, level, xp, xp_next_level, points, coins, streak_current, avatar_preset)
-    VALUES (gen_random_uuid(), v_fid, v_uid, v_un, '#6366F1', 1, 0, 100, 0, 0, 0, v_avatar)
-    ON CONFLICT (user_id) DO UPDATE SET family_id = EXCLUDED.family_id;
-  END IF;
 
   -- Log do início do trial
   INSERT INTO public.subscription_events (family_id, event_type, payload)
@@ -658,10 +665,29 @@ SET search_path = public
 AS $$
 DECLARE
   v_fid UUID;
+  v_gest UUID;
 BEGIN
   v_fid := public.get_current_user_family_id();
   IF v_fid IS NULL THEN
     RAISE EXCEPTION 'not_authenticated';
+  END IF;
+
+  SELECT f.gestor_user_id INTO v_gest FROM public.families f WHERE f.id = v_fid;
+  IF v_gest IS NULL THEN
+    SELECT u.id INTO v_gest
+      FROM public.users u
+      WHERE u.family_id = v_fid
+        AND u.role = 'parent'
+        AND COALESCE(u.access_profile, 'gestor') = 'gestor'
+      ORDER BY u.created_at ASC NULLS LAST
+      LIMIT 1;
+    IF v_gest IS NOT NULL THEN
+      UPDATE public.families SET gestor_user_id = v_gest WHERE id = v_fid;
+    END IF;
+  END IF;
+
+  IF v_gest IS NULL OR auth.uid() IS DISTINCT FROM v_gest THEN
+    RAISE EXCEPTION 'only_gestor_can_activate_subscription';
   END IF;
 
   UPDATE public.families
@@ -725,6 +751,133 @@ $$;
 REVOKE ALL ON FUNCTION public.get_subscription_status() FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.get_subscription_status() TO authenticated;
 
+-- 17.6b Fonte única de acesso ao plano pagamento (trial/assinatura) — sempre ao nível família/gestor
+CREATE OR REPLACE FUNCTION public.get_effective_subscription()
+RETURNS JSONB
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_uid  UUID := auth.uid();
+  v_me   public.users%ROWTYPE;
+  v_fam  public.families%ROWTYPE;
+  v_gest UUID;
+  v_now  TIMESTAMPTZ := now();
+  v_sub  TEXT;
+  v_has  BOOLEAN := false;
+  v_reason TEXT := 'unknown';
+  v_can_manage BOOLEAN := false;
+BEGIN
+  IF v_uid IS NULL THEN
+    RETURN jsonb_build_object('ok', false, 'has_access', false, 'reason', 'not_authenticated',
+      'can_manage_billing', false, 'gestor_id', NULL, 'family_id', NULL);
+  END IF;
+
+  SELECT * INTO v_me FROM public.users WHERE id = v_uid;
+
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('ok', false, 'has_access', false, 'reason', 'no_profile',
+      'can_manage_billing', false, 'gestor_id', NULL, 'family_id', NULL);
+  END IF;
+
+  IF v_me.role = 'master' THEN
+    RETURN jsonb_build_object(
+      'ok', true, 'has_access', true, 'reason', 'master',
+      'can_manage_billing', true,
+      'is_billing_contact', true, 'family_id', v_me.family_id, 'gestor_id', NULL
+    );
+  END IF;
+
+  IF v_me.family_id IS NULL THEN
+    RETURN jsonb_build_object(
+      'ok', true, 'has_access', false, 'reason', 'no_family',
+      'can_manage_billing', false,
+      'is_billing_contact', false, 'gestor_id', NULL, 'family_id', NULL,
+      'subscription_status', NULL, 'trial_ends_at', NULL
+    );
+  END IF;
+
+  SELECT * INTO v_fam FROM public.families WHERE id = v_me.family_id;
+
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('ok', false, 'has_access', false, 'reason', 'family_missing',
+      'family_id', v_me.family_id, 'can_manage_billing', false);
+  END IF;
+
+  -- Resolver gestor financeiro da família
+  v_gest := v_fam.gestor_user_id;
+  IF v_gest IS NULL THEN
+    SELECT u.id INTO v_gest FROM public.users u
+      WHERE u.family_id = v_fam.id AND u.role = 'parent'
+        AND COALESCE(u.access_profile, 'gestor') = 'gestor'
+      ORDER BY u.created_at ASC NULLS LAST LIMIT 1;
+    IF v_gest IS NOT NULL THEN
+      UPDATE public.families SET gestor_user_id = v_gest WHERE id = v_fam.id;
+      v_fam.gestor_user_id := v_gest;
+    END IF;
+  END IF;
+
+  v_can_manage := (
+    v_uid = v_gest
+    AND COALESCE(lower(trim(v_me.access_profile)), 'gestor') = 'gestor'
+  );
+
+  IF v_gest IS NULL THEN
+    RETURN jsonb_build_object(
+      'ok', true, 'has_access', false, 'reason', 'no_gestor',
+      'family_id', v_fam.id, 'gestor_id', NULL,
+      'subscription_status', v_fam.subscription_status, 'trial_ends_at', v_fam.trial_ends_at,
+      'can_manage_billing', false, 'is_billing_contact', false
+    );
+  END IF;
+
+  v_sub := lower(COALESCE(v_fam.subscription_status, 'trial'));
+
+  IF v_sub = 'trial' AND v_fam.trial_ends_at IS NOT NULL AND v_fam.trial_ends_at < v_now THEN
+    UPDATE public.families SET subscription_status = 'expired' WHERE id = v_fam.id;
+    SELECT * INTO v_fam FROM public.families WHERE id = v_me.family_id;
+    v_sub := lower(COALESCE(v_fam.subscription_status, 'trial'));
+  END IF;
+
+  IF v_sub = 'active' THEN
+    v_has := true;
+    v_reason := 'subscription_active';
+  ELSIF v_sub = 'trial' AND (v_fam.trial_ends_at IS NULL OR v_fam.trial_ends_at >= v_now) THEN
+    v_has := true;
+    v_reason := 'trial_active';
+  ELSIF v_sub = 'trial' THEN
+    v_has := false;
+    v_reason := 'trial_expired';
+  ELSIF v_sub = 'past_due' THEN
+    v_has := false;
+    v_reason := 'subscription_past_due';
+  ELSIF v_sub IN ('cancelled', 'expired') THEN
+    v_has := false;
+    v_reason := 'subscription_blocked';
+  ELSE
+    v_has := false;
+    v_reason := 'no_subscription';
+  END IF;
+
+  RETURN jsonb_build_object(
+    'ok', true,
+    'has_access', v_has,
+    'reason', v_reason,
+    'family_id', v_fam.id,
+    'gestor_id', v_gest,
+    'subscription_status', v_fam.subscription_status,
+    'trial_ends_at', v_fam.trial_ends_at,
+    'is_billing_contact', v_can_manage,
+    'can_manage_billing', v_can_manage
+  );
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.get_effective_subscription() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.get_effective_subscription() TO authenticated;
+
 -- 17.7 Backfill: famílias antigas sem trial recebem 7 dias a partir de hoje
 UPDATE public.families
    SET subscription_status = COALESCE(subscription_status, 'trial'),
@@ -733,6 +886,30 @@ UPDATE public.families
  WHERE subscription_status IS NULL
     OR (subscription_status = 'trial' AND trial_ends_at IS NULL);
 
+UPDATE public.families f
+SET gestor_user_id = sub.gid
+FROM (
+  SELECT u.family_id AS fid, u.id AS gid
+    FROM (
+      SELECT DISTINCT ON (u.family_id) u.family_id, u.id, u.created_at
+        FROM public.users u
+       WHERE u.role = 'parent' AND COALESCE(u.access_profile, 'gestor') = 'gestor'
+       ORDER BY u.family_id, u.created_at ASC NULLS LAST
+    ) AS u
+) AS sub
+WHERE f.id = sub.fid
+  AND f.gestor_user_id IS NULL;
+
+-- Gestor apenas lê auditoria financeira de assinatura (dependentes não)
+DROP POLICY IF EXISTS "Family view subscription events" ON public.subscription_events;
+CREATE POLICY "Gestor can view subscription events" ON public.subscription_events
+  FOR SELECT USING (
+    EXISTS (
+      SELECT 1 FROM public.families fm
+       WHERE fm.id = subscription_events.family_id
+         AND fm.gestor_user_id = auth.uid()
+    )
+  );
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- 18) Tabelas de suporte ao Mercado Pago
 -- ═══════════════════════════════════════════════════════════════════════════════
@@ -762,4 +939,42 @@ CREATE TABLE IF NOT EXISTS public.mp_webhook_events (
 );
 ALTER TABLE public.mp_webhook_events ENABLE ROW LEVEL SECURITY;
 -- Apenas service_role escreve/lê (default sem políticas → bloqueado para anon/authenticated)
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- 19) Auditoria gateway (opcional ao subscription_events) + RLS forte em families
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- Histórico de eventos vindos do MP (payload bruto apenas via service_role / Edge Fn).
+CREATE TABLE IF NOT EXISTS public.payment_events (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  family_id       UUID REFERENCES public.families(id) ON DELETE CASCADE,
+  user_id         UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  gateway         TEXT NOT NULL DEFAULT 'mercadopago',
+  event_type      TEXT NOT NULL,
+  event_id        TEXT,
+  payload         JSONB,
+  processed       BOOLEAN DEFAULT true,
+  created_at      TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS ix_payment_events_family ON public.payment_events (family_id, created_at DESC);
+ALTER TABLE public.payment_events ENABLE ROW LEVEL SECURITY;
+COMMENT ON TABLE public.payment_events IS 'Auditoria de webhooks/checkout; apenas service_role deve inspecionar payloads.';
+
+-- Impede PATCH directo pelo cliente anonimizado em campos financeiros —
+-- apenas o gestor financeiro da família (ou conta master pelo script baas_complete_fix).
+DROP POLICY IF EXISTS "Users can update their own family" ON public.families;
+
+DROP POLICY IF EXISTS "Gestor financeiro atualiza família" ON public.families;
+
+CREATE POLICY "Gestor financeiro atualiza família"
+  ON public.families FOR UPDATE TO authenticated
+  USING (
+    id = public.get_current_user_family_id()
+    AND gestor_user_id IS NOT NULL
+    AND gestor_user_id = auth.uid()
+  )
+  WITH CHECK (
+    id = public.get_current_user_family_id()
+    AND gestor_user_id IS NOT NULL
+    AND gestor_user_id = auth.uid()
+  );
 

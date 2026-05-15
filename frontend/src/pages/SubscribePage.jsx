@@ -85,9 +85,17 @@ export default function SubscribePage() {
                   throw new Error(msg || `Erro ${res.status} ao criar assinatura.`);
                 }
 
-                toast.success('Assinatura confirmada! Bem-vindo de volta.');
+                const mpStatus = body?.subscription?.status || body?.status;
+                console.info('[subscribe] Mercado Pago pré-aprovação:', mpStatus);
                 await fetchMe();
-                navigate('/parent', { replace: true });
+                if (mpStatus === 'authorized') {
+                  toast.success('Assinatura confirmada! Bem-vindo de volta.');
+                  navigate('/parent', { replace: true });
+                  return;
+                }
+                toast.info(
+                  'Pagamento registado ou em análise. Quando for autorizado pelo Mercado Pago (confirmado também pelo webhook), o acesso será activado.',
+                );
               } catch (e) {
                 toast.error(e?.message || 'Erro ao processar assinatura.');
               } finally {

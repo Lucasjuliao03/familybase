@@ -3,8 +3,18 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 
 export default function TrialBanner() {
-  const { family } = useAuth();
+  const { family, user, effectiveSubscription } = useAuth();
   const navigate = useNavigate();
+
+  const canManage = useMemo(() => {
+    if (effectiveSubscription?.can_manage_billing === true) return true;
+    if (effectiveSubscription?.can_manage_billing === false) return false;
+    if (!user || user.role === 'child' || user.role === 'relative') return false;
+    if (user.role === 'parent') {
+      return (user.access_profile ?? user.accessProfile ?? 'gestor') === 'gestor';
+    }
+    return false;
+  }, [effectiveSubscription, user]);
 
   const info = useMemo(() => {
     if (!family) return null;
@@ -21,13 +31,32 @@ export default function TrialBanner() {
 
   if (!info) return null;
 
+  const goPay = () => {
+    if (!canManage) {
+      navigate('/billing-wait-gestor');
+      return;
+    }
+    navigate('/subscribe');
+  };
+
   if (info.expired) {
     return (
       <div className="trial-banner is-expired">
-        <span>⛔ O seu teste gratuito terminou. Assine para continuar a usar a Base Familiar.</span>
-        <button className="trial-banner__btn" onClick={() => navigate('/subscribe')}>
-          Assinar agora
-        </button>
+        <span>
+          ⛔{' '}
+          {canManage
+            ? 'O teste gratuito terminou. Assine para continuar a usar a Base Familiar.'
+            : 'O acesso da família depende do gestor. Peça ao responsável pela assinatura para regularizar.'}
+        </span>
+        {canManage ? (
+          <button type="button" className="trial-banner__btn" onClick={goPay}>
+            Assinar agora
+          </button>
+        ) : (
+          <button type="button" className="trial-banner__btn" onClick={() => navigate('/billing-wait-gestor')}>
+            Detalhes
+          </button>
+        )}
       </div>
     );
   }
@@ -36,10 +65,13 @@ export default function TrialBanner() {
     <div className="trial-banner">
       <span>
         🎁 Está no <strong>teste gratuito</strong> — {info.daysLeft} {info.daysLeft === 1 ? 'dia restante' : 'dias restantes'}.
+        {!canManage && ' A assinatura é gerida apenas pelo gestor da família.'}
       </span>
-      <button className="trial-banner__btn" onClick={() => navigate('/subscribe')}>
-        Ver planos
-      </button>
+      {canManage && (
+        <button type="button" className="trial-banner__btn" onClick={goPay}>
+          Ver planos
+        </button>
+      )}
     </div>
   );
 }
