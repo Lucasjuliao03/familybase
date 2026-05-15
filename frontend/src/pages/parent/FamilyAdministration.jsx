@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useToast } from '../../contexts/ToastContext';
 import { useAuth } from '../../contexts/AuthContext';
@@ -58,6 +59,7 @@ function inferCategoryForApi(m) {
 export default function FamilyAdministration() {
   const { t } = useLanguage();
   const toast = useToast();
+  const navigate = useNavigate();
   const { user, fetchMe, setModules } = useAuth();
   const [tab, setTab] = useState('family');
   const [moduleSettings, setModuleSettings] = useState(null);
@@ -283,6 +285,14 @@ export default function FamilyAdministration() {
         <div>
           <h1 className="page-title">{t('fam_admin_title')}</h1>
           <p className="page-subtitle">{t('fam_admin_subtitle')}</p>
+          <button
+            type="button"
+            className="btn btn-outline btn-sm"
+            style={{ marginTop: 10 }}
+            onClick={() => navigate('/parent/billing')}
+          >
+            Assinatura e pagamento (Stripe)
+          </button>
         </div>
         {familyForm?.name && (
           <div

@@ -231,6 +231,11 @@ function AppRoutes() {
             <Suspense fallback={<PageLoader />}><FamilyAdministration /></Suspense>
           </GestorRoute>
         } />
+        <Route path="billing" element={
+          <GestorRoute>
+            <Suspense fallback={<PageLoader />}><SubscribePage /></Suspense>
+          </GestorRoute>
+        } />
       </Route>
 
       {/* ── CHILD ──────────────────────────────────────────────────────── */}

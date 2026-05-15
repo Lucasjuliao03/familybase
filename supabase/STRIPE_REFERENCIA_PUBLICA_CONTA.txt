@@ -1,0 +1,37 @@
+================================================================================
+  STRIPE — REFERÊNCIA PÚBLICA (SEM SEGREDOS) | Base Familiar
+  Obtido via Stripe MCP neste workspace (modo TEST). NÃO contém secret keys.
+
+  Conta: acct_1TXC15R0aMeJgjCF
+  Dashboard API keys:
+    https://dashboard.stripe.com/acct_1TXC15R0aMeJgjCF/apikeys
+================================================================================
+
+--- Produtos ---
+  Mensal   prod_UWEYcsk7lxux2Y    "Base Familiar mensal"
+  Anual    prod_UWEY5BfzPYfTP5    "Base Familiar Anual"
+
+--- Preços recorrentes (BRL, lookup keys definidos via API) ---
+  Mensal    price_1TXC5ER0aMeJgjCFlnXdr59E   lookup_key: basefamiliar_premium_mensal
+           R$ 19,90 / mês (unit_amount 1990)
+
+  Anual     price_1TXC5hR0aMeJgjCF6f6wxWwI   lookup_key: basefamiliar_premium_anual
+           R$ 199,90 / ano (unit_amount 19990)
+
+--------------------------------------------------------------------------------
+  SUPABASE EDGE FUNCTION SECRETS (sem sk_test nem whsec — esses são teus só)
+
+  Lookup keys:
+    STRIPE_LOOKUP_KEY_PREMIUM_MENSAL=basefamiliar_premium_mensal
+    STRIPE_LOOKUP_KEY_PREMIUM_ANUAL=basefamiliar_premium_anual
+
+  Ou price ids:
+    STRIPE_PRICE_PREMIUM_MENSAL=price_1TXC5ER0aMeJgjCFlnXdr59E
+    STRIPE_PRICE_PREMIUM_ANUAL=price_1TXC5hR0aMeJgjCF6f6wxWwI
+
+  Obrigatórios à parte (painel Stripe):
+    STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, SITE_URL
+
+  Funções a fazer deploy (incluindo nova resumo billing):
+    supabase functions deploy stripe-get-billing-summary
+--------------------------------------------------------------------------------

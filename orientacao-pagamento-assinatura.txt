@@ -1,45 +1,48 @@
 ================================================================================
-  ORIENTAÇÃO — PAGAMENTO E ASSINATURA (MERCADO PAGO)
-  Projeto: Base Familiar | Integração com Supabase Edge Functions
+  ORIENTAÇÃO — PAGAMENTO E ASSINATURA (STRIPE)
+  Projeto: Base Familiar | Supabase Edge Functions
 ================================================================================
 
 ────────────────────────────────────────────────────────────────────────────────
-1) COMO ESTÁ NO NOSSO CÓDIGO (RESUMO)
+1) COMO ESTÁ NO CÓDIGO (RESUMO — STRIPE ACTUAL)
 ────────────────────────────────────────────────────────────────────────────────
 
-  • Plano (preapproval_plan): criado pela Edge Function "mp-create-plan", que
-    grava o id do MP na tabela "mp_plans" (codes: premium_mensal, premium_anual).
+  • Planos Stripe: dois Prices no Dashboard — podes usar **lookup keys** (como na
+    demonstração oficial com BaseFamiliarMensal-xxxx) através dos Secrets
+    STRIPE_LOOKUP_KEY_*; ou ids directos price_* nos STRIPE_PRICE_*.
 
-  • Assinatura (preapproval): criada pela Edge Function "mp-create-subscription",
-    com preapproval_plan_id, card_token_id, payer_email, status authorized, etc.
+  • Frontend: SubscribePage.jsx + rota gestor /parent/billing + atalho em
+    Administração da família (Stripe Checkout redirect).
 
-  • Frontend: Checkout Bricks (Card Payment) em SubscribePage.jsx; variável
-    VITE_MP_PUBLIC_KEY no .env do frontend.
+  • Edge Functions Stripe:
+      — stripe-create-checkout-session   POST { plan_code } → { url }
+      — stripe-sync-checkout-session     POST { session_id } (após voltar do sucesso)
+      — stripe-create-portal-session    POST opcional return_url → { url } Billing Portal
+      — stripe-get-billing-summary      GET ou POST — resumo sub Stripe (JWT gestor)
+      — stripe-webhook                  eventos Stripe
+      • stripe-cancel-subscription      POST (cancelar sub actual)
 
-  • Backend (Edge): MP_ACCESS_TOKEN, MP_BACK_URL e opcionalmente valores de
-    plano (MP_PLAN_MENSAL_AMOUNT, MP_PLAN_ANUAL_AMOUNT).
+  • Secrets Supabase (Edge Functions):
+      STRIPE_SECRET_KEY | STRIPE_WEBHOOK_SECRET | SITE_URL
+      Preços (um dos dois modos por plano — lookup_key tem prioridade):
+        STRIPE_LOOKUP_KEY_PREMIUM_MENSAL  e/ou  STRIPE_LOOKUP_KEY_PREMIUM_ANUAL
+        (como BaseFamiliarMensal-xxxx no exemplo Stripe oficial), OU
+        STRIPE_PRICE_PREMIUM_MENSAL / STRIPE_PRICE_PREMIUM_ANUAL (IDs price_*).
+      Opcional Stripe Tax no Checkout: STRIPE_AUTOMATIC_TAX_ENABLED=true
 
-  • Webhook: função "mp-webhook" — tópicos úteis: subscription_preapproval,
-    payment, subscription_authorized_payment. Secret: MP_WEBHOOK_SECRET.
+  • No Stripe Dashboard: activar "Customer portal" em Settings → Billing (para Gestão Stripe).
+
+  • SQL: executar supabase/stripe_billing.sql no SQL Editor (coluna stripe_customer_id
+    + tabela stripe_webhook_events).
+
+  • Funções mp-* (Mercado Pago) ficam legacy; não ligadas ao fluxo de subscrição actual.
 
 ────────────────────────────────────────────────────────────────────────────────
-2) ERRO "Card token service not found" (HTTP 404)
+2) O QUE FAZER NO STRIPE (FORA DO REPO)
 ────────────────────────────────────────────────────────────────────────────────
 
-  Significa quase sempre desalinhamento entre:
-
-    - A PUBLIC KEY usada no Bricks (VITE_MP_PUBLIC_KEY), e
-    - O ACCESS TOKEN usado na Edge Function (MP_ACCESS_TOKEN).
-
-  Ambos têm de ser da MESMA aplicação no painel Mercado Pago Developers
-  (Credenciais de produção OU credenciais de teste — nunca misturar).
-
-  Não misturar também:
-    - Token de uma conta MP com cartão/token gerado por outra aplicação;
-    - Chave APP_USR-... do vendedor A com Access Token do vendedor B.
-
-  Contas / cartões de teste: usar usuários de teste e cartões de teste
-  conforme documentação oficial (secção mais abaixo).
+  Ver guia passo-a-passo na resposta do assistente (conta, produtos, preços,
+  webhook endpoint, modo teste). Secções seguintes são referência antiga Mercado Pago.
 
 ================================================================================
 DOCUMENTAÇÃO DE REFERÊNCIA — MERCADO PAGO (TEXTO FORNECIDO / ADAPTADO)

@@ -1,26 +1,98 @@
-import { useEffect, useMemo, useState, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useMemo, useState, useRef, useCallback } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { supabase } from '../lib/supabase';
-import { getMP, destroyBrick } from '../lib/mercadoPago';
 
+/** Valores espelho dos preços Stripe (BRL) — produtos “Base Familiar mensal / Anual”. */
 const PLANS = [
-  { code: 'premium_mensal', label: 'Mensal', price: 19.90, hint: 'Cobrança mensal recorrente',     featured: false },
-  { code: 'premium_anual',  label: 'Anual',  price: 199.00, hint: 'Economize 2 meses (R$ 16,58/mês)', featured: true  },
+  {
+    code: 'premium_mensal',
+    label: 'Mensal',
+    price: 19.9,
+    interval: '/mês',
+    hint: 'Cobrança automática todos os meses. Cancelável na área Stripe.',
+    features: ['Toda a Base Familiar premium', 'Suporte a famílias gestor/conta', 'Actualizações contínuas'],
+    featured: false,
+  },
+  {
+    code: 'premium_anual',
+    label: 'Anual',
+    price: 199.9,
+    interval: '/ano',
+    hint: `Equivale a cerca de ${new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(199.9 / 12)} por mês.`,
+    features: ['Toda a Base Familiar premium', 'Melhor valor para usar o ano todo', 'Factura única recorrente anual'],
+    featured: true,
+  },
 ];
 
 function fmtBRL(v) {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
 }
 
+function statusBadge(label, tone = 'muted') {
+  const tones = {
+    active: { bg: '#00B89422', border: '#00B894', color: '#00B894' },
+    warn: { bg: '#FDCB6E22', border: '#F39C12', color: '#D35400' },
+    bad: { bg: '#FF767522', border: '#E17055', color: '#D63031' },
+    muted: { bg: 'var(--bg)', border: 'var(--border)', color: 'var(--text-light)' },
+  };
+  const t = tones[tone] || tones.muted;
+  return (
+    <span
+      className="billing-subscribe__badge"
+      style={{ background: t.bg, borderColor: t.border, color: t.color }}
+    >
+      {label}
+    </span>
+  );
+}
+
 export default function SubscribePage() {
-  const { user, family, fetchMe, logout } = useAuth();
+  const { family, fetchMe, logout } = useAuth();
   const toast = useToast();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [selected, setSelected] = useState(null);
   const [submitting, setSubmitting] = useState(false);
-  const brickRef = useRef(null);
+  const [billingSuccess, setBillingSuccess] = useState(false);
+  const [stripeSummary, setStripeSummary] = useState(null);
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const handledCancelRef = useRef(false);
+  const syncedSessionRef = useRef(null);
+
+  const isGestorContext = typeof window !== 'undefined' && window.location.pathname.includes('/parent/billing');
+
+  const loadStripeSummary = useCallback(async () => {
+    try {
+      setSummaryLoading(true);
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData?.session?.access_token;
+      if (!accessToken) return;
+      const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/stripe-get-billing-summary`;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: '{}',
+      });
+      const body = await res.json().catch(() => ({}));
+      if (res.ok) setStripeSummary(body);
+      else setStripeSummary(null);
+    } catch {
+      setStripeSummary(null);
+    } finally {
+      setSummaryLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (family?.subscription_status === 'active' || family?.subscription_id?.startsWith?.('sub_')) {
+      loadStripeSummary();
+    }
+  }, [family?.subscription_status, family?.subscription_id, loadStripeSummary]);
 
   const expired = useMemo(() => {
     if (!family) return false;
@@ -30,165 +102,331 @@ export default function SubscribePage() {
     return ends > 0 && ends < Date.now();
   }, [family]);
 
-  // Inicializar Brick quando um plano é seleccionado
-  useEffect(() => {
-    if (!selected) return;
-    let cancelled = false;
-    const plan = PLANS.find((p) => p.code === selected);
-    if (!plan) return;
+  const familyBillingLabel = useMemo(() => {
+    const s = family?.subscription_status;
+    if (s === 'active') return { text: 'Assinatura activa', tone: 'active' };
+    if (s === 'past_due') return { text: 'Pagamento em atraso', tone: 'warn' };
+    if (s === 'cancelled') return { text: 'Assinatura cancelada', tone: 'bad' };
+    if (s === 'expired' || expired) return { text: 'Período gratuito expirado', tone: 'bad' };
+    return { text: 'Período de experiência', tone: 'muted' };
+  }, [family?.subscription_status, expired]);
 
+  useEffect(() => {
+    if (searchParams.get('checkout') !== 'cancelled') return;
+    if (handledCancelRef.current) return;
+    handledCancelRef.current = true;
+    toast.info('Pagamento cancelado. Pode tentar novamente quando quiser.');
+    setSearchParams({}, { replace: true });
+  }, [searchParams, setSearchParams, toast]);
+
+  useEffect(() => {
+    const checkout = searchParams.get('checkout');
+    const sessionId = searchParams.get('session_id');
+    if (checkout !== 'success' || !sessionId) return;
+
+    const dedupeKey = `stripe_ck_done_${sessionId}`;
+    if (typeof sessionStorage !== 'undefined' && sessionStorage.getItem(dedupeKey)) {
+      setBillingSuccess(true);
+      return;
+    }
+    if (syncedSessionRef.current === sessionId) return;
+    syncedSessionRef.current = sessionId;
+
+    let cancelled = false;
     (async () => {
       try {
-        destroyBrick('cardPaymentBrick_container');
-        const { bricksBuilder } = getMP();
-        if (cancelled) return;
-        const controller = await bricksBuilder.create('cardPayment', 'cardPaymentBrick_container', {
-          initialization: {
-            amount: plan.price,
-            payer: { email: user?.email || '' },
+        setSubmitting(true);
+        const { data: sessionData } = await supabase.auth.getSession();
+        const accessToken = sessionData?.session?.access_token;
+        const syncUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/stripe-sync-checkout-session`;
+        const res = await fetch(syncUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`,
           },
-          customization: {
-            paymentMethods: { maxInstallments: 1 },
-            visual: { style: { theme: 'default' } },
-          },
-          callbacks: {
-            onReady: () => {/* brick pronto */},
-            onError: (err) => {
-              console.error('MP Brick error', err);
-              toast.error('Erro no formulário de cartão. Tente recarregar a página.');
-            },
-            onSubmit: async (cardFormData) => {
-              try {
-                setSubmitting(true);
-                const cardToken = cardFormData?.token || cardFormData?.formData?.token;
-                if (!cardToken) throw new Error('Não foi possível tokenizar o cartão.');
-
-                const { data: sessionData } = await supabase.auth.getSession();
-                const accessToken = sessionData?.session?.access_token;
-                const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/mp-create-subscription`;
-                const res = await fetch(url, {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${accessToken}`,
-                  },
-                  body: JSON.stringify({
-                    plan_code: plan.code,
-                    card_token_id: cardToken,
-                    payer_email: cardFormData?.formData?.payer?.email || user?.email,
-                  }),
-                });
-                const body = await res.json().catch(() => ({}));
-                if (!res.ok) {
-                  const detail = body?.detail != null ? JSON.stringify(body.detail) : '';
-                  const msg = [body?.error, detail].filter(Boolean).join(' ');
-                  throw new Error(msg || `Erro ${res.status} ao criar assinatura.`);
-                }
-
-                const mpStatus = body?.subscription?.status || body?.status;
-                console.info('[subscribe] Mercado Pago pré-aprovação:', mpStatus);
-                await fetchMe();
-                if (mpStatus === 'authorized') {
-                  toast.success('Assinatura confirmada! Bem-vindo de volta.');
-                  navigate('/parent', { replace: true });
-                  return;
-                }
-                toast.info(
-                  'Pagamento registado ou em análise. Quando for autorizado pelo Mercado Pago (confirmado também pelo webhook), o acesso será activado.',
-                );
-              } catch (e) {
-                toast.error(e?.message || 'Erro ao processar assinatura.');
-              } finally {
-                setSubmitting(false);
-              }
-            },
-          },
+          body: JSON.stringify({ session_id: sessionId }),
         });
-        if (cancelled) {
-          controller.unmount();
-          return;
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          const msg = [body?.error, body?.status].filter(Boolean).join(' ');
+          throw new Error(msg || `Erro ${res.status} ao confirmar pagamento.`);
         }
-        window.cardPaymentBrickController = controller;
-        brickRef.current = controller;
+        if (cancelled) return;
+        await fetchMe();
+        await loadStripeSummary();
+        try {
+          sessionStorage.setItem(dedupeKey, '1');
+        } catch {/* */}
+        toast.success('Assinatura confirmada!');
+        setBillingSuccess(true);
+        setSearchParams({}, { replace: true });
       } catch (e) {
-        toast.error(e?.message || 'Não foi possível carregar o formulário de pagamento.');
+        if (!cancelled) {
+          syncedSessionRef.current = null;
+          toast.error(
+            e?.message
+              || 'Não foi possível confirmar o pagamento. O webhook pode activar o acesso em breve.',
+          );
+        }
+        setSearchParams({}, { replace: true });
+      } finally {
+        if (!cancelled) setSubmitting(false);
       }
     })();
 
     return () => {
       cancelled = true;
-      destroyBrick('cardPaymentBrick_container');
     };
-  }, [selected, user?.email]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [searchParams, setSearchParams, fetchMe, toast, loadStripeSummary]);
+
+  async function openBillingPortal() {
+    try {
+      setSubmitting(true);
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData?.session?.access_token;
+      const portalUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/stripe-create-portal-session`;
+      const origin = window.location.origin.replace(/\/$/, '');
+      const returnPath = isGestorContext ? `${origin}/parent/billing` : `${origin}/parent`;
+      const res = await fetch(portalUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ return_url: returnPath }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body?.error || `Erro ${res.status}`);
+      if (!body?.url) throw new Error('Resposta sem URL do portal Stripe.');
+      window.location.href = body.url;
+    } catch (e) {
+      toast.error(e?.message || 'Não foi possível abrir a gestão de cobrança.');
+      setSubmitting(false);
+    }
+  }
+
+  async function startStripeCheckout(planCode) {
+    try {
+      setSubmitting(true);
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData?.session?.access_token;
+      const createUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/stripe-create-checkout-session`;
+      const res = await fetch(createUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({ plan_code: planCode }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(body?.error || `Erro ${res.status} ao iniciar pagamento.`);
+      }
+      if (!body?.url) {
+        throw new Error('Resposta inválida do servidor (sem URL de checkout).');
+      }
+      window.location.href = body.url;
+    } catch (e) {
+      toast.error(e?.message || 'Erro ao abrir o pagamento.');
+      setSubmitting(false);
+    }
+  }
+
+  const periodEndFmt = stripeSummary?.current_period_end
+    ? new Date(stripeSummary.current_period_end * 1000).toLocaleDateString('pt-BR', {
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+    })
+    : null;
+
+  if (billingSuccess) {
+    return (
+      <div className="trial-blocked billing-subscribe billing-subscribe--wide">
+        <div className="trial-blocked__card billing-subscribe__card billing-subscribe__card--success">
+          <div className="trial-blocked__icon billing-subscribe__icon--ok">✓</div>
+          <h1 className="trial-blocked__title">Pagamento bem-sucedido</h1>
+          <p className="trial-blocked__desc" style={{ marginBottom: 18 }}>
+            A sua assinatura recorrente foi activada. Pode gerir método de pagamento e facturas com segurança no
+            Stripe, ou entrar já na Base Familiar.
+          </p>
+          <div className="billing-subscribe__actions">
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={submitting}
+              onClick={() => navigate(isGestorContext ? '/parent/billing' : '/parent', { replace: true })}
+            >
+              Continuar na app
+            </button>
+            <button type="button" className="btn btn-ghost" disabled={submitting} onClick={openBillingPortal}>
+              {submitting ? 'A abrir…' : 'Gerir cobrança no Stripe'}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const showPortalCta =
+    stripeSummary?.has_stripe_subscription
+    || (family?.subscription_status === 'active' && stripeSummary?.family_status?.stripe_customer_id);
 
   return (
-    <div className="trial-blocked">
-      <div className="trial-blocked__card" style={{ maxWidth: 540 }}>
-        <div className="trial-blocked__icon">{expired ? '⛔' : '⭐'}</div>
-        <h1 className="trial-blocked__title">
-          {expired ? 'O seu teste gratuito terminou' : 'Escolha o seu plano'}
-        </h1>
-        <p className="trial-blocked__desc">
-          {expired
-            ? 'Para continuar a usar a Base Familiar, escolha um plano e introduza os dados do cartão.'
-            : 'Garanta o seu acesso continuado escolhendo um plano abaixo.'}
-        </p>
+    <div className="trial-blocked billing-subscribe billing-subscribe--wide">
+      <div className="trial-blocked__card billing-subscribe__card">
+        <div className="billing-subscribe__hero">
+          <div className="trial-blocked__icon">{expired ? '⛔' : '💳'}</div>
+          <div>
+            <h1 className="trial-blocked__title" style={{ marginBottom: 6 }}>
+              {isGestorContext ? 'Assinatura e pagamento' : expired ? 'Renove a sua assinatura' : 'Planos Base Familiar'}
+            </h1>
+            <p className="trial-blocked__desc" style={{ marginBottom: 10 }}>
+              Pagamento seguro com cartão e métodos suportados pelo Stripe. Assinatura recorrente — pode alterar ou
+              cancelar na área de gestão do Stripe quando quiser.
+            </p>
+            <div className="billing-subscribe__status-row">
+              {statusBadge(familyBillingLabel.text, familyBillingLabel.tone)}
+              {summaryLoading && <span className="billing-subscribe__muted">A carregar detalhes Stripe…</span>}
+              {periodEndFmt && stripeSummary?.status === 'active' && !stripeSummary?.cancel_at_period_end && (
+                <span className="billing-subscribe__muted">
+                  Próxima renovação: <strong>{periodEndFmt}</strong>
+                </span>
+              )}
+              {stripeSummary?.cancel_at_period_end && (
+                <span className="billing-subscribe__muted" style={{ color: 'var(--text-light)' }}>
+                  Cancelamento agendado — permanece activo até ao fim do período pago.
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {showPortalCta && (
+          <div className="billing-subscribe__portal-bar">
+            <div>
+              <strong>Já tem assinatura Stripe</strong>
+              <p className="billing-subscribe__muted" style={{ margin: '4px 0 0', fontSize: '0.85rem' }}>
+                Actualize cartão, veja facturas ou cancele a renovação no portal oficial.
+              </p>
+            </div>
+            <button type="button" className="btn btn-primary btn-sm" disabled={submitting} onClick={openBillingPortal}>
+              Abrir portal Stripe
+            </button>
+          </div>
+        )}
 
         {!selected && (
-          <div className="trial-blocked__plans">
+          <div className="billing-subscribe__plans">
             {PLANS.map((p) => (
-              <button
+              <div
                 key={p.code}
-                className={`plan-card ${p.featured ? 'is-featured' : ''}`}
-                onClick={() => setSelected(p.code)}
+                className={`billing-subscribe__plan ${p.featured ? 'is-featured' : ''}`}
               >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                  <div className="plan-card__title">{p.label}</div>
-                  <div className="plan-card__price">{fmtBRL(p.price)}</div>
+                <div className="billing-subscribe__plan-head">
+                  <div>
+                    <div className="plan-card__title">{p.label}</div>
+                    <div className="billing-subscribe__plan-price">
+                      {fmtBRL(p.price)}
+                      <span className="billing-subscribe__interval">{p.interval}</span>
+                    </div>
+                  </div>
+                  {p.featured && <span className="billing-subscribe__pill">Recomendado</span>}
                 </div>
-                <div className="plan-card__hint">{p.hint}</div>
-              </button>
+                <p className="billing-subscribe__muted" style={{ fontSize: '0.88rem', margin: '8px 0 12px' }}>
+                  {p.hint}
+                </p>
+                <ul className="billing-subscribe__features">
+                  {p.features.map((f) => (
+                    <li key={f}>{f}</li>
+                  ))}
+                </ul>
+                <button
+                  type="button"
+                  className="btn btn-primary billing-subscribe__plan-cta"
+                  disabled={submitting}
+                  onClick={() => setSelected(p.code)}
+                >
+                  Escolher {p.label.toLowerCase()}
+                </button>
+              </div>
             ))}
           </div>
         )}
 
         {selected && (
-          <div style={{ textAlign: 'left' }}>
+          <div className="billing-subscribe__confirm">
             <button
+              type="button"
               className="btn btn-ghost btn-sm"
               onClick={() => setSelected(null)}
               disabled={submitting}
               style={{ marginBottom: 12 }}
             >
-              ← Trocar plano
+              ← Ver todos os planos
             </button>
-            <div style={{
-              padding: 12, borderRadius: 10, marginBottom: 12,
-              background: 'var(--bg)', border: '1px solid var(--border)',
-              fontSize: '0.88rem',
-            }}>
-              Plano <strong>{PLANS.find((p) => p.code === selected)?.label}</strong> — pagamento recorrente de{' '}
-              <strong>{fmtBRL(PLANS.find((p) => p.code === selected)?.price || 0)}</strong>.
+            <div className="billing-subscribe__confirm-box">
+              <h3 className="billing-subscribe__confirm-title">Confirmar e pagar</h3>
+              <p>
+                Plano <strong>{PLANS.find((p) => p.code === selected)?.label}</strong> —{' '}
+                <strong>
+                  {fmtBRL(PLANS.find((p) => p.code === selected)?.price || 0)}
+                  {PLANS.find((p) => p.code === selected)?.interval}
+                </strong>
+                .
+              </p>
+              <p className="billing-subscribe__muted" style={{ fontSize: '0.88rem' }}>
+                Será redireccionado para uma página hospedada pelo Stripe para concluir o pagamento seguro da
+                assinatura recorrente.
+              </p>
+              <button
+                type="button"
+                className="btn btn-primary"
+                style={{ width: '100%', marginTop: 12 }}
+                disabled={submitting}
+                onClick={() => startStripeCheckout(selected)}
+              >
+                {submitting ? 'A preparar checkout…' : 'Ir para Stripe Checkout'}
+              </button>
             </div>
-            <div id="cardPaymentBrick_container" />
-            {submitting && (
-              <div style={{ textAlign: 'center', marginTop: 12, color: 'var(--text-light)' }}>
-                A processar pagamento…
-              </div>
-            )}
           </div>
         )}
 
-        <div style={{ marginTop: 18, display: 'flex', gap: 10, justifyContent: 'center' }}>
+        {submitting && !selected && (
+          <p className="billing-subscribe__muted" style={{ textAlign: 'center', marginTop: 12 }}>
+            A processar…
+          </p>
+        )}
+
+        <footer className="billing-subscribe__footer">
           {!expired && !selected && (
-            <button className="btn btn-ghost" onClick={() => navigate(-1)}>
-              Voltar
-            </button>
+            <>
+              {!isGestorContext && (
+                <button type="button" className="btn btn-ghost btn-sm" onClick={() => navigate(-1)}>
+                  Voltar
+                </button>
+              )}
+              {isGestorContext && (
+                <Link to="/parent" className="btn btn-ghost btn-sm" replace>
+                  ← Painel principal
+                </Link>
+              )}
+            </>
           )}
-          <button className="btn btn-ghost" onClick={async () => { await logout(); navigate('/login'); }}>
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            onClick={async () => {
+              await logout();
+              navigate('/login');
+            }}
+          >
             Sair
           </button>
-        </div>
+          <span className="billing-subscribe__stripe-note">Pagamentos processados por Stripe</span>
+        </footer>
       </div>
     </div>
   );
