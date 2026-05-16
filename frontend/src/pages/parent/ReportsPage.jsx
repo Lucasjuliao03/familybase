@@ -1,15 +1,111 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useLanguage } from '../../contexts/LanguageContext';
 import api from '../../services/api';
+import useAutoRefresh from '../../hooks/useAutoRefresh';
 
 export default function ReportsPage() {
   const { t } = useLanguage();
+  const location = useLocation();
   const [children, setChildren] = useState([]);
   const [selectedChild, setSelectedChild] = useState('');
   const [report, setReport] = useState(null);
+  const [listLoading, setListLoading] = useState(true);
+  const [reportLoading, setReportLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [reloadTick, setReloadTick] = useState(0);
+  const blocking = listLoading || (Boolean(selectedChild) && reportLoading);
 
-  useEffect(() => { api.get('/families/children').then(r => { setChildren(r.data); if (r.data.length) setSelectedChild(r.data[0].id); }).catch(() => {}); }, []);
-  useEffect(() => { if (selectedChild) api.get(`/reports/child/${selectedChild}`).then(r => setReport(r.data)).catch(() => {}); }, [selectedChild]);
+  /** Lista de dependentes sempre que volta à rota `/parent/reports`. */
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setListLoading(true);
+      setError('');
+      try {
+        const kidsRes = await api.get('/families/children');
+        const kidRows = Array.isArray(kidsRes?.data) ? kidsRes.data : [];
+        if (cancelled) return;
+        setChildren(kidRows);
+        setSelectedChild((prev) => {
+          const stillOk = kidRows.some((k) => k.id === prev);
+          if (stillOk) return prev;
+          return kidRows[0]?.id || '';
+        });
+      } catch (_) {
+        if (!cancelled) {
+          setError(t('error_occurred') || 'Erro ao carregar relatórios');
+          setChildren([]);
+          setSelectedChild('');
+        }
+      } finally {
+        if (!cancelled) setListLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [location.pathname, t, reloadTick]);
+
+  /** Detalhes do relatório sempre que mudar o filho selecionado. */
+  useEffect(() => {
+    if (!selectedChild) {
+      setReport(null);
+      setReportLoading(false);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      setReportLoading(true);
+      setError('');
+      try {
+        const repRes = await api.get(`/reports/child/${selectedChild}`);
+        if (!cancelled) setReport(repRes.data || null);
+      } catch (_) {
+        if (!cancelled) {
+          setError(t('error_occurred') || 'Erro ao carregar relatório');
+          setReport(null);
+        }
+      } finally {
+        if (!cancelled) setReportLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedChild, t]);
+
+  const reloadFromVisibility = useCallback(async () => {
+    if (!selectedChild) return;
+    try {
+      const repRes = await api.get(`/reports/child/${selectedChild}`);
+      setReport(repRes.data || null);
+    } catch {
+      /* manter relatório último válido para não flicker fantasma em rede instável */
+    }
+  }, [selectedChild]);
+
+  useAutoRefresh(reloadFromVisibility, 2600, { includeRouteChanges: false });
+
+  if (blocking && !report) {
+    return (
+      <div className="flex-center" style={{ padding: 60, flexDirection: 'column', gap: 12 }}>
+        <span style={{ fontSize: '2rem' }}>⏳</span>
+        <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>{t('loading') || 'A carregar…'}</p>
+      </div>
+    );
+  }
+
+  if (error && !report) {
+    return (
+      <div className="flex-center" style={{ padding: 60, flexDirection: 'column', gap: 12 }}>
+        <p style={{ color: 'var(--danger)', fontWeight: 600 }}>{error}</p>
+        <button type="button" className="btn btn-primary btn-sm" onClick={() => setReloadTick((n) => n + 1)}>
+          Tentar novamente
+        </button>
+      </div>
+    );
+  }
 
   const exportCSV = async (type) => {
     try {
@@ -22,8 +118,6 @@ export default function ReportsPage() {
       const a = document.createElement('a'); a.href = url; a.download = `${type}_report.csv`; a.click(); URL.revokeObjectURL(url);
     } catch {}
   };
-
-  if (!report) return <div className="flex-center" style={{padding:60}}><span style={{fontSize:'2rem'}}>⏳</span></div>;
 
   return (
     <div className="animate-fade-in">
@@ -77,13 +171,15 @@ export default function ReportsPage() {
 
       <div className="card">
         <h3 className="card-title mb-16">📋 {t('recent_activity')}</h3>
-        {report.history.map(h => (
+        {report.history && report.history.length > 0
+          ? report.history.map((h) => (
           <div key={h.id} className="flex-between" style={{padding:'8px 0',borderBottom:'1px solid var(--border)'}}>
             <span style={{fontSize:'0.88rem'}}>{h.event}</span>
             <div className="flex gap-8">{h.points !== 0 && <span className={`badge ${h.points > 0 ? 'badge-success' : 'badge-danger'}`}>{h.points > 0 ? '+' : ''}{h.points}</span>}
               <span style={{fontSize:'0.75rem',color:'var(--text-light)'}}>{new Date(h.created_at).toLocaleDateString('pt-BR')}</span></div>
           </div>
-        ))}
+          ))
+          : <p style={{color:'var(--text-light)'}}>{t('no_activity') || 'Sem actividade registada.'}</p>}
       </div>
     </div>
   );

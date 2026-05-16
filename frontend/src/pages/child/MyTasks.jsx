@@ -1,11 +1,14 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useToast } from '../../contexts/ToastContext';
 import api from '../../services/api';
+import useAutoRefresh from '../../hooks/useAutoRefresh';
 
 export default function MyTasks() {
   const { childProfile } = useAuth();
+  const location = useLocation();
   const { t } = useLanguage();
   const toast = useToast();
   const [occurrences, setOccurrences] = useState([]);
@@ -13,7 +16,7 @@ export default function MyTasks() {
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState({ title: '', description: '', type: 'routine', due_time: '' });
 
-  const fetchTasks = async () => {
+  const fetchTasks = useCallback(async () => {
     try {
       const d = new Date();
       const todayStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -23,9 +26,11 @@ export default function MyTasks() {
       const { data } = await api.get('/tasks/occurrences', { params });
       setOccurrences(data);
     } catch (e) { console.error(e); }
-  };
+  }, [filter, childProfile?.id]);
 
-  useEffect(() => { fetchTasks(); }, [filter, childProfile?.id]);
+  useEffect(() => { fetchTasks(); }, [fetchTasks, location.pathname]);
+
+  useAutoRefresh(fetchTasks, 2600, { includeRouteChanges: false });
 
   const handleComplete = async (id) => {
     try {

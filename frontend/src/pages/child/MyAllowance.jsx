@@ -49,7 +49,8 @@ export default function MyAllowance() {
   }, [childProfile?.id]);
 
   useEffect(() => { if (childProfile) fetchData(); }, [childProfile, fetchData]);
-  useAutoRefresh(fetchData);
+  /** Reforço ao regressar ao app (sem duplicar o mount/rota quando childProfile atualiza). */
+  useAutoRefresh(fetchData, 2500, { includeRouteChanges: false });
 
   const handleSaveGoal = async (e) => {
     e.preventDefault();

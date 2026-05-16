@@ -31,7 +31,7 @@ const NAV_SECTIONS = [
 ];
 
 export default function ChildLayout() {
-  const { user, childProfile, family, logout, modules } = useAuth();
+  const { user, childProfile, family, logout, modules, fetchMe } = useAuth();
   const { t, lang, switchLanguage } = useLanguage();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -146,7 +146,7 @@ export default function ChildLayout() {
                   endpoint="/auth/avatar"
                   size="md"
                   onSave={() => {
-                    window.location.reload();
+                    fetchMe?.();
                   }}
                 />
               </div>

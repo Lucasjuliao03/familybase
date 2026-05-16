@@ -58,10 +58,10 @@ export default function ChildDashboard() {
 
   useEffect(() => {
     loadDashboard();
-  }, [loadDashboard, location.pathname, location.key]);
+  }, [loadDashboard]);
 
-  /** Tab visível ou foco: reforço sem obrigar F5 manual. */
-  useAutoRefresh(loadDashboard, 800);
+  /** Reforço tab/foco/offline sem duplo fetch na entrada (pathname já coberto pelo efecto anterior). */
+  useAutoRefresh(loadDashboard, 800, { includeRouteChanges: false });
 
   const child = profile?.child || childProfile;
   if (!child) return <div className="flex-center" style={{ padding: 60, fontSize: '2rem' }}>⏳</div>;

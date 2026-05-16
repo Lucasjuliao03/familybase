@@ -1,4 +1,4 @@
-import { useState, useEffect, memo, useMemo, useCallback } from 'react';
+import { useState, memo, useMemo, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useAuth } from '../../contexts/AuthContext';
@@ -86,7 +86,6 @@ export default function ParentDashboard() {
     catch {} finally { setLoading(false); }
   }, []);
 
-  useEffect(() => { fetchDashboard(); }, [fetchDashboard]);
   useAutoRefresh(fetchDashboard);
 
   // IMPORTANTE: todos os hooks têm de vir ANTES de qualquer return (Rules of Hooks).

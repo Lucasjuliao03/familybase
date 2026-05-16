@@ -1,11 +1,14 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useToast } from '../../contexts/ToastContext';
 import api from '../../services/api';
+import useAutoRefresh from '../../hooks/useAutoRefresh';
 
 export default function MyFamilyShop() {
   const { childProfile } = useAuth();
+  const location = useLocation();
   const { t } = useLanguage();
   const toast = useToast();
 
@@ -13,7 +16,8 @@ export default function MyFamilyShop() {
   const [rewards, setRewards] = useState([]);
   const [redemptions, setRedemptions] = useState([]);
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
+    if (!childProfile) return;
     try {
       const [rRew, rRed] = await Promise.all([
         api.get('/allowance/rewards/list'),
@@ -25,11 +29,13 @@ export default function MyFamilyShop() {
       console.error(e);
       toast.error(t('error_occurred'));
     }
-  };
+  }, [childProfile, t, toast]);
 
   useEffect(() => {
-    if (childProfile) fetchData();
-  }, [childProfile]);
+    fetchData();
+  }, [fetchData, location.pathname]);
+
+  useAutoRefresh(fetchData, 2600, { includeRouteChanges: false });
 
   const handleRedeem = async (rewardId) => {
     try {

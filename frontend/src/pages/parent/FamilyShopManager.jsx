@@ -1,11 +1,14 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useToast } from '../../contexts/ToastContext';
 import api from '../../services/api';
+import useAutoRefresh from '../../hooks/useAutoRefresh';
 
 export default function FamilyShopManager() {
   const { t } = useLanguage();
   const toast = useToast();
+  const location = useLocation();
 
   const [rewards, setRewards] = useState([]);
   const [redemptions, setRedemptions] = useState([]);
@@ -14,7 +17,7 @@ export default function FamilyShopManager() {
   const initialRewardForm = { id: null, name: '', point_cost: 50, type: 'non_financial', icon: '🎁', is_active: 1 };
   const [rewardForm, setRewardForm] = useState(initialRewardForm);
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     try {
       const [rRewards, rReds] = await Promise.all([
         api.get('/allowance/rewards/list'),
@@ -26,11 +29,13 @@ export default function FamilyShopManager() {
       console.error(e);
       toast.error(t('error_occurred'));
     }
-  };
+  }, [t, toast]);
 
   useEffect(() => {
     fetchData();
-  }, []);
+  }, [fetchData, location.pathname]);
+
+  useAutoRefresh(fetchData, 2600, { includeRouteChanges: false });
 
   const handleSaveReward = async (e) => {
     e.preventDefault();

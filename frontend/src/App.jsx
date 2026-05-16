@@ -102,7 +102,7 @@ function SubscribeGateway() {
 
 function ProtectedRoute({ children, allowedRoles }) {
   const { user, family, effectiveSubscription, loading } = useAuth();
-  if (loading) return <Spinner />;
+  if (loading) return <AuthLoading message={message ?? 'A carregar…'} />;
   if (!user) return <Navigate to="/login" replace />;
 
   if (user.role !== 'master') {

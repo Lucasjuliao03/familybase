@@ -1,4 +1,5 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useToast } from '../../contexts/ToastContext';
 import api from '../../services/api';
@@ -6,10 +7,12 @@ import { calendarEventAccentColor } from '../../lib/userDisplayColors';
 import getHolidays from '../../lib/brazilianHolidays';
 import FamilyCalendarBoard from '../../components/calendar/FamilyCalendarBoard';
 import { deriveCalendarRange, normalizeAnchorMidday, formatLocalYMD } from '../../lib/familyCalendarRange';
+import useAutoRefresh from '../../hooks/useAutoRefresh';
 
 export default function MyCalendar() {
   const { t } = useLanguage();
   const toast = useToast();
+  const location = useLocation();
   const [events, setEvents] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState({
@@ -33,6 +36,15 @@ export default function MyCalendar() {
   const holidayYear = anchorDate.getFullYear();
   const holidays = useMemo(() => getHolidays(holidayYear), [holidayYear]);
 
+  const reloadCalendarRange = useCallback(async () => {
+    try {
+      const { data } = await api.get('/calendar', { params: calendarParams });
+      setEvents(data || []);
+    } catch (_) {
+      /* rede / RLS transitório — mantemos lista anterior até novo sucesso */
+    }
+  }, [calendarParams]);
+
   useEffect(() => {
     let cancelled = false;
     setCalendarLoading(true);
@@ -48,7 +60,9 @@ export default function MyCalendar() {
     return () => {
       cancelled = true;
     };
-  }, [calendarParams]);
+  }, [calendarParams, location.pathname]);
+
+  useAutoRefresh(reloadCalendarRange, 2600, { includeRouteChanges: false });
 
   const todayStr = formatLocalYMD(new Date());
 
@@ -57,12 +71,7 @@ export default function MyCalendar() {
     [events, todayStr],
   );
 
-  const fetchEventsNow = async () => {
-    try {
-      const { data } = await api.get('/calendar', { params: calendarParams });
-      setEvents(data || []);
-    } catch (_) {}
-  };
+  const fetchEventsNow = reloadCalendarRange;
 
   const handleSubmit = async (e) => {
     e.preventDefault();

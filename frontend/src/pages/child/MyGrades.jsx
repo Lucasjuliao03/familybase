@@ -1,7 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useToast } from '../../contexts/ToastContext';
 import api from '../../services/api';
+import useAutoRefresh from '../../hooks/useAutoRefresh';
 
 const PREDEFINED_SUBJECTS = [
   'Matemática', 'Português', 'Ciências', 'História', 'Geografia',
@@ -12,22 +14,32 @@ const PREDEFINED_SUBJECTS = [
 export default function MyGrades() {
   const { t } = useLanguage();
   const toast = useToast();
+  const location = useLocation();
   const [grades, setGrades] = useState([]);
   const [subjectOptions, setSubjectOptions] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState({ subject: '', type: 'test', score: '', max_score: '10', concept: '', observation: '', date: '' });
 
-  const fetchGrades = async () => {
-    try { const { data } = await api.get('/grades'); setGrades(data); } catch {}
-  };
+  const loadBundle = useCallback(async () => {
+    try {
+      const { data } = await api.get('/grades');
+      setGrades(data || []);
+    } catch {
+      /* manter vista anterior até novo sucesso */
+    }
+    api.get('/grades/subjects')
+      .then((r) => {
+        const existing = (r.data || []).filter((s) => !PREDEFINED_SUBJECTS.includes(s));
+        setSubjectOptions([...PREDEFINED_SUBJECTS, ...existing]);
+      })
+      .catch(() => setSubjectOptions(PREDEFINED_SUBJECTS));
+  }, []);
 
   useEffect(() => {
-    fetchGrades();
-    api.get('/grades/subjects').then(r => {
-      const existing = r.data.filter(s => !PREDEFINED_SUBJECTS.includes(s));
-      setSubjectOptions([...PREDEFINED_SUBJECTS, ...existing]);
-    }).catch(() => setSubjectOptions(PREDEFINED_SUBJECTS));
-  }, []);
+    loadBundle();
+  }, [loadBundle, location.pathname]);
+
+  useAutoRefresh(loadBundle, 2600, { includeRouteChanges: false });
 
   const handleCreate = async (e) => {
     e.preventDefault();
@@ -40,7 +52,7 @@ export default function MyGrades() {
       toast.success('Nota cadastrada! 📚');
       setShowModal(false);
       setForm({ subject: '', type: 'test', score: '', max_score: '10', concept: '', observation: '', date: '' });
-      fetchGrades();
+      loadBundle();
     } catch (err) { toast.error(err.response?.data?.error || t('error_occurred')); }
   };
 

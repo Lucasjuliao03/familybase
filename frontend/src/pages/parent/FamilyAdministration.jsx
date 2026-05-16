@@ -94,7 +94,7 @@ export default function FamilyAdministration() {
     } catch (e) {
       toast.error(t('error_occurred'));
     }
-  }, [toast, t]);
+  }, [toast, t, user?.family_id]);
 
   useEffect(() => {
     loadAll();

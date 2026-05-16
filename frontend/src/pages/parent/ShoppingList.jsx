@@ -46,7 +46,8 @@ export default function ShoppingList() {
   }, [toast]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
-  useAutoRefresh(useCallback(() => fetchData({ silent: true }), [fetchData]));
+  /** Ciclo vida (tabs); navegação remonta página e volta a usar o mesmo useEffect — sem throttle aqui. */
+  useAutoRefresh(useCallback(() => fetchData({ silent: true }), [fetchData]), 2500, { includeRouteChanges: false });
 
   const handleCreateOrEdit = async (e) => {
     e.preventDefault();

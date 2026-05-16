@@ -1,4 +1,5 @@
-import { supabase } from '../lib/supabase';
+import { supabase, fetchNoStore } from '../lib/supabase';
+import { famDiagWarn } from '../lib/famDiag';
 import { createClient } from '@supabase/supabase-js';
 import {
   dedupeEarnedMedalsForDisplay,
@@ -11,7 +12,8 @@ const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 
 // Cliente secundário para permitir registo de novos membros/crianças sem encerrar a sessão atual (master/parent)
 const supabaseSecondary = BASE_URL && ANON_KEY ? createClient(BASE_URL, ANON_KEY, {
-  auth: { persistSession: false, autoRefreshToken: false }
+  auth: { persistSession: false, autoRefreshToken: false },
+  global: { fetch: fetchNoStore },
 }) : null;
 
 /** URL pública Supabase Storage (bucket path sem barra inicial). */
@@ -35,18 +37,52 @@ function uuidv4() {
   });
 }
 
-async function getFamilyId() {
-  const { data: { session } } = await supabase.auth.getSession();
-  if (!session) return null;
-  const { data } = await supabase.from('users').select('family_id').eq('id', session.user.id).single();
-  return data?.family_id;
+async function refreshSessionForApiGate() {
+  try {
+    const { error } = await supabase.auth.refreshSession();
+    if (error && import.meta.env.DEV) {
+      console.warn('[Familia:api] refreshSession (gate)', error.message);
+    }
+  } catch {
+    /* rede pausada / WebView suspensa */
+  }
+}
+
+/**
+ * Garante família atual após pequenas janelas em que getSession falha ou RT ainda renova token.
+ */
+async function getFamilyId(opts = {}) {
+  const tries = opts.tries ?? 4;
+  for (let i = 0; i < tries; i++) {
+    const {
+      data: { session },
+      error: sessErr,
+    } = await supabase.auth.getSession();
+    const uid = session?.user?.id;
+    if (!sessErr && uid) {
+      const { data, error } = await supabase.from('users').select('family_id').eq('id', uid).single();
+      if (!error && data?.family_id) return data.family_id;
+    }
+    if (i === 1) await refreshSessionForApiGate();
+    await new Promise((r) => setTimeout(r, 90 + i * 110));
+  }
+  famDiagWarn('api/getFamilyId', 'null_after_retries');
+  return null;
 }
 
 async function getUserRole() {
-  const { data: { session } } = await supabase.auth.getSession();
-  if (!session) return null;
-  const { data } = await supabase.from('users').select('role').eq('id', session.user.id).single();
-  return data?.role || null;
+  for (let i = 0; i < 3; i++) {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    if (session?.user?.id) {
+      const { data } = await supabase.from('users').select('role').eq('id', session.user.id).single();
+      if (data?.role) return data.role;
+    }
+    if (i === 1) await refreshSessionForApiGate();
+    await new Promise((r) => setTimeout(r, 80 + i * 100));
+  }
+  return null;
 }
 
 async function getChildIdForLoggedInUser(userId, familyId) {

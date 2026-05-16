@@ -1,6 +1,15 @@
 import { createClient } from '@supabase/supabase-js';
 
 /**
+ * fetch que evita respostas stale do cache HTTP intermediário ou do browser ( importante em PWA ).
+ */
+export function fetchNoStore(input, options = {}) {
+  const merged = typeof options === 'object' && options !== null ? { ...options } : {};
+  if (merged.cache == null) merged.cache = 'no-store';
+  return fetch(input, merged);
+}
+
+/**
  * URL que o browser usa para Auth/REST/Storage/Functions.
  * Em produção comercial: aponte para o proxy do teu backend, ex. https://api.teudominio.com/api/supabase
  * (o servidor define SUPABASE_URL com https://<ref>.supabase.co e resolve o DNS).
@@ -36,5 +45,8 @@ export const supabase = createClient(supabaseUrl || '', supabaseAnonKey || '', {
     persistSession: true,
     autoRefreshToken: true,
     detectSessionInUrl: true,
+  },
+  global: {
+    fetch: fetchNoStore,
   },
 });

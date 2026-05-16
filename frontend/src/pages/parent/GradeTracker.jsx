@@ -1,8 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useToast } from '../../contexts/ToastContext';
 import api, { publicAssetUrl } from '../../services/api';
 import { PRESET_AVATARS } from '../../components/AvatarPicker';
+import useAutoRefresh from '../../hooks/useAutoRefresh';
 
 const PREDEFINED_SUBJECTS = [
   'Matemática', 'Português', 'Ciências', 'História', 'Geografia',
@@ -13,6 +15,7 @@ const PREDEFINED_SUBJECTS = [
 export default function GradeTracker() {
   const { t } = useLanguage();
   const toast = useToast();
+  const location = useLocation();
   const [grades, setGrades] = useState([]);
   const [children, setChildren] = useState([]);
   const [subjectOptions, setSubjectOptions] = useState([]);
@@ -20,25 +23,35 @@ export default function GradeTracker() {
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState({ subject: '', type: 'test', score: '', max_score: 10, concept: '', observation: '', date: '', child_id: '' });
 
-  const fetchGrades = async () => {
-    const params = {}; if (filterChild) params.child_id = filterChild;
-    try { const { data } = await api.get('/grades', { params }); setGrades(data); } catch {}
-  };
+  const loadGradesBundle = useCallback(async () => {
+    const params = {};
+    if (filterChild) params.child_id = filterChild;
+    try {
+      const { data } = await api.get('/grades', { params });
+      setGrades(data || []);
+    } catch {
+      /* RLS/transiente: mantemos lista anterior até novo sucesso */
+    }
+    api.get('/families/children').then((r) => setChildren(r.data || [])).catch(() => {});
+    api.get('/grades/subjects')
+      .then((r) => {
+        const existing = (r.data || []).filter((s) => !PREDEFINED_SUBJECTS.includes(s));
+        setSubjectOptions([...PREDEFINED_SUBJECTS, ...existing]);
+      })
+      .catch(() => setSubjectOptions(PREDEFINED_SUBJECTS));
+  }, [filterChild]);
 
   useEffect(() => {
-    fetchGrades();
-    api.get('/families/children').then(r => setChildren(r.data)).catch(() => {});
-    api.get('/grades/subjects').then(r => {
-      const existing = r.data.filter(s => !PREDEFINED_SUBJECTS.includes(s));
-      setSubjectOptions([...PREDEFINED_SUBJECTS, ...existing]);
-    }).catch(() => setSubjectOptions(PREDEFINED_SUBJECTS));
-  }, [filterChild]);
+    loadGradesBundle();
+  }, [loadGradesBundle, location.pathname]);
+
+  useAutoRefresh(loadGradesBundle, 2600, { includeRouteChanges: false });
 
   const handleCreate = async (e) => {
     e.preventDefault();
     try {
       await api.post('/grades', { ...form, score: parseFloat(form.score), max_score: parseFloat(form.max_score) });
-      toast.success(t('grade_added')); setShowModal(false); fetchGrades();
+      toast.success(t('grade_added')); setShowModal(false); loadGradesBundle();
       setForm({ subject: '', type: 'test', score: '', max_score: 10, concept: '', observation: '', date: '', child_id: '' });
     } catch { toast.error(t('error_occurred')); }
   };

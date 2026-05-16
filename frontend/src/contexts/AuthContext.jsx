@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
 import { supabase, mapAuthNetworkError } from '../lib/supabase';
+import { famDiag } from '../lib/famDiag';
 
 const AuthContext = createContext(null);
 
@@ -306,6 +307,7 @@ export function AuthProvider({ children }) {
         if (hydrateId !== authHydrateSeqRef.current) return;
         if (error) throw error;
         if (session?.user) {
+          famDiag('auth/hydrate', 'session_ok');
           const em =
             session.user.email ||
             session.user.user_metadata?.email ||
@@ -313,6 +315,7 @@ export function AuthProvider({ children }) {
             '';
           await loadUserProfile(session.user.id, em);
         } else {
+          famDiag('auth/hydrate', 'session_empty');
           clearState();
         }
       } catch (e) {

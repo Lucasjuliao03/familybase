@@ -1,7 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useToast } from '../../contexts/ToastContext';
 import api from '../../services/api';
+import useAutoRefresh from '../../hooks/useAutoRefresh';
 
 const DAYS = [
   { label: 'Dom', value: 0 }, { label: 'Seg', value: 1 }, { label: 'Ter', value: 2 },
@@ -19,6 +21,7 @@ const initialForm = {
 export default function TaskManager() {
   const { t } = useLanguage();
   const toast = useToast();
+  const location = useLocation();
   const [tasks, setTasks] = useState([]);
   const [occurrences, setOccurrences] = useState([]);
   const [children, setChildren] = useState([]);
@@ -28,7 +31,7 @@ export default function TaskManager() {
   const [editTask, setEditTask] = useState(null);
   const [form, setForm] = useState(initialForm);
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     try {
       const params = {};
       if (filter.child_id) params.child_id = filter.child_id;
@@ -42,12 +45,14 @@ export default function TaskManager() {
       setTasks(rTasks.data);
       setOccurrences(rOcc.data);
     } catch (e) { console.error(e); }
-  };
+  }, [filter]);
 
   useEffect(() => {
     fetchData();
     api.get('/families/children').then(r => setChildren(r.data)).catch(() => {});
-  }, [filter]);
+  }, [fetchData, location.pathname]);
+
+  useAutoRefresh(fetchData, 2600, { includeRouteChanges: false });
 
   const handleCreate = async (e) => {
     e.preventDefault();

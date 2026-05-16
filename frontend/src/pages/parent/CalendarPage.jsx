@@ -2,16 +2,19 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useToast } from '../../contexts/ToastContext';
 import { useAuth } from '../../contexts/AuthContext';
+import { useLocation } from 'react-router-dom';
 import api from '../../services/api';
 import { calendarEventAccentColor } from '../../lib/userDisplayColors';
 import getHolidays from '../../lib/brazilianHolidays';
 import { deriveCalendarRange, normalizeAnchorMidday } from '../../lib/familyCalendarRange';
 import FamilyCalendarBoard from '../../components/calendar/FamilyCalendarBoard';
+import useAutoRefresh from '../../hooks/useAutoRefresh';
 
 export default function CalendarPage() {
   const { t } = useLanguage();
   const toast = useToast();
   const { user } = useAuth();
+  const location = useLocation();
   const defaultEventColor = useMemo(() => user?.display_color || '#6C5CE7', [user?.display_color]);
 
   const [events, setEvents] = useState([]);
@@ -56,7 +59,7 @@ export default function CalendarPage() {
 
   useEffect(() => {
     api.get('/families/children').then((r) => setChildren(r.data)).catch(() => {});
-  }, []);
+  }, [location.pathname]);
 
   useEffect(() => {
     const p = tab === 'calendar' ? calendarParams : historyParams;
@@ -85,6 +88,8 @@ export default function CalendarPage() {
       setEvents(data || []);
     } catch (_) {}
   }, [tab, calendarParams, historyParams]);
+
+  useAutoRefresh(refreshCurrentRange, 2600, { includeRouteChanges: false });
 
   const handleSave = async (e) => {
     e.preventDefault();

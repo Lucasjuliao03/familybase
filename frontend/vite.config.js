@@ -40,15 +40,14 @@ export default defineConfig({
         importScripts: ['/sw-push-import.js'],
         runtimeCaching: [
           {
-            // NUNCA incluir /auth/v1/ — cache de refresh token quebra sessão e gera erros no bundle (ex.: pages-child).
+            // Dados devem sempre ir à rede; NetworkFirst pode servir respostas antigas após timeout e “congelar” a SPA.
+            // NUNCA incluir /auth/v1/ aqui nem em cache manual (refresh token quebra sessão).
             urlPattern: /^https:\/\/[a-z0-9-]+\.supabase\.co\/(rest\/v1|storage\/v1|functions\/v1)\//i,
-            handler: 'NetworkFirst',
-            options: { cacheName: 'supabase-api', networkTimeoutSeconds: 10 },
+            handler: 'NetworkOnly',
           },
           {
             urlPattern: /^https?:\/\/[^/]+\/api\/supabase\/.*/i,
-            handler: 'NetworkFirst',
-            options: { cacheName: 'supabase-api-proxy', networkTimeoutSeconds: 10 },
+            handler: 'NetworkOnly',
           },
           {
             urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
