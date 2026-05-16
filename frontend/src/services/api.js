@@ -750,10 +750,10 @@ async function ensureDailyOccurrencesForDate(supabase, familyId, ymd) {
   const chunkSize = 40;
   for (let i = 0; i < rows.length; i += chunkSize) {
     const chunk = rows.slice(i, i + chunkSize);
-    await supabase
+    const { error: upDailyErr } = await supabase
       .from('task_occurrences')
-      .upsert(chunk, { onConflict: 'task_id,child_id,occurrence_date', ignoreDuplicates: true })
-      .catch(() => {});
+      .upsert(chunk, { onConflict: 'task_id,child_id,occurrence_date', ignoreDuplicates: true });
+    if (upDailyErr && import.meta.env.DEV) console.warn('[tasks] ensure occurrences:', upDailyErr.message);
   }
 }
 
@@ -2250,7 +2250,8 @@ const api = {
           child_id: cid,
           family_id: familyId,
         }));
-        await supabase.from('relative_children').insert(rows).catch(() => {});
+        const { error: relChildErr } = await supabase.from('relative_children').insert(rows);
+        if (relChildErr && import.meta.env.DEV) console.warn('[families] relative_children:', relChildErr.message);
       }
 
       await new Promise((r) => setTimeout(r, 200));
@@ -2752,10 +2753,11 @@ const api = {
       const { data, error } = await supabase.from('users').update(patch).eq('id', uid).eq('family_id', familyId).eq('role', 'relative').select().single();
       if (error) throw new Error(error.message);
       if (body.relationship != null) {
-        await supabase.from('family_members').upsert(
+        const { error: famMemErr } = await supabase.from('family_members').upsert(
           { family_id: familyId, user_id: uid, relationship: body.relationship },
           { onConflict: 'family_id,user_id' },
-        ).catch(() => {});
+        );
+        if (famMemErr && import.meta.env.DEV) console.warn('[families] family_members:', famMemErr.message);
       }
       if (Array.isArray(body.linked_child_ids)) {
         await supabase.from('relative_children').delete().eq('relative_user_id', uid).eq('family_id', familyId);
@@ -2765,7 +2767,10 @@ const api = {
           child_id: cid,
           family_id: familyId,
         }));
-        if (rows.length) await supabase.from('relative_children').insert(rows).catch(() => {});
+        if (rows.length) {
+          const { error: relRowsErr } = await supabase.from('relative_children').insert(rows);
+          if (relRowsErr && import.meta.env.DEV) console.warn('[families] relative_children:', relRowsErr.message);
+        }
       }
       return { data };
     }
