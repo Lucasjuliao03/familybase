@@ -1,5 +1,10 @@
 import { supabase } from '../lib/supabase';
 import { createClient } from '@supabase/supabase-js';
+import {
+  dedupeEarnedMedalsForDisplay,
+  dedupeMedalsForAwardingCatalog,
+  normalizedMedalDedupeKey,
+} from '../lib/childDashboardDedupe';
 
 const BASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
 const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
@@ -156,23 +161,35 @@ async function checkAndAwardMedals(supabase, childId, familyId, currentStreak) {
 
     if (!medals?.length) return;
 
-    // Medalhas já conquistadas
-    const { data: earned } = await supabase
+    const catalog = dedupeMedalsForAwardingCatalog(medals);
+
+    // Conquistas já cobertas (vários medal_id na BD podem ser a mesma conquista)
+    const { data: earnedRows } = await supabase
       .from('earned_medals')
-      .select('medal_id')
+      .select('medal_id, medals(*)')
       .eq('child_id', childId);
-    const earnedIds = new Set((earned || []).map(e => e.medal_id));
+    const earnedIds = new Set((earnedRows || []).map((e) => e.medal_id));
+    const earnedKeys = new Set();
+    for (const e of earnedRows || []) {
+      let md = e.medals;
+      if (Array.isArray(md)) md = md[0];
+      const k = md ? normalizedMedalDedupeKey(md) : '';
+      if (k) earnedKeys.add(k);
+    }
 
     const toAward = [];
     let bonusPoints = 0;
 
-    for (const medal of medals) {
+    for (const medal of catalog) {
+      const achievementKey = normalizedMedalDedupeKey(medal);
+      if (achievementKey && earnedKeys.has(achievementKey)) continue;
       if (earnedIds.has(medal.id)) continue;
       let qualified = false;
       if (medal.requirement_type === 'task_count' && taskCount >= (medal.requirement_value || 1)) qualified = true;
       if (medal.requirement_type === 'task_streak' && currentStreak >= (medal.requirement_value || 1)) qualified = true;
       if (qualified) {
         toAward.push({ id: uuidv4(), medal_id: medal.id, child_id: childId });
+        if (achievementKey) earnedKeys.add(achievementKey);
         bonusPoints += medal.extra_points || 0;
       }
     }
@@ -397,7 +414,80 @@ function dedupeCalendarEvents(rows) {
   return [...byId.values()];
 }
 
-/** Gera ocorrências após criar tarefa (sem cron no Supabase). */
+/** Janela (dias civis) em que criamos várias linhas para recorrências não-diárias. */
+const RECURRING_MATERIALIZE_OTHER_DAYS = 14;
+
+function occurrenceInsideTaskCalendarBounds(task, ymd) {
+  const sd = normalizeDbDate(task.start_date);
+  const ed = task.end_date ? normalizeDbDate(task.end_date) : null;
+  const d = normalizeDbDate(ymd);
+  if (!sd || !d) return false;
+  if (d < sd) return false;
+  if (ed && d > ed) return false;
+  return true;
+}
+
+/**
+ * Garante uma linha de ocorrência PENDING por (tarefa diária × criança × dia).
+ * “Amanhã aparece outra”: não materializamos 365 dias à frente.
+ */
+async function ensureDailyOccurrencesForDate(supabase, familyId, ymd) {
+  const d = String(ymd || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return;
+  const { data: tasks, error } = await supabase
+    .from('tasks')
+    .select('id, child_id, start_date, end_date, frequency, is_recurring, due_time')
+    .eq('family_id', familyId)
+    .eq('is_recurring', true)
+    .eq('frequency', 'daily');
+  if (error || !(tasks || []).length) return;
+  const rows = [];
+  for (const t of tasks) {
+    if (!t.child_id) continue;
+    if (!occurrenceInsideTaskCalendarBounds(t, d)) continue;
+    const timePart = t.due_time ? normalizeTimeForDb(t.due_time) : null;
+    rows.push({
+      id: uuidv4(),
+      task_id: t.id,
+      family_id: familyId,
+      child_id: t.child_id,
+      occurrence_date: d,
+      due_datetime: timePart ? `${d}T${timePart}` : null,
+      status: 'pending',
+    });
+  }
+  const chunkSize = 40;
+  for (let i = 0; i < rows.length; i += chunkSize) {
+    const chunk = rows.slice(i, i + chunkSize);
+    await supabase
+      .from('task_occurrences')
+      .upsert(chunk, { onConflict: 'task_id,child_id,occurrence_date', ignoreDuplicates: true })
+      .catch(() => {});
+  }
+}
+
+function dedupeOccurrencesSameTaskSameDay(rows) {
+  const m = new Map();
+  const score = (r) => {
+    const ts = Number(new Date(r.updated_at || r.created_at || 0).getTime()) || 0;
+    let w = ts / 1e15;
+    if (r.status === 'pending' || r.status === 'delayed' || r.status === 'in_progress') w += 10;
+    return w;
+  };
+  for (const r of rows || []) {
+    if (!r?.task_id || !r?.occurrence_date) {
+      m.set(r?.id ?? `__anon_${m.size}`, r);
+      continue;
+    }
+    const day = normalizeDbDate(r.occurrence_date);
+    const k = `${r.task_id}|${day}`;
+    const prev = m.get(k);
+    if (!prev || score(r) >= score(prev)) m.set(k, r);
+  }
+  return [...m.values()];
+}
+
+/** Gera ocorrências ao criar tarefa — diárias: só o dia corrente (ou o primeiro dia se ainda no futuro). */
 function computeOccurrenceDatesForTask(task) {
   const out = [];
   const add = (s) => {
@@ -413,7 +503,7 @@ function computeOccurrenceDatesForTask(task) {
   const startStr = task.start_date || toYMDLocal();
   const start = parseLocal(startStr);
   const endStr = task.end_date;
-  const end = endStr ? parseLocal(endStr) : new Date(start.getTime() + 120 * 86400000);
+  const end = endStr ? parseLocal(endStr) : new Date(start.getTime() + 365 * 86400000);
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const freq = task.frequency || 'once';
@@ -427,24 +517,39 @@ function computeOccurrenceDatesForTask(task) {
     return out;
   }
 
+  if (freq === 'daily') {
+    const todayY = toYMDLocal();
+    const sd = normalizeDbDate(startStr) || toYMDLocal(start);
+    let targetDay;
+    if (todayY < sd) targetDay = sd;
+    else if (occurrenceInsideTaskCalendarBounds(task, todayY)) targetDay = todayY;
+    else return []; // intervalo já terminado — sem ocorrências a criar
+    add(targetDay);
+    return out.sort();
+  }
+
+  /** Semanal/mensal/outras — janela curta para não criar meses de pendentes. */
   let iter = new Date(Math.min(start.getTime(), today.getTime()));
-  const limit = new Date(Math.max(today.getTime(), start.getTime()) + 45 * 86400000);
+  iter.setHours(0, 0, 0, 0);
+  const horizon = RECURRING_MATERIALIZE_OTHER_DAYS * 86400000;
+  const limit = new Date(Math.max(today.getTime(), start.getTime()) + horizon);
   const endCap = new Date(Math.min(end.getTime(), limit.getTime()));
 
   while (iter <= endCap) {
     const ds = toYMDLocal(iter);
-    if (iter >= start) {
-      if (freq === 'daily') add(ds);
-      else if (freq === 'weekly') {
+    if (iter >= start && occurrenceInsideTaskCalendarBounds(task, ds)) {
+      if (freq === 'weekly') {
         const days = recurrence.length ? recurrence : [start.getDay()];
         if (days.includes(iter.getDay())) add(ds);
       } else if (freq === 'monthly') {
         if (iter.getDate() === start.getDate()) add(ds);
-      } else add(ds);
+      } else {
+        add(ds);
+      }
     }
     iter.setDate(iter.getDate() + 1);
   }
-  if (!out.length) add(startStr);
+  if (!out.length) add(normalizeDbDate(startStr));
   return out.sort();
 }
 
@@ -862,9 +967,29 @@ const api = {
     }
 
     if (path.startsWith('/tasks/occurrences')) {
+      const expandAll = config.params?.all_dates === true || String(config.params?.all_dates || '') === '1';
+      let d = config.params?.date || config.params?.occurrence_date;
+      const rangeFrom = config.params?.from;
+      const rangeTo = config.params?.to;
+
+      if (!expandAll && !d && !rangeFrom && !rangeTo) {
+        d = toYMDLocal();
+      }
+
+      /** Garante slot do dia civil para cada tarefa diária (sem pré-gerar meses à frente). */
+      if (!expandAll && d && !rangeFrom && !rangeTo) {
+        const ds = String(d).slice(0, 10);
+        if (/^\d{4}-\d{2}-\d{2}$/.test(ds)) {
+          await ensureDailyOccurrencesForDate(supabase, familyId, ds);
+        }
+      }
+
       let q = supabase.from('task_occurrences').select('*, tasks(*, task_allowance_rules(*))').eq('family_id', familyId);
-      const d = config.params?.date || config.params?.occurrence_date;
-      if (d) q = q.eq('occurrence_date', String(d).slice(0, 10));
+      if (!expandAll && rangeFrom && rangeTo) {
+        q = q.gte('occurrence_date', String(rangeFrom).slice(0, 10)).lte('occurrence_date', String(rangeTo).slice(0, 10));
+      } else if (!expandAll && d && String(d).length >= 10) {
+        q = q.eq('occurrence_date', String(d).slice(0, 10));
+      }
       const childId = config.params?.child_id;
       if (childId) q = q.eq('child_id', childId);
       const statusParam = config.params?.status;
@@ -892,12 +1017,21 @@ const api = {
           discount_amount: r?.discount_amount ?? null,
         };
       };
-      const rows = (data || []).map(mapOcc);
+      const seenIds = new Set();
+      const uniqData = (data || []).filter((o) => {
+        if (!o?.id || seenIds.has(o.id)) return false;
+        seenIds.add(o.id);
+        return true;
+      });
+      const mapped = uniqData.map(mapOcc);
+      const rows = dedupeOccurrencesSameTaskSameDay(mapped);
       const childIds = [...new Set(rows.map((r) => r.child_id).filter(Boolean))];
       let colors = {};
       if (childIds.length) {
         const { data: ch } = await supabase.from('children').select('id, name, color').in('id', childIds);
-        (ch || []).forEach((c) => { colors[c.id] = { name: c.name, color: c.color }; });
+        (ch || []).forEach((c) => {
+          colors[c.id] = { name: c.name, color: c.color };
+        });
       }
       return {
         data: rows.map((r) => ({
@@ -1045,13 +1179,27 @@ const api = {
       const childId = path.split('/')[3];
       const { data: child } = await supabase.from('children').select('*').eq('id', childId).single();
       const { data: earned } = await supabase.from('earned_medals').select('*, medals(*)').eq('child_id', childId);
+
+      const medalObjects = [];
+      const byMedalPk = new Map();
+      for (const e of earned || []) {
+        let m = e.medals;
+        if (Array.isArray(m)) m = m[0];
+        if (!m?.id) continue;
+        if (!byMedalPk.has(m.id)) {
+          byMedalPk.set(m.id, m);
+          medalObjects.push(m);
+        }
+      }
+      const medalsForUi = dedupeEarnedMedalsForDisplay(medalObjects);
+
       return {
         data: {
           child: child || {},
-          stats: { medalsEarned: earned?.length || 0 },
-          medals: (earned || []).map(e => e.medals).filter(Boolean),
-          recentHistory: []
-        }
+          stats: { medalsEarned: medalsForUi.length },
+          medals: medalsForUi,
+          recentHistory: [],
+        },
       };
     }
 
@@ -1076,11 +1224,24 @@ const api = {
         Object.keys(avgBySubject).forEach(s => avgBySubject[s] = (avgBySubject[s].sum / avgBySubject[s].count).toFixed(1));
       }
 
+      const medalObjects = [];
+      const byMedalPk = new Map();
+      for (const e of earned || []) {
+        let m = e.medals;
+        if (Array.isArray(m)) m = m[0];
+        if (!m?.id) continue;
+        if (!byMedalPk.has(m.id)) {
+          byMedalPk.set(m.id, m);
+          medalObjects.push(m);
+        }
+      }
+      const medalsForReports = dedupeEarnedMedalsForDisplay(medalObjects);
+
       return {
         data: {
           child: child || {},
           taskStats: { approved, pending },
-          medals: (earned || []).map(e => e.medals).filter(Boolean),
+          medals: medalsForReports,
           avgBySubject,
           history: [] // Mock history for now
         }
@@ -1094,7 +1255,21 @@ const api = {
     if (path.startsWith('/reports/dashboard')) {
       const { data: children } = await supabase.from('children').select('*').eq('family_id', familyId);
       const todayStr = toYMDLocal();
-      const { count: pending } = await supabase.from('task_occurrences').select('*', { count: 'exact', head: true }).eq('family_id', familyId).eq('status', 'pending');
+      /** Só conta o que é “para fazer hoje”, não todas as pendências futuras/passadas das recorrentes */
+      let pendingToday = 0;
+      try {
+        const pq = await supabase
+          .from('task_occurrences')
+          .select('*', { count: 'exact', head: true })
+          .eq('family_id', familyId)
+          .eq('occurrence_date', todayStr)
+          .in('status', ['pending', 'delayed', 'in_progress']);
+        pendingToday = pq.count ?? 0;
+      } catch {
+        pendingToday = 0;
+      }
+
+      const pending = pendingToday;
       const { count: completed } = await supabase.from('task_occurrences').select('*', { count: 'exact', head: true }).eq('family_id', familyId).eq('status', 'completed');
       const { count: approved } = await supabase.from('task_occurrences').select('*', { count: 'exact', head: true }).eq('family_id', familyId).eq('status', 'approved');
       let pendingRedemptions = 0;
