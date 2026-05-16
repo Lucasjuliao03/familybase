@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useLocation } from 'react-router-dom';
+import { useAuth } from '../../contexts/AuthContext';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useToast } from '../../contexts/ToastContext';
 import api from '../../services/api';
@@ -12,6 +13,7 @@ const PREDEFINED_SUBJECTS = [
 ];
 
 export default function MyGrades() {
+  const { childProfile } = useAuth();
   const { t } = useLanguage();
   const toast = useToast();
   const location = useLocation();
@@ -43,9 +45,14 @@ export default function MyGrades() {
 
   const handleCreate = async (e) => {
     e.preventDefault();
+    if (!childProfile?.id) {
+      toast.error('Perfil em carregamento. Tente dentro de instantes.');
+      return;
+    }
     try {
       await api.post('/grades', {
         ...form,
+        child_id: childProfile.id,
         score: form.score !== '' ? parseFloat(form.score) : null,
         max_score: parseFloat(form.max_score) || 10,
       });

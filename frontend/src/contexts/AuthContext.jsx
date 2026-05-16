@@ -241,6 +241,26 @@ export function AuthProvider({ children }) {
 
             if (generation !== profileLoadGenerationRef.current) return;
 
+            let effectiveChildRow = cData;
+            if (!effectiveChildRow && wantsChildRow && fid) {
+              try {
+                const { data: { session: sessCh } } = await supabase.auth.getSession();
+                const uMd = sessCh?.user?.user_metadata || {};
+                const aMd = sessCh?.user?.app_metadata || {};
+                const metaCidRaw = uMd.child_id || uMd.childId || aMd.child_id || aMd.childId;
+                const metaCid = metaCidRaw != null ? String(metaCidRaw).trim() : '';
+                if (metaCid && metaCid !== 'undefined') {
+                  const { data: chByMeta } = await supabase
+                    .from('children')
+                    .select('*')
+                    .eq('family_id', fid)
+                    .eq('id', metaCid)
+                    .maybeSingle();
+                  if (chByMeta) effectiveChildRow = chByMeta;
+                }
+              } catch (_) { /* noop */ }
+            }
+
             let resolvedFamily = familyData;
 
             try {
@@ -285,7 +305,7 @@ export function AuthProvider({ children }) {
               setModules(mergedMods);
             }
 
-            setChildProfile(wantsChildRow ? (cData ?? null) : null);
+            setChildProfile(wantsChildRow ? (effectiveChildRow ?? null) : null);
             profileFreshRef.current = { uid: userId, at: Date.now() };
           })(),
           rejectAfter(PROFILE_LOAD_TIMEOUT_MS, 'profile_load_timeout'),

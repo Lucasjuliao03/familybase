@@ -97,6 +97,73 @@ async function getChildIdForLoggedInUser(userId, familyId) {
   return data?.id ?? null;
 }
 
+/** UUID string ou vazio — evita `"undefined"` e strings vazias. */
+function normalizeAuthChildUuid(v) {
+  if (v === undefined || v === null) return '';
+  const s = String(v).trim();
+  if (!s || s === 'undefined' || s === 'null') return '';
+  return s;
+}
+
+/**
+ * Resolver `child_id` para cadastros feitos pela criança (ou corpo já com id).
+ * O cliente JS do Supabase omite chaves com valor `undefined` no INSERT — causa 23502 em `NOT NULL`.
+ */
+async function resolveActorChildUuid(body, familyId, authUserId) {
+  let cid =
+    normalizeAuthChildUuid(body?.child_id) ||
+    normalizeAuthChildUuid(body?.child_profile_id) ||
+    normalizeAuthChildUuid(body?.childId);
+
+  if (cid) return cid;
+
+  if (authUserId && familyId) {
+    const fromTbl = await getChildIdForLoggedInUser(authUserId, familyId);
+    if (fromTbl) return normalizeAuthChildUuid(fromTbl);
+
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user?.id === authUserId) {
+        const um = session.user.user_metadata || {};
+        const am = session.user.app_metadata || {};
+        cid = normalizeAuthChildUuid(um.child_id || um.childId || am.child_id || am.childId);
+        if (cid) return cid;
+      }
+    } catch {
+      /* sessão não legível neste momento — continua sem metadata */
+    }
+  }
+
+  return '';
+}
+
+/** Colunas permitidas ao criar uma linha em `tasks` (evita chaves estranhas no corpo REST). */
+const TASK_INSERT_COLUMNS = [
+  'title',
+  'description',
+  'type',
+  'category',
+  'points',
+  'coins',
+  'frequency',
+  'recurrence_days',
+  'start_date',
+  'end_date',
+  'due_time',
+  'deadline',
+  'is_recurring',
+  'status',
+  'priority',
+  'child_id',
+  'assignee_user_id',
+  'source_medication_id',
+  'is_health_reminder',
+  'requires_approval',
+  'affects_allowance',
+  'visible_on_calendar',
+  'generate_notification',
+];
+
 const CALENDAR_EVENT_SELECT =
   '*, children:child_id(name, color), creator:users!calendar_events_created_by_fkey(id, name)';
 
@@ -976,14 +1043,27 @@ const api = {
     if (!familyId) throw new Error('Not authenticated');
 
     if (path.startsWith('/grades/subjects')) {
-      const { data: grades } = await supabase.from('grades').select('subject').eq('family_id', familyId);
+      let subjQ = supabase.from('grades').select('subject').eq('family_id', familyId);
+      const { data: { session: sessSub } } = await supabase.auth.getSession();
+      const uidSub = sessSub?.user?.id;
+      if ((await getUserRole()) === 'child' && uidSub) {
+        const onlyChild = await getChildIdForLoggedInUser(uidSub, familyId);
+        if (onlyChild) subjQ = subjQ.eq('child_id', onlyChild);
+      }
+      const { data: grades } = await subjQ;
       const uniq = [...new Set((grades || []).map((g) => g.subject).filter(Boolean))];
       return { data: uniq.sort() };
     }
 
     if (path.startsWith('/grades')) {
       let q = supabase.from('grades').select('*, children:child_id(name, color, avatar_url, avatar_preset)').eq('family_id', familyId);
-      const childIdParam = config.params?.child_id;
+      const { data: { session: sessGr } } = await supabase.auth.getSession();
+      const uidGr = sessGr?.user?.id;
+      let childIdParam = config.params?.child_id;
+      if ((await getUserRole()) === 'child' && uidGr) {
+        const onlyChild = await getChildIdForLoggedInUser(uidGr, familyId);
+        if (onlyChild) childIdParam = onlyChild;
+      }
       if (childIdParam) q = q.eq('child_id', childIdParam);
       const { data } = await q.order('date', { ascending: false });
       return { data: (data || []).map(mapGradeFromDb) };
@@ -1649,7 +1729,15 @@ const api = {
     if (path.startsWith('/calendar') && !userId) throw new Error('Sessão inválida: inicie sessão novamente.');
 
     if (path.startsWith('/grades')) {
-      const row = normalizeGradeRow(body, familyId);
+      let gradePayload = { ...body };
+      const cid = await resolveActorChildUuid(gradePayload, familyId, userId);
+      if (cid) gradePayload.child_id = cid;
+      const row = normalizeGradeRow(gradePayload, familyId);
+      if (!row.child_id || !normalizeAuthChildUuid(row.child_id)) {
+        throw new Error(
+          'É necessário o perfil da criança para registar notas (child_id). Recarregue a página ou peça ao gestor para ligar o login ao filho.',
+        );
+      }
       const { data, error } = await supabase.from('grades').insert([omitUndefined(row)]).select('*, children:child_id(name, color, avatar_url, avatar_preset)').single();
       if (error) throw new Error(error.message);
       const childIdAward = data?.child_id;
@@ -1759,40 +1847,53 @@ const api = {
     }
     
     if (path.startsWith('/tasks') && !path.startsWith('/tasks/occurrences')) {
-      const safeBody = { ...body };
       const allowanceRule = body.allowance_rule;
-      delete safeBody.allowance_rule;
-      if (safeBody.end_date === '') safeBody.end_date = null;
-      if (safeBody.due_time === '') safeBody.due_time = null;
-      if (safeBody.start_date === '') safeBody.start_date = null;
-      safeBody.start_date = normalizeDbDate(safeBody.start_date) || toYMDLocal();
-      if (safeBody.end_date) safeBody.end_date = normalizeDbDate(safeBody.end_date);
-      safeBody.affects_allowance = !!(allowanceRule && allowanceRule.affects_allowance);
+      const raw = { ...body };
+      delete raw.allowance_rule;
 
-      if (!safeBody.child_id || String(safeBody.child_id).trim() === '') {
-        if (userId) {
-          const resolvedChildId = await getChildIdForLoggedInUser(userId, familyId);
-          if (resolvedChildId) safeBody.child_id = resolvedChildId;
-        }
+      const picked = {};
+      for (const col of TASK_INSERT_COLUMNS) {
+        if (raw[col] !== undefined) picked[col] = raw[col];
       }
-      if (!safeBody.child_id || String(safeBody.child_id).trim() === '') {
-        throw new Error('É necessário indicar o filho (child_id). Com sessão de criança, recarregue a página.');
+
+      if (picked.end_date === '') picked.end_date = null;
+      if (picked.due_time === '') picked.due_time = null;
+      if (picked.start_date === '') picked.start_date = null;
+      picked.start_date = normalizeDbDate(picked.start_date) || toYMDLocal();
+      if (picked.end_date) picked.end_date = normalizeDbDate(picked.end_date);
+      picked.affects_allowance = !!(allowanceRule && allowanceRule.affects_allowance);
+
+      const resolvedChildId = await resolveActorChildUuid(
+        { ...raw, child_id: picked.child_id },
+        familyId,
+        userId,
+      );
+
+      if (!resolvedChildId) {
+        throw new Error(
+          'Não foi encontrado o perfil filho ligado a esta sessão (child_id em falta). ' +
+            'Recarregue a página ou peça ao gestor para associar a conta com o registo do filho.',
+        );
       }
 
       const role = await getUserRole();
       if (role === 'child') {
-        safeBody.points = 0;
-        safeBody.coins = 0;
-        safeBody.is_recurring = false;
-        safeBody.affects_allowance = false;
-        safeBody.requires_approval = true;
+        picked.points = 0;
+        picked.coins = 0;
+        picked.is_recurring = false;
+        picked.affects_allowance = false;
+        picked.requires_approval = true;
       }
 
-      const { data: taskRow, error } = await supabase
-        .from('tasks')
-        .insert([{ ...safeBody, family_id: familyId, created_by: userId, id: uuidv4() }])
-        .select()
-        .single();
+      const insertRow = {
+        ...picked,
+        family_id: familyId,
+        created_by: userId || null,
+        id: uuidv4(),
+        child_id: resolvedChildId,
+      };
+
+      const { data: taskRow, error } = await supabase.from('tasks').insert([insertRow]).select().single();
       if (error) throw new Error(error.message);
 
       if (allowanceRule !== undefined) {
