@@ -1,6 +1,7 @@
 import { supabase, fetchNoStore } from '../lib/supabase';
 import { famDiagWarn } from '../lib/famDiag';
 import { createClient } from '@supabase/supabase-js';
+import { normalizeHex } from '../lib/userDisplayColors';
 import {
   canonicalMedalRequirementType,
   dedupeEarnedMedalsForDisplay,
@@ -933,6 +934,45 @@ function mapGradeFromDb(d) {
 
 const CAL_EVENT_FIELDS = ['title', 'description', 'date', 'time', 'end_date', 'type', 'color', 'child_id', 'visible_to_child', 'visibility'];
 
+/** Cor de evento válida (#RRGGBB) ou vazio */
+function sanitizeCalendarColor(v) {
+  const h = normalizeHex(v);
+  return h && /^#[0-9A-F]{6}$/.test(h) ? h : '';
+}
+
+async function mergeChildCalendarColorAndScope(supabaseClient, row, scopeChildId) {
+  if (!row || !scopeChildId) return row;
+  row.child_id = scopeChildId;
+  if (!sanitizeCalendarColor(row.color)) {
+    const { data: chRow } = await supabaseClient
+      .from('children')
+      .select('color')
+      .eq('id', scopeChildId)
+      .maybeSingle();
+    const fromProfile = sanitizeCalendarColor(chRow?.color);
+    if (fromProfile) row.color = fromProfile;
+  }
+  return row;
+}
+
+/** Saldo previsível do ciclo de mesada (igual à lógica em MyAllowance). */
+function computePredictedAllowanceBalance(settings, cycle) {
+  if (!settings || !cycle) return 0;
+  const ob = Number(cycle.opening_balance ?? 0);
+  const basePart = settings.model_type !== 'accumulative' ? Number(cycle.base_amount ?? 0) : 0;
+  const tb = Number(cycle.total_bonus ?? 0);
+  const td = Number(cycle.total_discount ?? 0);
+  const ma = Number(cycle.manual_adjustments ?? 0);
+  return ob + basePart + tb + ma - td;
+}
+
+/** Símbolo para UI (settings.currency pode ser R$ ou BRL). */
+function allowanceCurrencySymbol(currency) {
+  const c = String(currency ?? '').trim().toUpperCase();
+  if (!c || c === 'BRL') return 'R$';
+  return currency || 'R$';
+}
+
 function pickCalendarRow(body, familyId, userId, withId) {
   const row = {};
   CAL_EVENT_FIELDS.forEach((k) => {
@@ -1555,6 +1595,83 @@ const api = {
       return { data: data || [] };
     }
 
+    if (path === '/allowance/estimated-balance') {
+      const {
+        data: { session: sEb },
+      } = await supabase.auth.getSession();
+      const uidEb = sEb?.user?.id;
+      let targetChildEb = normalizeAuthChildUuid(config.params?.child_id);
+      const roleEb = await getUserRole();
+      if (roleEb === 'child' && uidEb) {
+        const scopeEb = await resolveViewerChildScope(familyId, uidEb);
+        targetChildEb = scopeEb || '';
+      }
+      if (!targetChildEb) {
+        return { data: { balance: 0, currency: 'BRL', symbol: 'R$', partial: true } };
+      }
+      const { data: chEb } = await supabase
+        .from('children')
+        .select('id')
+        .eq('id', targetChildEb)
+        .eq('family_id', familyId)
+        .maybeSingle();
+      if (!chEb?.id) {
+        return { data: { balance: 0, currency: 'BRL', symbol: 'R$', partial: true } };
+      }
+      const { data: settingsEb } = await supabase
+        .from('allowance_settings')
+        .select('*')
+        .eq('child_id', targetChildEb)
+        .eq('family_id', familyId)
+        .maybeSingle();
+      if (!settingsEb) {
+        return { data: { balance: 0, currency: 'BRL', symbol: 'R$', partial: true } };
+      }
+      const monthEb = new Date().getMonth() + 1;
+      const yearEb = new Date().getFullYear();
+      const { data: cycEb } = await supabase
+        .from('allowance_cycles')
+        .select('*')
+        .eq('child_id', targetChildEb)
+        .eq('month', monthEb)
+        .eq('year', yearEb)
+        .eq('status', 'open')
+        .maybeSingle();
+      const symEb = allowanceCurrencySymbol(settingsEb.currency);
+      if (!cycEb) {
+        const { data: prevEb } = await supabase
+          .from('allowance_cycles')
+          .select('final_amount')
+          .eq('child_id', targetChildEb)
+          .order('year', { ascending: false })
+          .order('month', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        const openingEb =
+          settingsEb.allow_accumulation && prevEb?.final_amount != null ? Number(prevEb.final_amount) : 0;
+        const baseEb = Number(settingsEb.base_amount ?? 0);
+        const sliceEb = settingsEb.model_type !== 'accumulative' ? baseEb : 0;
+        const estEb = openingEb + sliceEb;
+        return {
+          data: {
+            balance: Math.max(estEb, 0),
+            currency: settingsEb.currency || 'BRL',
+            symbol: symEb,
+            partial: true,
+          },
+        };
+      }
+      const balEb = computePredictedAllowanceBalance(settingsEb, cycEb);
+      return {
+        data: {
+          balance: Math.max(balEb, 0),
+          currency: settingsEb.currency || 'BRL',
+          symbol: symEb,
+          partial: false,
+        },
+      };
+    }
+
     if (path === '/allowance/cycles') {
       const { data } = await supabase.from('allowance_cycles').select('*').eq('family_id', familyId);
       return { data: data || [] };
@@ -1946,8 +2063,13 @@ const api = {
     }
 
     if (path.startsWith('/calendar')) {
-      const row = omitNullish(pickCalendarRow(body, familyId, userId, true));
+      let row = omitNullish(pickCalendarRow(body, familyId, userId, true));
       if (!row.date) throw new Error('Indique a data do evento.');
+      const roleCalPost = await getUserRole();
+      if (roleCalPost === 'child' && userId) {
+        const scopeCalPost = await resolveViewerChildScope(familyId, userId);
+        if (scopeCalPost) await mergeChildCalendarColorAndScope(supabase, row, scopeCalPost);
+      }
       const { data, error } = await supabase.from('calendar_events').insert([row]).select(CALENDAR_EVENT_SELECT).single();
       if (error) throw new Error(error.message);
       return { data: mapCalendarEventFromDb(data) };
@@ -3368,6 +3490,13 @@ const api = {
       delete calPatch.created_by;
       Object.keys(safeBody).forEach((k) => delete safeBody[k]);
       Object.assign(safeBody, calPatch);
+      if (userId) {
+        const roleCalPut = await getUserRole();
+        if (roleCalPut === 'child') {
+          const scopeCalPut = await resolveViewerChildScope(familyId, userId);
+          if (scopeCalPut) await mergeChildCalendarColorAndScope(supabase, safeBody, scopeCalPut);
+        }
+      }
     } else if (table === 'grades') {
       const patch = omitUndefined(normalizeGradeRow({ ...safeBody, id }, familyId, id));
       delete patch.id;

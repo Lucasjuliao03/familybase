@@ -2,14 +2,16 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useToast } from '../../contexts/ToastContext';
+import { useAuth } from '../../contexts/AuthContext';
 import api from '../../services/api';
-import { calendarEventAccentColor } from '../../lib/userDisplayColors';
+import { calendarEventAccentColor, normalizeHex } from '../../lib/userDisplayColors';
 import getHolidays from '../../lib/brazilianHolidays';
 import FamilyCalendarBoard from '../../components/calendar/FamilyCalendarBoard';
 import { deriveCalendarRange, normalizeAnchorMidday, formatLocalYMD } from '../../lib/familyCalendarRange';
 import useAutoRefresh from '../../hooks/useAutoRefresh';
 
 export default function MyCalendar() {
+  const { childProfile } = useAuth();
   const { t } = useLanguage();
   const toast = useToast();
   const location = useLocation();
@@ -35,6 +37,17 @@ export default function MyCalendar() {
 
   const holidayYear = anchorDate.getFullYear();
   const holidays = useMemo(() => getHolidays(holidayYear), [holidayYear]);
+
+  /** Cor escolhida no cadastro — eventos próprios usam sempre esta cor (fallback no servidor também). */
+  const childCalendarColor = useMemo(() => {
+    const h = normalizeHex(childProfile?.color);
+    return h && /^#[0-9A-F]{6}$/.test(h) ? h : undefined;
+  }, [childProfile?.color]);
+
+  const withChildCalendarAccent = useCallback(
+    (payload) => (childCalendarColor ? { ...payload, color: childCalendarColor } : payload),
+    [childCalendarColor],
+  );
 
   const reloadCalendarRange = useCallback(async () => {
     try {
@@ -76,8 +89,9 @@ export default function MyCalendar() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
-      if (form.id) await api.put(`/calendar/${form.id}`, form);
-      else await api.post('/calendar', form);
+      const body = withChildCalendarAccent(form);
+      if (form.id) await api.put(`/calendar/${form.id}`, body);
+      else await api.post('/calendar', body);
       toast.success(form.id ? 'Evento atualizado' : 'Evento criado! 📅');
       setShowModal(false);
       setForm({ id: null, title: '', description: '', date: '', time: '', type: 'activity' });

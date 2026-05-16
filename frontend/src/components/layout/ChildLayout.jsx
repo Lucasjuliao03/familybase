@@ -38,11 +38,35 @@ export default function ChildLayout() {
   const [notifCount, setNotifCount] = useState(0);
   const [notifOpen, setNotifOpen] = useState(false);
   const [notifications, setNotifications] = useState([]);
+  /** Saldo previsível de mesada (BRL), igual à lógica de “Mesada” — não confundir com ⭐ pontos (loja). */
+  const [estimatedAllowance, setEstimatedAllowance] = useState(null);
   const location = useLocation();
 
   useEffect(() => {
     setMobileOpen(false);
   }, [location]);
+  useEffect(() => {
+    if (!childProfile?.id) {
+      setEstimatedAllowance(null);
+      return undefined;
+    }
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const { data } = await api.get('/allowance/estimated-balance', { params: { child_id: childProfile.id } });
+        if (!cancelled) setEstimatedAllowance(data || null);
+      } catch {
+        if (!cancelled) setEstimatedAllowance(null);
+      }
+    };
+    load();
+    const iv = setInterval(load, 45000);
+    return () => {
+      cancelled = true;
+      clearInterval(iv);
+    };
+  }, [childProfile?.id]);
+
   const notificationsOn = moduleAllowed(modules, 'notifications');
 
   useEffect(() => {
@@ -289,8 +313,21 @@ export default function ChildLayout() {
               </div>
             )}
             <div className="flex gap-8" style={{ alignItems: 'center' }}>
-              <span style={{ fontWeight: 700, color: 'var(--primary)' }}>⭐ {childProfile?.points || 0}</span>
-              <span style={{ fontWeight: 700, color: 'var(--warning)' }}>💰 {childProfile?.coins || 0}</span>
+              <span
+                style={{ fontWeight: 700, color: 'var(--primary)', cursor: 'default' }}
+                title="Pontos — servem para trocar por recompensas na loja da família (podem incluir valores em dinheiro a crédito da mesada, conforme cada recompensa)."
+              >
+                ⭐ {childProfile?.points ?? 0}
+              </span>
+              <span
+                style={{ fontWeight: 700, color: 'var(--warning)', cursor: 'default' }}
+                title="Mesada estimada neste período — dinheiro do cofrinho, metas e regras de mesada (separado dos pontos da loja)."
+              >
+                💰{' '}
+                {estimatedAllowance != null && estimatedAllowance.balance != null
+                  ? `${estimatedAllowance.symbol || 'R$'} ${Number(estimatedAllowance.balance).toFixed(2)}`
+                  : '—'}
+              </span>
             </div>
           </div>
         </header>

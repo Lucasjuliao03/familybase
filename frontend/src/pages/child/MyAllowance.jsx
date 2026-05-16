@@ -32,7 +32,10 @@ export default function MyAllowance() {
         api.get('/allowance/goals', goalParams).catch(() => ({ data: [] })),
       ]);
 
-      const mySetting = rSet.data[0];
+      const mySetting =
+        Array.isArray(rSet.data)
+          ? rSet.data.find((s) => String(s?.child_id) === String(childProfile.id))
+          : null;
       setSettings(mySetting);
       setTransactions(rTrans.data);
       setGoals(rGoals.data);
