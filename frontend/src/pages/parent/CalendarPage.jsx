@@ -162,6 +162,9 @@ export default function CalendarPage() {
       <div className="flex-between mb-24">
         <div>
           <h1 className="page-title">📅 {t('calendar')}</h1>
+          <p className="page-subtitle" style={{ marginTop: 6 }}>
+            Vistas <strong>Mês</strong>, <strong>Semana</strong> e <strong>Dia</strong>; filtro <strong>Todos / dependente</strong> ao lado de «Hoje».
+          </p>
         </div>
         <button
           type="button"

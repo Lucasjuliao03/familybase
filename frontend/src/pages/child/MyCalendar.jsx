@@ -93,7 +93,12 @@ export default function MyCalendar() {
   return (
     <div className="animate-fade-in">
       <div className="flex-between mb-24">
-        <h1 className="page-title">📅 {t('my_calendar')}</h1>
+        <div>
+          <h1 className="page-title">📅 {t('my_calendar')}</h1>
+          <p className="page-subtitle" style={{ marginTop: 6 }}>
+            Alterne entre <strong>Mês</strong>, <strong>Semana</strong> e <strong>Dia</strong>; toque num dia para ver os eventos.
+          </p>
+        </div>
         <button
           type="button"
           className="btn btn-primary"
