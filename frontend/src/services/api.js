@@ -403,7 +403,7 @@ async function syncTaskAllowanceRules(supabase, taskId, allowanceRule) {
     return;
   }
 
-  const payload = {
+  const row = {
     task_id: taskId,
     affects_allowance: true,
     bonus_amount: Number(allowanceRule.bonus_amount ?? 0),
@@ -411,8 +411,15 @@ async function syncTaskAllowanceRules(supabase, taskId, allowanceRule) {
     apply_discount_if_late: !!allowanceRule.apply_discount_if_late,
   };
 
-  const { error: upErr } = await supabase.from('task_allowance_rules').upsert(payload, { onConflict: 'task_id' });
-  if (upErr) console.warn('[task_allowance_rules]', upErr.message);
+  // Evita upsert(onConflict: task_id): muitos projetos Supabase criaram esta tabela sem UNIQUE(task_id)
+  const { data: existing } = await supabase.from('task_allowance_rules').select('id').eq('task_id', taskId).maybeSingle();
+  if (existing?.id) {
+    const { error } = await supabase.from('task_allowance_rules').update(row).eq('id', existing.id);
+    if (error) console.warn('[task_allowance_rules]', error.message);
+  } else {
+    const { error } = await supabase.from('task_allowance_rules').insert(row);
+    if (error) console.warn('[task_allowance_rules]', error.message);
+  }
 
   await supabase.from('tasks').update({ affects_allowance: true }).eq('id', taskId).catch(() => {});
 }
@@ -1080,6 +1087,16 @@ const api = {
         const ds = String(d).slice(0, 10);
         if (/^\d{4}-\d{2}-\d{2}$/.test(ds)) {
           await ensureDailyOccurrencesForDate(supabase, familyId, ds);
+        }
+      }
+
+      if (!expandAll && rangeFrom && rangeTo) {
+        const fromS = String(rangeFrom).slice(0, 10);
+        const toS = String(rangeTo).slice(0, 10);
+        const todayS = toYMDLocal();
+        const reDate = /^\d{4}-\d{2}-\d{2}$/;
+        if (reDate.test(fromS) && reDate.test(toS) && todayS >= fromS && todayS <= toS) {
+          await ensureDailyOccurrencesForDate(supabase, familyId, todayS);
         }
       }
 
@@ -1751,6 +1768,25 @@ const api = {
       safeBody.start_date = normalizeDbDate(safeBody.start_date) || toYMDLocal();
       if (safeBody.end_date) safeBody.end_date = normalizeDbDate(safeBody.end_date);
       safeBody.affects_allowance = !!(allowanceRule && allowanceRule.affects_allowance);
+
+      if (!safeBody.child_id || String(safeBody.child_id).trim() === '') {
+        if (userId) {
+          const resolvedChildId = await getChildIdForLoggedInUser(userId, familyId);
+          if (resolvedChildId) safeBody.child_id = resolvedChildId;
+        }
+      }
+      if (!safeBody.child_id || String(safeBody.child_id).trim() === '') {
+        throw new Error('É necessário indicar o filho (child_id). Com sessão de criança, recarregue a página.');
+      }
+
+      const role = await getUserRole();
+      if (role === 'child') {
+        safeBody.points = 0;
+        safeBody.coins = 0;
+        safeBody.is_recurring = false;
+        safeBody.affects_allowance = false;
+        safeBody.requires_approval = true;
+      }
 
       const { data: taskRow, error } = await supabase
         .from('tasks')

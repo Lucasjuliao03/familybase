@@ -5,6 +5,7 @@ import { useLanguage } from '../../contexts/LanguageContext';
 import { useToast } from '../../contexts/ToastContext';
 import api from '../../services/api';
 import useAutoRefresh from '../../hooks/useAutoRefresh';
+import useDailyCalendarRefresh from '../../hooks/useDailyCalendarRefresh';
 
 export default function MyTasks() {
   const { childProfile } = useAuth();
@@ -32,6 +33,8 @@ export default function MyTasks() {
 
   useAutoRefresh(fetchTasks, 2600, { includeRouteChanges: false });
 
+  useDailyCalendarRefresh(fetchTasks);
+
   const handleComplete = async (id) => {
     try {
       const res = await api.put(`/tasks/occurrences/${id}/complete`);
@@ -54,9 +57,19 @@ export default function MyTasks() {
 
   const handleCreate = async (e) => {
     e.preventDefault();
+    if (!childProfile?.id) {
+      toast.error('Perfil em carregamento. Tente dentro de instantes.');
+      return;
+    }
     try {
-      // Child creates a personal one-time task
-      await api.post('/tasks', { ...form, frequency: 'once', requires_approval: true });
+      // Sugestão: gestor define pontos / mesada depois ao editar a tarefa
+      await api.post('/tasks', {
+        ...form,
+        child_id: childProfile.id,
+        frequency: 'once',
+        requires_approval: true,
+        is_recurring: false,
+      });
       toast.success('Sugestão de tarefa enviada! 📋');
       setShowModal(false);
       setForm({ title: '', description: '', type: 'routine', due_time: '' });

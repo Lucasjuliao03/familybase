@@ -4,6 +4,7 @@ import { useLanguage } from '../../contexts/LanguageContext';
 import { useToast } from '../../contexts/ToastContext';
 import api from '../../services/api';
 import useAutoRefresh from '../../hooks/useAutoRefresh';
+import useDailyCalendarRefresh from '../../hooks/useDailyCalendarRefresh';
 
 const DAYS = [
   { label: 'Dom', value: 0 }, { label: 'Seg', value: 1 }, { label: 'Ter', value: 2 },
@@ -53,6 +54,8 @@ export default function TaskManager() {
   }, [fetchData, location.pathname]);
 
   useAutoRefresh(fetchData, 2600, { includeRouteChanges: false });
+
+  useDailyCalendarRefresh(fetchData);
 
   const handleCreate = async (e) => {
     e.preventDefault();

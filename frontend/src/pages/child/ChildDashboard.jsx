@@ -4,6 +4,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useLanguage } from '../../contexts/LanguageContext';
 import api from '../../services/api';
 import useAutoRefresh from '../../hooks/useAutoRefresh';
+import useDailyCalendarRefresh from '../../hooks/useDailyCalendarRefresh';
 import {
   childDashboardTodayYMD,
   dedupeOccurrencesByDayAndTitle,
@@ -62,6 +63,9 @@ export default function ChildDashboard() {
 
   /** Reforço tab/foco/offline sem duplo fetch na entrada (pathname já coberto pelo efecto anterior). */
   useAutoRefresh(loadDashboard, 800, { includeRouteChanges: false });
+
+  /** Após ~00:01 local e ao virar o dia civil, repede ocorrências (materializa diárias no servidor). */
+  useDailyCalendarRefresh(loadDashboard);
 
   const child = profile?.child || childProfile;
   if (!child) return <div className="flex-center" style={{ padding: 60, fontSize: '2rem' }}>⏳</div>;
