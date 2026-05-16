@@ -5,7 +5,7 @@ import { useToast } from '../../contexts/ToastContext';
 import api from '../../services/api';
 
 export default function MyRewards() {
-  const { childProfile } = useAuth();
+  const { childProfile, fetchMe } = useAuth();
   const { t } = useLanguage();
   const toast = useToast();
   const [rewards, setRewards] = useState([]);
@@ -18,8 +18,12 @@ export default function MyRewards() {
   }, []);
 
   const handleRedeem = async (rewardId) => {
-    try { await api.post(`/allowance/rewards/${rewardId}/redeem`); toast.success('Resgate solicitado! 🎉');
-      api.get('/allowance/redemptions/list').then(r => setRedemptions(r.data));
+    try {
+      await api.post(`/allowance/rewards/${rewardId}/redeem`);
+      toast.success('Resgate solicitado! 🎉');
+      await fetchMe?.().catch(() => {});
+      const r = await api.get('/allowance/redemptions/list');
+      setRedemptions(r.data || []);
     } catch (err) { toast.error(err?.message || err.response?.data?.error || t('error_occurred')); }
   };
 
@@ -55,7 +59,15 @@ export default function MyRewards() {
         <div>{redemptions.length === 0 ? <div className="card empty-state"><div className="empty-icon">📋</div><h3>Nenhum resgate ainda</h3></div> :
           redemptions.map(r => (
             <div key={r.id} className="card mb-8 flex-between">
-              <div className="flex gap-12" style={{alignItems:'center'}}><span style={{fontSize:'1.5rem'}}>{r.icon}</span><div><strong>{r.reward_name}</strong><div style={{fontSize:'0.8rem',color:'var(--text-light)'}}>⭐ {r.point_cost} pontos</div></div></div>
+              <div className="flex gap-12" style={{alignItems:'center'}}>
+                <span style={{fontSize:'1.5rem'}}>{r.icon || '🎁'}</span>
+                <div>
+                  <strong>{(r.reward_name || '').trim() || 'Recompensa'}</strong>
+                  <div style={{fontSize:'0.8rem',color:'var(--text-light)'}}>
+                    {typeof r.point_cost === 'number' ? `⭐ ${r.point_cost}` : '⭐ —'} {t('points')}
+                  </div>
+                </div>
+              </div>
               <span className={`badge badge-${r.status==='pending'?'warning':r.status==='approved'?'success':'danger'}`}>{t(r.status)}</span>
             </div>
           ))}

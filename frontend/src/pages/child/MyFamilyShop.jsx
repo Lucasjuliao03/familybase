@@ -7,7 +7,7 @@ import api from '../../services/api';
 import useAutoRefresh from '../../hooks/useAutoRefresh';
 
 export default function MyFamilyShop() {
-  const { childProfile } = useAuth();
+  const { childProfile, fetchMe } = useAuth();
   const location = useLocation();
   const { t } = useLanguage();
   const toast = useToast();
@@ -41,6 +41,7 @@ export default function MyFamilyShop() {
     try {
       await api.post(`/allowance/rewards/${rewardId}/redeem`);
       toast.success('Resgate solicitado! 🎉');
+      await fetchMe?.().catch(() => {});
       fetchData();
     } catch (err) {
       toast.error(err.response?.data?.error || err.message || t('error_occurred'));
@@ -87,10 +88,17 @@ export default function MyFamilyShop() {
             redemptions.map((r) => (
               <div key={r.id} className="card mb-8 flex-between">
                 <div className="flex gap-12" style={{ alignItems: 'center' }}>
-                  <span style={{ fontSize: '1.5rem' }}>{r.icon}</span>
+                  <span style={{ fontSize: '1.5rem' }}>{r.icon || '🎁'}</span>
                   <div>
-                    <strong>{r.reward_name}</strong>
-                    <div style={{ fontSize: '0.8rem', color: 'var(--text-light)' }}>⭐ {r.point_cost} pontos</div>
+                    <strong>{(r.reward_name || '').trim() || 'Recompensa'}</strong>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-light)' }}>
+                      {typeof r.point_cost === 'number' ? `⭐ ${r.point_cost}` : '⭐ —'} {t('points')}
+                      {r.status === 'approved'
+                        ? ' · descontados na aprovação'
+                        : r.status === 'pending'
+                          ? ' · ficam retidos até o gestor aprovar'
+                          : ''}
+                    </div>
                   </div>
                 </div>
                 <span className={`badge badge-${r.status === 'pending' ? 'warning' : r.status === 'approved' ? 'success' : 'danger'}`}>{t(r.status)}</span>

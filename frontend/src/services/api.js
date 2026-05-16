@@ -289,13 +289,61 @@ function mapRedemptionListRow(raw) {
   const rew = unwrapEmbeddedRow(raw.rewards);
   const ch = unwrapEmbeddedRow(raw.children);
   const { rewards: _rw, children: _chd, ...rest } = raw;
+  const pcMerge = rew?.point_cost ?? rest.point_cost;
+  const parsedCost =
+    pcMerge != null && pcMerge !== '' && Number.isFinite(Number(pcMerge)) ? Number(pcMerge) : null;
   return {
     ...rest,
     reward_name: rew?.name || rest.reward_name || '',
     icon: rew?.icon || '🎁',
-    point_cost: rew?.point_cost != null ? Number(rew.point_cost) : Number(rest.point_cost ?? 0) || 0,
+    /** null quando embed falhou — hydrate corrigiu depois ou UI usa "—" */
+    point_cost: parsedCost,
     child_name: ch?.name || rest.child_name || '',
   };
+}
+
+/** Nome/custo do resgate: join embutido pode vir null com conta criança (PostgREST/RLS). */
+async function hydrateRedemptionsListRows(supabase, familyId, rows) {
+  const list = rows || [];
+  const ridSet = [...new Set(list.map((r) => r.reward_id).filter(Boolean))];
+  const cidSet = [...new Set(list.map((r) => r.child_id).filter(Boolean))];
+  const rmap = new Map();
+  const cmap = new Map();
+  if (ridSet.length) {
+    const { data: rews } = await supabase
+      .from('rewards')
+      .select('id,name,icon,point_cost,type')
+      .eq('family_id', familyId)
+      .in('id', ridSet);
+    (rews || []).forEach((x) => rmap.set(x.id, x));
+  }
+  if (cidSet.length) {
+    const { data: chs } = await supabase
+      .from('children')
+      .select('id,name')
+      .eq('family_id', familyId)
+      .in('id', cidSet);
+    (chs || []).forEach((x) => cmap.set(x.id, x));
+  }
+  return list.map((raw) => {
+    const embR = unwrapEmbeddedRow(raw.rewards);
+    const embC = unwrapEmbeddedRow(raw.children);
+    const rw =
+      embR && (embR.name != null || embR.point_cost != null || embR.icon != null)
+        ? embR
+        : raw.reward_id
+          ? rmap.get(raw.reward_id)
+          : null;
+    const chName =
+      embC?.name ??
+      cmap.get(raw.child_id)?.name ??
+      '';
+    return mapRedemptionListRow({
+      ...raw,
+      rewards: rw || null,
+      children: chName ? { name: chName } : null,
+    });
+  });
 }
 
 /** Senha mínima para contas de criança criadas pelo gestor (login próprio). */
@@ -428,8 +476,9 @@ function isMedalQualifiedBySnapshot(medal, snap, streakUse) {
   return false;
 }
 
-async function checkAndAwardMedals(supabase, childId, familyId, currentStreakHint) {
+async function checkAndAwardMedals(supabase, childId, familyId, currentStreakHint, opts = {}) {
   try {
+    const omitSpendableBonus = !!opts.omitSpendableBonus;
     const snap = await loadMedalProgressSnapshot(supabase, childId);
     const streakUse =
       currentStreakHint != null && Number.isFinite(Number(currentStreakHint))
@@ -469,7 +518,7 @@ async function checkAndAwardMedals(supabase, childId, familyId, currentStreakHin
       if (!isMedalQualifiedBySnapshot(medal, snap, streakUse)) continue;
       toAward.push({ id: uuidv4(), medal_id: medal.id, child_id: childId });
       if (achievementKey) earnedKeys.add(achievementKey);
-      bonusPoints += medal.extra_points || 0;
+      if (!omitSpendableBonus) bonusPoints += medal.extra_points || 0;
     }
 
     if (toAward.length) {
@@ -1463,10 +1512,7 @@ const api = {
     }
 
     if (path.startsWith('/allowance/redemptions/list')) {
-      let redQ = supabase
-        .from('redemptions')
-        .select('*, rewards(name,description,icon,point_cost,type), children:child_id(name)')
-        .order('created_at', { ascending: false });
+      let redQ = supabase.from('redemptions').select('*').order('created_at', { ascending: false });
 
       const roleList = await getUserRole();
       const { data: { session: sessRed } } = await supabase.auth.getSession();
@@ -1485,7 +1531,8 @@ const api = {
 
       const { data: rows, error: redErr } = await redQ;
       if (redErr) throw new Error(redErr.message);
-      return { data: (rows || []).map(mapRedemptionListRow) };
+      const hydrated = await hydrateRedemptionsListRows(supabase, familyId, rows || []);
+      return { data: hydrated };
     }
 
     if (path.startsWith('/allowance/transactions')) {
@@ -3125,7 +3172,9 @@ const api = {
         }
 
         const { data: chAfter } = await supabase.from('children').select('streak_current').eq('id', redemption.child_id).maybeSingle();
-        await checkAndAwardMedals(supabase, redemption.child_id, familyId, chAfter?.streak_current || 0);
+        await checkAndAwardMedals(supabase, redemption.child_id, familyId, chAfter?.streak_current || 0, {
+          omitSpendableBonus: true,
+        });
       }
 
       return {
