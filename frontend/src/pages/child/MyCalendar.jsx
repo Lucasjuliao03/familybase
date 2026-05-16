@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useToast } from '../../contexts/ToastContext';
@@ -85,6 +85,9 @@ export default function MyCalendar() {
   );
 
   const fetchEventsNow = reloadCalendarRange;
+
+  /** Fechar só quando mousedown + click foram no próprio backdrop (evita fechar ao usar calendário nativo da data/time). */
+  const modalBackdropClkRef = useRef(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -202,8 +205,25 @@ export default function MyCalendar() {
       </div>
 
       {showModal && (
-        <div className="modal-overlay" role="presentation" onClick={() => setShowModal(false)}>
-          <div className="modal" role="dialog" aria-modal="true" onMouseDown={(e) => e.stopPropagation()}>
+        <div
+          className="modal-overlay"
+          role="presentation"
+          style={{ zIndex: 1100 }}
+          onMouseDown={(e) => {
+            modalBackdropClkRef.current = e.target === e.currentTarget;
+          }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget && modalBackdropClkRef.current) setShowModal(false);
+            modalBackdropClkRef.current = false;
+          }}
+        >
+          <div
+            className="modal"
+            role="dialog"
+            aria-modal="true"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="modal-header">
               <h2 className="modal-title">{form.id ? '✏️ Editar Evento' : '📅 Novo Evento'}</h2>
               <button type="button" className="modal-close" onClick={() => setShowModal(false)}>

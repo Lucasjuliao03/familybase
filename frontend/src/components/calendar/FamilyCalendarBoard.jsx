@@ -434,7 +434,14 @@ export default function FamilyCalendarBoard({
       )}
 
       {detailDateStr && (
-        <div className="modal-overlay" role="presentation" style={{ zIndex: 910 }} onMouseDown={() => closeDetail()}>
+        <div
+          className="modal-overlay"
+          role="presentation"
+          style={{ zIndex: 910 }}
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) closeDetail();
+          }}
+        >
           <div
             className="modal"
             role="dialog"

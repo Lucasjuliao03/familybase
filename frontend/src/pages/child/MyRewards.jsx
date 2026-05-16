@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useToast } from '../../contexts/ToastContext';
@@ -17,6 +17,16 @@ export default function MyRewards() {
     api.get('/allowance/redemptions/list').then(r => setRedemptions(r.data)).catch(() => {});
   }, []);
 
+  const pendingReservedPoints = useMemo(
+    () =>
+      redemptions
+        .filter((r) => r.status === 'pending')
+        .reduce((acc, r) => acc + (Number.isFinite(Number(r.point_cost)) ? Number(r.point_cost) : 0), 0),
+    [redemptions],
+  );
+
+  const spendablePoints = Math.max(0, Number(childProfile?.points ?? 0) - pendingReservedPoints);
+
   const handleRedeem = async (rewardId) => {
     try {
       await api.post(`/allowance/rewards/${rewardId}/redeem`);
@@ -30,7 +40,15 @@ export default function MyRewards() {
   return (
     <div className="animate-fade-in">
       <h1 className="page-title mb-8">🎁 {t('my_rewards')}</h1>
-      <p className="page-subtitle mb-24">Seus pontos: <strong style={{color:'var(--primary)',fontSize:'1.2rem'}}>⭐ {childProfile?.points || 0}</strong></p>
+      <p className="page-subtitle mb-24">
+        Seus pontos:{' '}
+        <strong style={{ color: 'var(--primary)', fontSize: '1.2rem' }}>⭐ {childProfile?.points ?? 0}</strong>
+        {pendingReservedPoints > 0 ? (
+          <span style={{ display: 'block', marginTop: 8, fontSize: '0.92rem', color: 'var(--text-light)' }}>
+            {pendingReservedPoints} pts em pedidos pendentes · <strong>{spendablePoints} pts</strong> livres para novos pedidos.
+          </span>
+        ) : null}
+      </p>
 
       <div className="tabs mb-24">
         <button className={`tab ${tab==='shop'?'active':''}`} onClick={() => setTab('shop')}>🛒 {t('reward_shop')}</button>
@@ -40,7 +58,7 @@ export default function MyRewards() {
       {tab === 'shop' && (
         <div className="grid grid-3">
           {rewards.map(r => {
-            const canAfford = (childProfile?.points || 0) >= r.point_cost;
+            const canAfford = spendablePoints >= Number(r.point_cost ?? 0);
             return (
               <div key={r.id} className="card" style={{textAlign:'center',opacity: canAfford ? 1 : 0.6}}>
                 <div style={{fontSize:'3rem',marginBottom:8}}>{r.icon}</div>

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { useLanguage } from '../../contexts/LanguageContext';
@@ -37,6 +37,16 @@ export default function MyFamilyShop() {
 
   useAutoRefresh(fetchData, 2600, { includeRouteChanges: false });
 
+  const pendingReservedPoints = useMemo(
+    () =>
+      redemptions
+        .filter((r) => r.status === 'pending')
+        .reduce((acc, r) => acc + (Number.isFinite(Number(r.point_cost)) ? Number(r.point_cost) : 0), 0),
+    [redemptions],
+  );
+
+  const spendablePoints = Math.max(0, Number(childProfile?.points ?? 0) - pendingReservedPoints);
+
   const handleRedeem = async (rewardId) => {
     try {
       await api.post(`/allowance/rewards/${rewardId}/redeem`);
@@ -52,9 +62,14 @@ export default function MyFamilyShop() {
     <div className="animate-fade-in">
       <h1 className="page-title mb-8">🛍️ {t('my_family_shop')}</h1>
       <p className="page-subtitle mb-24">
-        {t('your_points')}
-        {' '}
-        <strong style={{ color: 'var(--primary)', fontSize: '1.2rem' }}>⭐ {childProfile?.points || 0}</strong>
+        {t('your_points')}{' '}
+        <strong style={{ color: 'var(--primary)', fontSize: '1.2rem' }}>⭐ {childProfile?.points ?? 0}</strong>
+        {pendingReservedPoints > 0 ? (
+          <span style={{ display: 'block', marginTop: 8, fontSize: '0.92rem', color: 'var(--text-light)', maxWidth: 520 }}>
+            {pendingReservedPoints} pts retidos em pedidos pendentes ·{' '}
+            <strong style={{ color: 'var(--text)' }}>{spendablePoints} pts</strong> livres para novos pedidos (até aprovação).
+          </span>
+        ) : null}
       </p>
 
       <div className="tabs mb-24" style={{ flexWrap: 'wrap', gap: 8 }}>
@@ -65,7 +80,7 @@ export default function MyFamilyShop() {
       {tab === 'shop' && (
         <div className="grid grid-3">
           {rewards.map((r) => {
-            const canAfford = (childProfile?.points || 0) >= r.point_cost;
+            const canAfford = spendablePoints >= Number(r.point_cost ?? 0);
             return (
               <div key={r.id} className="card" style={{ textAlign: 'center', opacity: canAfford ? 1 : 0.6 }}>
                 <div style={{ fontSize: '3rem', marginBottom: 8 }}>{r.icon}</div>

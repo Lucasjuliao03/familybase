@@ -282,6 +282,23 @@ function unwrapEmbeddedRow(v) {
   return Array.isArray(v) ? v[0] ?? null : v;
 }
 
+/** Soma dos custos em pontos de resgates `pending` desta criança (compromisso até aprovação/rejeição). */
+async function sumPendingRedemptionPointsForChild(supabaseClient, childId) {
+  if (!childId) return 0;
+  const { data: pending, error } = await supabaseClient
+    .from('redemptions')
+    .select('reward_id')
+    .eq('child_id', childId)
+    .eq('status', 'pending');
+  if (error) throw new Error(error.message);
+  const ids = [...new Set((pending || []).map((p) => p.reward_id).filter(Boolean))];
+  if (!ids.length) return 0;
+  const { data: rews, error: rewErr } = await supabaseClient.from('rewards').select('id, point_cost').in('id', ids);
+  if (rewErr) throw new Error(rewErr.message);
+  const costById = new Map((rews || []).map((r) => [r.id, Number(r.point_cost ?? 0)]));
+  return (pending || []).reduce((sum, p) => sum + (costById.get(p.reward_id) ?? 0), 0);
+}
+
 /**
  * Lista `/allowance/redemptions/list`: formato plano como o SQLite antigo (`reward_name`, `child_name`, ícone…).
  */
@@ -2277,8 +2294,16 @@ const api = {
         .maybeSingle();
       if (!chRow) throw new Error('Perfil não encontrado nesta família.');
       const cost = Number(rew.point_cost ?? 0);
-      if (cost > Number(chRow.points ?? 0)) {
-        throw new Error('Pontos insuficientes para pedir esta recompensa.');
+      const points = Number(chRow.points ?? 0);
+      const reservedPending = await sumPendingRedemptionPointsForChild(supabase, resolvedChildId);
+      const available = Math.max(0, points - reservedPending);
+      if (cost > available) {
+        if (cost > points) {
+          throw new Error('Pontos insuficientes para pedir esta recompensa.');
+        }
+        throw new Error(
+          'Saldo disponível não chega: parte dos pontos já está comprometida com outros resgates à espera de aprovação pelo gestor.',
+        );
       }
 
       const { data, error } = await supabase
