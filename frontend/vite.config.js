@@ -39,6 +39,11 @@ export default defineConfig({
         /** Handlers de push (antes em public/sw.js; o SW efetivo é gerido pelo plugin). */
         importScripts: ['/sw-push-import.js'],
         runtimeCaching: [
+          /*
+           * Pedidos ao Supabase: sem cache no SW (Auth / REST / Realtime handshake / Functions / Storage no host *.supabase.co).
+           * Também não cachear proxy /api/supabase/*.
+           * Apenas fontes externas ficam CacheFirst por performance.
+           */
           {
             // Todo o host público Supabase (auth/rest/realtime via fetch, storage, functions) — sempre rede; evita SPA “presa”.
             urlPattern: /^https:\/\/[a-z0-9-]+\.supabase\.co\//i,

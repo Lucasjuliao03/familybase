@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
-import { supabase, mapAuthNetworkError, reconnectSupabaseRealtime } from '../lib/supabase';
-import { registerAuthResumeExecutor } from '../lib/authResumeCoordinator';
+import { supabase, mapAuthNetworkError, reconnectSupabaseRealtime, shouldReconnectSupabaseRealtime } from '../lib/supabase';
+import { dispatchFamiliaControlledResume } from '../lib/appResumeEvents';
 import { famDiag } from '../lib/famDiag';
 
 const AuthContext = createContext(null);
@@ -147,6 +147,8 @@ export function AuthProvider({ children }) {
   const userRef = useRef(null);
   const loadingRef = useRef(true);
   const tabHiddenAtRef = useRef(0);
+  /** Partilha a mesma Promessa se `performControlledResume` é chamado em paralelo. */
+  const controlledResumeInflightRef = useRef(null);
 
   useEffect(() => {
     userRef.current = user;
@@ -339,7 +341,7 @@ export function AuthProvider({ children }) {
           );
           // IMPORTANT: após incrementar a geração, o finally abaixo não desliga loading — fazemo-lo aqui
           if (typeof window !== 'undefined') {
-            window.dispatchEvent(new CustomEvent('familia-app-visible'));
+            dispatchFamiliaControlledResume();
           }
           setLoading(false);
         } else {
@@ -450,67 +452,70 @@ export function AuthProvider({ children }) {
   }, []);
 
   /**
-   * Chamado pelo useAppResume global ao regressar ao primeiro plano.
-   * Importante: faz sempre loadUserProfile com force=true (sessão válida mesmo com mesmo user.id).
+   * Uma só rotina ao voltar à aba: getSession → refreshSession → realtime (se preciso) → loadUserProfile.
+   * Partilha a mesma Promessa quando chamadas em paralelo; dispara UM evento para o ecrã atual (useAutoRefresh).
    */
-  const refreshAfterBackground = useCallback(async () => {
-    if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+  const performControlledResume = useCallback(async () => {
+    if (controlledResumeInflightRef.current) {
+      return controlledResumeInflightRef.current;
+    }
 
-    const t = tabHiddenAtRef.current;
-    if (t) {
+    const p = (async () => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+
+      const hiddenStarted = tabHiddenAtRef.current;
+      const hiddenMs = hiddenStarted ? Date.now() - hiddenStarted : 0;
       tabHiddenAtRef.current = 0;
-      if (Date.now() - t > 280) {
+      if (hiddenStarted && hiddenMs > 280) {
         profileInflightRef.current = null;
         profileLoadGenerationRef.current += 1;
       }
-    }
 
-    try {
-      const sessWrap = await raceMs(supabase.auth.getSession(), 6000);
-      if (!sessWrap) {
-        famDiag('auth/resume', 'getSession_timeout');
-        return;
-      }
-      const { data: sessData, error: sessErr } = sessWrap;
-      if (sessErr || !sessData?.session?.user?.id) return;
-
-      await raceMs(supabase.auth.refreshSession(), 6000).catch(() => {});
-
-      const refreshed = await raceMs(supabase.auth.getSession(), 5000);
-
-      let session = sessData.session;
-      let accessToken = session?.access_token ?? null;
-      if (refreshed?.data?.session) {
-        session = refreshed.data.session;
-        accessToken = session?.access_token ?? null;
-      }
-
-      const uid = session?.user?.id;
-      if (!uid) return;
-
-      await reconnectSupabaseRealtime(supabase, accessToken ?? undefined);
-
-      const em =
-        session.user.email ||
-        session.user.user_metadata?.email ||
-        session.user.new_email ||
-        '';
-      await loadUserProfile(uid, em, { force: true }).catch(console.warn);
-    } catch (e) {
-      console.warn('[auth] refreshAfterBackground:', e);
-    } finally {
       try {
-        window.dispatchEvent(new CustomEvent('familia-app-visible'));
-      } catch {
-        /* noop */
-      }
-    }
-  }, [loadUserProfile]);
+        const sessWrap = await raceMs(supabase.auth.getSession(), 6000);
+        if (!sessWrap) {
+          famDiag('auth/resume', 'getSession_timeout');
+          return;
+        }
+        const { data: sessData, error: sessErr } = sessWrap;
+        if (sessErr || !sessData?.session?.user?.id) return;
 
-  useEffect(() => {
-    registerAuthResumeExecutor(refreshAfterBackground);
-    return () => registerAuthResumeExecutor(async () => {});
-  }, [refreshAfterBackground]);
+        await raceMs(supabase.auth.refreshSession(), 6000).catch(() => {});
+
+        const refreshed = await raceMs(supabase.auth.getSession(), 5000);
+
+        let session = sessData.session;
+        let accessToken = session?.access_token ?? null;
+        if (refreshed?.data?.session) {
+          session = refreshed.data.session;
+          accessToken = session?.access_token ?? null;
+        }
+
+        const uid = session?.user?.id;
+        if (!uid) return;
+
+        if (shouldReconnectSupabaseRealtime(supabase, hiddenMs)) {
+          await reconnectSupabaseRealtime(supabase, accessToken ?? undefined);
+        }
+
+        const em =
+          session.user.email ||
+          session.user.user_metadata?.email ||
+          session.user.new_email ||
+          '';
+        await loadUserProfile(uid, em, { force: true }).catch(console.warn);
+        dispatchFamiliaControlledResume();
+      } catch (e) {
+        console.warn('[auth] performControlledResume:', e);
+      }
+    })();
+
+    controlledResumeInflightRef.current = p.catch(() => {}).finally(() => {
+      controlledResumeInflightRef.current = null;
+    });
+
+    return controlledResumeInflightRef.current;
+  }, [loadUserProfile]);
 
   const login = async (email, password) => {
     try {
@@ -632,7 +637,7 @@ export function AuthProvider({ children }) {
       fetchMe,
       ensureChildProfile,
       clearMustChangePassword,
-      refreshAfterBackground,
+      performControlledResume,
     }}>
       {children}
     </AuthContext.Provider>

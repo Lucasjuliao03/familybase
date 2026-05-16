@@ -2,7 +2,6 @@ import { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { useAppResume } from './hooks/useAppResume';
-import { ensureAuthResumeBeforeNetwork } from './lib/authResumeCoordinator';
 import { moduleAllowed, anyModuleAllowed } from './lib/familyModules';
 import { LanguageProvider } from './contexts/LanguageContext';
 import { ToastProvider } from './contexts/ToastContext';
@@ -308,9 +307,10 @@ function AppRoutes() {
   );
 }
 
-/** Sincroniza sessão Supabase globalmente ao regressar ao primeiro plano (`useAppResume` → coordinator). */
+/** Uma rotina por retorno à app: sessão/perfil primeiro; páginas reagem só ao evento único (`useAutoRefresh`). */
 function AppResumeSync() {
-  useAppResume({ onResume: ensureAuthResumeBeforeNetwork });
+  const { performControlledResume, user } = useAuth();
+  useAppResume({ onResume: performControlledResume, enabled: !!user?.id });
   return null;
 }
 

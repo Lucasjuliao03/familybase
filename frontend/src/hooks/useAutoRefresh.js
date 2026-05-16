@@ -1,96 +1,50 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
-import { ensureAuthResumeBeforeNetwork } from '../lib/authResumeCoordinator';
-
-function dispatchResumeEvent() {
-  if (typeof window === 'undefined') return;
-  try {
-    window.dispatchEvent(new CustomEvent('familia-app-visible'));
-  } catch {
-    /* noop */
-  }
-}
+import { FAMILIA_CONTROLLED_RESUME } from '../lib/appResumeEvents';
 
 /**
- * Recarrega dados ao mudar rota (`pathname` / `search`) e ao regressar ao foco / rede.
- * Antes de cada callback de ciclo-de-vida, corre `ensureAuthResumeBeforeNetwork` (mesma fila que o `api.get`)
- * para não pedir dados com sessão/token ainda congelados após a aba ter estado em segundo plano.
+ * - Ao mudar rota (`pathname` / `search`): uma chamada ao callback do ecrã.
+ * - Ao retomar a app: **uma** rodada quando o Auth dispara `familia-controlled-resume`
+ *   (não duplica listeners de visibility/focus aqui → evita centenas de pedidos).
  *
- * Mudanças de rota não passam pelo throttle de foco; o throttle limita apenas `focus` / `online` na mesma tela.
+ * O parâmetro `throttleMs` mantém‑se apenas por compatibilidade com chamadas antigas e é ignorado.
  *
- * @param {() => void} callback
- * @param {number} [throttleMs=2500]
+ * @param {() => void} callback idempotente
+ * @param {number} [_throttleMs]
  * @param {{ includeRouteChanges?: boolean }} [opts]
  */
-export default function useAutoRefresh(callback, throttleMs = 2500, opts = {}) {
+export default function useAutoRefresh(callback, _throttleMs = 2500, opts = {}) {
   const { includeRouteChanges = true } = opts;
   const location = useLocation();
   const cbRef = useRef(callback);
-  const lastThrottledRunRef = useRef(0);
 
   useEffect(() => {
     cbRef.current = callback;
   }, [callback]);
 
-  const notifyResume = useCallback(() => {
-    dispatchResumeEvent();
-  }, []);
-
+  /** Refetch apenas ao navegar dentro da SPA (sem gate global duplicado). */
   useEffect(() => {
     if (!includeRouteChanges) return undefined;
-    let cancelled = false;
-    void (async () => {
-      try {
-        await ensureAuthResumeBeforeNetwork();
-        if (!cancelled) cbRef.current?.();
-      } catch {
-        /* idem */
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
+    try {
+      cbRef.current?.();
+    } catch {
+      /* noop */
+    }
+    return undefined;
   }, [location.pathname, location.search, includeRouteChanges]);
 
   useEffect(() => {
-    const runAfterCoordinator = () => {
+    const onControlled = () => {
       try {
         cbRef.current?.();
       } catch {
-        /* idem */
+        /* noop */
       }
-      notifyResume();
     };
 
-    const onVisibility = () => {
-      if (document.visibilityState !== 'visible') return;
-      /** Imediato: aba recuperada ≠ evento foco (evita esperar throttle). */
-      lastThrottledRunRef.current = Date.now();
-      void (async () => {
-        await ensureAuthResumeBeforeNetwork();
-        runAfterCoordinator();
-      })();
-    };
-    /** Regressar à app sem troca visível estrita — reforço. */
-    const onWindowFocus = () => {
-      if (document.visibilityState !== 'visible') return;
-      const now = Date.now();
-      if (now - lastThrottledRunRef.current < throttleMs) return;
-      lastThrottledRunRef.current = now;
-      void (async () => {
-        await ensureAuthResumeBeforeNetwork();
-        runAfterCoordinator();
-      })();
-    };
-    const onOnline = () => onWindowFocus();
-
-    document.addEventListener('visibilitychange', onVisibility);
-    window.addEventListener('focus', onWindowFocus);
-    window.addEventListener('online', onOnline);
+    window.addEventListener(FAMILIA_CONTROLLED_RESUME, onControlled);
     return () => {
-      document.removeEventListener('visibilitychange', onVisibility);
-      window.removeEventListener('focus', onWindowFocus);
-      window.removeEventListener('online', onOnline);
+      window.removeEventListener(FAMILIA_CONTROLLED_RESUME, onControlled);
     };
-  }, [throttleMs, notifyResume]);
+  }, []);
 }

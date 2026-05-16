@@ -1,10 +1,13 @@
 import { useEffect, useRef } from 'react';
 
-const DEBOUNCE_MS = 180;
+/** Entre 500–1000 ms: um único lote controlado ao voltar ao app. */
+const DEBOUNCE_MS = 720;
 
 /**
- * Reage ao regresso da PWA ao primeiro plano (aba, foco ou rede).
- * Escuta visibilitychange → visible, window focus, online, pageshow e document resume.
+ * Retomada global da PWA: um debounce único para visibility → visible + focus + online.
+ *
+ * Usa apenas os três ganhos solicitados (`visibilitychange` para visível, `focus`, `online`),
+ * mutex em `resumeInFlightRef` e espera até `visibilityState === 'visible'` para correr callbacks.
  *
  * @param {{
  *   onResume: () => void | Promise<void>,
@@ -13,6 +16,10 @@ const DEBOUNCE_MS = 180;
  */
 export function useAppResume({ onResume, enabled = true }) {
   const onResumeRef = useRef(onResume);
+  /** Evita dois `onResume` em paralelo mesmo com vários timers. */
+  const resumeInFlightRef = useRef(false);
+  const debounceTimerRef = useRef(null);
+
   useEffect(() => {
     onResumeRef.current = onResume;
   }, [onResume]);
@@ -22,37 +29,47 @@ export function useAppResume({ onResume, enabled = true }) {
       return undefined;
     }
 
-    let debTimer;
-
-    const runWhenVisible = () => {
+    const flush = async () => {
+      clearTimeout(debounceTimerRef.current);
+      debounceTimerRef.current = null;
       if (document.visibilityState !== 'visible') return;
-      clearTimeout(debTimer);
-      debTimer = setTimeout(() => {
-        if (document.visibilityState !== 'visible') return;
+      if (resumeInFlightRef.current) return;
+      resumeInFlightRef.current = true;
+      try {
         const fn = onResumeRef.current;
-        if (typeof fn !== 'function') return;
-        Promise.resolve(fn()).catch((e) => console.warn('[useAppResume]', e));
-      }, DEBOUNCE_MS);
+        if (typeof fn === 'function') await fn();
+      } catch (e) {
+        console.warn('[useAppResume]', e);
+      } finally {
+        resumeInFlightRef.current = false;
+      }
+    };
+
+    const schedule = () => {
+      if (document.visibilityState !== 'visible') return;
+      clearTimeout(debounceTimerRef.current);
+      debounceTimerRef.current = window.setTimeout(flush, DEBOUNCE_MS);
     };
 
     const onVisibilityChange = () => {
-      if (document.visibilityState === 'hidden') return;
-      runWhenVisible();
+      if (document.visibilityState !== 'hidden') schedule();
     };
 
+    /** `focus`: outra app → browser deixa de ter foco; ao voltar reforço após debounce único */
+    const onFocus = schedule;
+    /** `online`: rede voltou mantendo página visível */
+    const onOnline = schedule;
+
     document.addEventListener('visibilitychange', onVisibilityChange);
-    window.addEventListener('focus', runWhenVisible);
-    window.addEventListener('online', runWhenVisible);
-    document.addEventListener('resume', runWhenVisible);
-    window.addEventListener('pageshow', runWhenVisible);
+    window.addEventListener('focus', onFocus);
+    window.addEventListener('online', onOnline);
 
     return () => {
       document.removeEventListener('visibilitychange', onVisibilityChange);
-      window.removeEventListener('focus', runWhenVisible);
-      window.removeEventListener('online', runWhenVisible);
-      document.removeEventListener('resume', runWhenVisible);
-      window.removeEventListener('pageshow', runWhenVisible);
-      clearTimeout(debTimer);
+      window.removeEventListener('focus', onFocus);
+      window.removeEventListener('online', onOnline);
+      clearTimeout(debounceTimerRef.current);
+      debounceTimerRef.current = null;
     };
   }, [enabled]);
 }
