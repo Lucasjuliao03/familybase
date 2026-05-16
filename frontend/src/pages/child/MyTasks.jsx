@@ -15,7 +15,9 @@ export default function MyTasks() {
 
   const fetchTasks = async () => {
     try {
-      const params = {};
+      const d = new Date();
+      const todayStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      const params = { date: todayStr };
       if (filter) params.status = filter;
       if (childProfile?.id) params.child_id = childProfile.id;
       const { data } = await api.get('/tasks/occurrences', { params });
@@ -23,7 +25,7 @@ export default function MyTasks() {
     } catch (e) { console.error(e); }
   };
 
-  useEffect(() => { fetchTasks(); }, [filter]);
+  useEffect(() => { fetchTasks(); }, [filter, childProfile?.id]);
 
   const handleComplete = async (id) => {
     try {

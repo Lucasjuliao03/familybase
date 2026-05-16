@@ -4,6 +4,7 @@ const { v4: uuidv4 } = require('uuid');
 const authMiddleware = require('../../middleware/auth');
 const { parentOnly } = require('../../middleware/permissions');
 const { requireModule, isEnabled } = require('../../middleware/familyModule');
+const { getCalendarDateYMD, getCalendarMonthYearFromYmd } = require('../../lib/calendarDate');
 
 // Helper: get child from user
 async function getChildFromUser(db, userId) {
@@ -77,7 +78,7 @@ router.get('/occurrences', async (req, res) => {
   try {
     const db = req.db;
     const { child_id, date, status } = req.query;
-    const targetDate = date || new Date().toISOString().split('T')[0];
+    const targetDate = date ? String(date).slice(0, 10) : getCalendarDateYMD(new Date());
 
     let query = `
       SELECT oc.*, t.title, t.description, t.type, t.points, t.coins, t.priority,
@@ -333,7 +334,7 @@ router.put('/occurrences/:id/complete', async (req, res) => {
       await awardPoints(db, occ, task, req.user);
     } else {
       // Notify parents for approval
-      if (isEnabled(db, req.user.familyId, 'notifications')) {
+      if (await isEnabled(db, req.user.familyId, 'notifications')) {
         const parents = await db.prepare("SELECT id FROM users WHERE family_id=? AND role IN ('parent','master')").all(req.user.familyId);
         const child = await db.prepare('SELECT name FROM children WHERE id=?').get(occ.child_id);
         for (const p of parents) {
@@ -359,16 +360,22 @@ router.put('/occurrences/:id/approve', parentOnly, async (req, res) => {
     const task = await db.prepare('SELECT * FROM tasks WHERE id=?').get(occ.task_id);
 
     if (approved) {
+      if (occ.status !== 'waiting_approval') {
+        return res.status(400).json({ error: 'Esta ocorrência não está aguardando aprovação' });
+      }
       await db.prepare(`UPDATE task_occurrences SET status='approved', approved_at=CURRENT_TIMESTAMP, approved_by=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`).run(req.user.id, occ.id);
       if (!task.is_health_reminder) await awardPoints(db, occ, task, req.user);
     } else {
+      if (occ.status !== 'waiting_approval') {
+        return res.status(400).json({ error: 'Esta ocorrência não está aguardando reprovação' });
+      }
       await db.prepare(`UPDATE task_occurrences SET status='rejected', rejected_at=CURRENT_TIMESTAMP, rejected_by=?, rejection_reason=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`).run(req.user.id, rejection_reason || null, occ.id);
       // Apply discount if rule exists
       const rule = await db.prepare('SELECT * FROM task_allowance_rules WHERE task_id=?').get(task.id);
       if (rule && rule.affects_allowance && rule.discount_amount > 0) {
         await applyAllowanceDebit(db, occ, task, rule, req.user);
       }
-      if (isEnabled(db, req.user.familyId, 'notifications')) {
+      if (await isEnabled(db, req.user.familyId, 'notifications')) {
         await db.prepare('INSERT INTO notifications (id,title,message,type,icon,child_id,family_id) VALUES (?,?,?,?,?,?,?)').run(
           uuidv4(), 'Tarefa reprovada', `"${task.title}" foi reprovada.${rejection_reason ? ' Motivo: ' + rejection_reason : ''}`, 'task', '❌', occ.child_id, req.user.familyId
         );
@@ -467,36 +474,48 @@ router.delete('/:id', parentOnly, async (req, res) => {
   } catch (err) { res.status(500).json({ error: 'Erro' }); }
 });
 
+async function allowanceTaskTxnExists(db, taskOccurrenceId) {
+  const row = await db.prepare(`SELECT id FROM allowance_transactions WHERE task_occurrence_id=? AND origin='task' LIMIT 1`).get(taskOccurrenceId);
+  return !!row;
+}
+
 // Helper: award points to child when task occurrence is approved/completed
 async function awardPoints(db, occ, task, user) {
-  if (task.is_health_reminder || !(task.points > 0)) {
+  if (task.is_health_reminder) {
     await db.prepare('UPDATE task_occurrences SET points_awarded=0 WHERE id=?').run(occ.id);
     return;
   }
+
+  const hasPointsOrCoins = (task.points > 0) || (task.coins > 0);
   const child = await db.prepare('SELECT * FROM children WHERE id=?').get(occ.child_id);
-  if (!child) return;
 
-  const newPts = child.points + task.points;
-  const newCoins = child.coins + (task.coins || 0);
-  let xp = child.xp + task.points, level = child.level, xpNext = child.xp_next_level;
-  while (xp >= xpNext) { xp -= xpNext; level++; xpNext = level * 100; }
-  const today = new Date().toISOString().split('T')[0];
-  const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
-  let streak = child.streak_last_date !== today ? (child.streak_last_date === yesterday ? child.streak_current + 1 : 1) : child.streak_current;
+  if (hasPointsOrCoins && child) {
+    const newPts = child.points + (task.points || 0);
+    const newCoins = child.coins + (task.coins || 0);
+    let xp = child.xp + (task.points || 0), level = child.level, xpNext = child.xp_next_level;
+    while (xp >= xpNext) { xp -= xpNext; level++; xpNext = level * 100; }
+    const today = getCalendarDateYMD(new Date());
+    const yest = new Date();
+    yest.setDate(yest.getDate() - 1);
+    const yesterday = getCalendarDateYMD(yest);
+    let streak = child.streak_last_date !== today ? (child.streak_last_date === yesterday ? child.streak_current + 1 : 1) : child.streak_current;
 
-  await db.prepare("UPDATE children SET points=?,coins=?,level=?,xp=?,xp_next_level=?,streak_current=?,streak_best=?,streak_last_date=?,updated_at=CURRENT_TIMESTAMP WHERE id=?")
-    .run(newPts, newCoins, level, xp, xpNext, streak, Math.max(child.streak_best, streak), today, occ.child_id);
+    await db.prepare("UPDATE children SET points=?,coins=?,level=?,xp=?,xp_next_level=?,streak_current=?,streak_best=?,streak_last_date=?,updated_at=CURRENT_TIMESTAMP WHERE id=?")
+      .run(newPts, newCoins, level, xp, xpNext, streak, Math.max(child.streak_best, streak), today, occ.child_id);
 
-  await db.prepare("UPDATE task_occurrences SET points_awarded=? WHERE id=?").run(task.points, occ.id);
-  await db.prepare('INSERT INTO history (id,event,points,coins,type,child_id,family_id) VALUES (?,?,?,?,?,?,?)').run(
-    uuidv4(), `Tarefa: ${task.title}`, task.points, task.coins || 0, 'task', occ.child_id, occ.family_id
-  );
+    await db.prepare("UPDATE task_occurrences SET points_awarded=? WHERE id=?").run(task.points || 0, occ.id);
+    await db.prepare('INSERT INTO history (id,event,points,coins,type,child_id,family_id) VALUES (?,?,?,?,?,?,?)').run(
+      uuidv4(), `Tarefa: ${task.title}`, task.points || 0, task.coins || 0, 'task', occ.child_id, occ.family_id
+    );
+  } else {
+    await db.prepare('UPDATE task_occurrences SET points_awarded=0 WHERE id=?').run(occ.id);
+  }
 
-  // Allowance bonus
+  // Allowance bonus (independente de pontos; idempotente por ocorrência)
   const rule = await db.prepare('SELECT * FROM task_allowance_rules WHERE task_id=?').get(task.id);
-  if (rule && rule.affects_allowance && rule.bonus_amount > 0) {
-    const now = new Date();
-    const cycle = await db.prepare("SELECT id FROM allowance_cycles WHERE child_id=? AND month=? AND year=? AND status='open'").get(occ.child_id, now.getMonth() + 1, now.getFullYear());
+  if (rule && rule.affects_allowance && Number(rule.bonus_amount) > 0 && !(await allowanceTaskTxnExists(db, occ.id))) {
+    const { month, year } = getCalendarMonthYearFromYmd(getCalendarDateYMD(new Date()));
+    const cycle = await db.prepare("SELECT id FROM allowance_cycles WHERE child_id=? AND month=? AND year=? AND status='open'").get(occ.child_id, month, year);
     if (cycle) {
       await db.prepare("INSERT INTO allowance_transactions (id, child_id, family_id, cycle_id, task_id, task_occurrence_id, type, origin, description, amount, status, approved_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)").run(
         uuidv4(), occ.child_id, occ.family_id, cycle.id, task.id, occ.id, 'credit', 'task', `Bônus: ${task.title}`, rule.bonus_amount, 'approved', user.id
@@ -505,17 +524,19 @@ async function awardPoints(db, occ, task, user) {
     }
   }
 
-  if (await isEnabled(db, occ.family_id, 'notifications')) {
+  if (hasPointsOrCoins && (await isEnabled(db, occ.family_id, 'notifications'))) {
     await db.prepare('INSERT INTO notifications (id,title,message,type,icon,child_id,family_id) VALUES (?,?,?,?,?,?,?)').run(
-      uuidv4(), 'Tarefa aprovada!', `+${task.points} pontos por "${task.title}"`, 'task', '⭐', occ.child_id, occ.family_id
+      uuidv4(), 'Tarefa aprovada!', `+${task.points || 0} pontos por "${task.title}"`, 'task', '⭐', occ.child_id, occ.family_id
     );
   }
 }
 
 async function applyAllowanceDebit(db, occ, task, rule, user) {
-  const now = new Date();
-  const cycle = await db.prepare("SELECT id FROM allowance_cycles WHERE child_id=? AND month=? AND year=? AND status='open'").get(occ.child_id, now.getMonth() + 1, now.getFullYear());
-  if (cycle && rule.discount_amount > 0) {
+  if (!rule || !rule.affects_allowance || Number(rule.discount_amount) <= 0) return;
+  if (await allowanceTaskTxnExists(db, occ.id)) return;
+  const { month, year } = getCalendarMonthYearFromYmd(getCalendarDateYMD(new Date()));
+  const cycle = await db.prepare("SELECT id FROM allowance_cycles WHERE child_id=? AND month=? AND year=? AND status='open'").get(occ.child_id, month, year);
+  if (cycle) {
     await db.prepare("INSERT INTO allowance_transactions (id, child_id, family_id, cycle_id, task_id, task_occurrence_id, type, origin, description, amount, status, approved_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)").run(
       uuidv4(), occ.child_id, occ.family_id, cycle.id, task.id, occ.id, 'debit', 'task', `Desconto: ${task.title} reprovada`, rule.discount_amount, 'approved', user.id
     );

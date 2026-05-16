@@ -164,7 +164,8 @@ async function checkAndAwardMedals(supabase, childId, familyId, currentStreak) {
     }
 
     if (toAward.length) {
-      await supabase.from('earned_medals').upsert(toAward, { onConflict: 'medal_id,child_id', ignoreDuplicates: true });
+      const { error: upEmErr } = await supabase.from('earned_medals').upsert(toAward, { onConflict: 'medal_id,child_id', ignoreDuplicates: true });
+      if (upEmErr) console.warn('earned_medals upsert:', upEmErr.message);
       if (bonusPoints > 0) {
         const { data: ch } = await supabase.from('children').select('points').eq('id', childId).single();
         if (ch) await supabase.from('children').update({ points: (ch.points || 0) + bonusPoints }).eq('id', childId);
@@ -198,6 +199,160 @@ function normalizeTimeForDb(t) {
   if (/^\d{2}:\d{2}:\d{2}/.test(s)) return s.slice(0, 8);
   if (/^\d{2}:\d{2}$/.test(s)) return `${s}:00`;
   return s;
+}
+
+async function ensureOpenAllowanceCycleRow(supabase, familyId, childId) {
+  const ymd = toYMDLocal(new Date());
+  const ym = ymd.match(/^(\d{4})-(\d{2})-\d{2}$/);
+  const year = ym ? Number(ym[1]) : NaN;
+  const month = ym ? Number(ym[2]) : NaN;
+  if (!month || !year || Number.isNaN(month) || Number.isNaN(year)) return null;
+
+  const { data: existing } = await supabase
+    .from('allowance_cycles')
+    .select('*')
+    .eq('child_id', childId)
+    .eq('family_id', familyId)
+    .eq('month', month)
+    .eq('year', year)
+    .eq('status', 'open')
+    .maybeSingle();
+
+  if (existing) return existing;
+
+  const { data: settings } = await supabase.from('allowance_settings').select('base_amount, allow_accumulation').eq('child_id', childId).maybeSingle();
+  const base = settings?.base_amount ?? 0;
+  const { data: prevRow } = await supabase
+    .from('allowance_cycles')
+    .select('final_amount')
+    .eq('child_id', childId)
+    .eq('family_id', familyId)
+    .order('year', { ascending: false })
+    .order('month', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const opening = settings?.allow_accumulation && prevRow?.final_amount != null ? Number(prevRow.final_amount) : 0;
+
+  const { data: inserted, error } = await supabase
+    .from('allowance_cycles')
+    .insert({
+      family_id: familyId,
+      child_id: childId,
+      month,
+      year,
+      status: 'open',
+      opening_balance: opening,
+      base_amount: base,
+    })
+    .select()
+    .maybeSingle();
+
+  if (error) {
+    console.warn('[allowance] ciclo aberto:', error.message);
+    return null;
+  }
+  return inserted || null;
+}
+
+async function allowanceTaskTxnPosted(supabase, occId) {
+  const { data } = await supabase
+    .from('allowance_transactions')
+    .select('id')
+    .eq('task_occurrence_id', occId)
+    .eq('origin', 'task')
+    .maybeSingle();
+  return !!data?.id;
+}
+
+async function syncTaskAllowanceRules(supabase, taskId, allowanceRule) {
+  if (!taskId) return;
+  if (!allowanceRule || !allowanceRule.affects_allowance) {
+    await supabase.from('task_allowance_rules').delete().eq('task_id', taskId).catch(() => {});
+    await supabase.from('tasks').update({ affects_allowance: false }).eq('id', taskId).catch(() => {});
+    return;
+  }
+
+  const payload = {
+    task_id: taskId,
+    affects_allowance: true,
+    bonus_amount: Number(allowanceRule.bonus_amount ?? 0),
+    discount_amount: Number(allowanceRule.discount_amount ?? 0),
+    apply_discount_if_late: !!allowanceRule.apply_discount_if_late,
+  };
+
+  const { error: upErr } = await supabase.from('task_allowance_rules').upsert(payload, { onConflict: 'task_id' });
+  if (upErr) console.warn('[task_allowance_rules]', upErr.message);
+
+  await supabase.from('tasks').update({ affects_allowance: true }).eq('id', taskId).catch(() => {});
+}
+
+async function applyTaskOccurrenceAllowanceOnDecision(supabase, { familyId, userId, occurrenceId, approved, task }) {
+  if (!task || task.is_health_reminder) return;
+
+  const { data: rule } = await supabase.from('task_allowance_rules').select('*').eq('task_id', task.id).maybeSingle();
+  if (!rule?.affects_allowance) return;
+  if (await allowanceTaskTxnPosted(supabase, occurrenceId)) return;
+
+  const cycle = await ensureOpenAllowanceCycleRow(supabase, familyId, task.child_id);
+  if (!cycle?.id) return;
+
+  const title = task.title || 'Tarefa';
+
+  if (approved && Number(rule.bonus_amount) > 0) {
+    const amt = Number(rule.bonus_amount);
+    const { error: insErr } = await supabase.from('allowance_transactions').insert({
+      id: uuidv4(),
+      family_id: familyId,
+      child_id: task.child_id,
+      cycle_id: cycle.id,
+      task_id: task.id,
+      task_occurrence_id: occurrenceId,
+      type: 'credit',
+      origin: 'task',
+      description: `Bônus: ${title}`,
+      amount: amt,
+      status: 'approved',
+      approved_by: userId,
+      balance_after: 0,
+    });
+    if (insErr && !/duplicate key|unique constraint/i.test(insErr.message || '')) {
+      console.warn('[task] bônus mesada:', insErr.message);
+      return;
+    }
+    if (!insErr) {
+      const { data: cyc } = await supabase.from('allowance_cycles').select('total_bonus').eq('id', cycle.id).maybeSingle();
+      await supabase.from('allowance_cycles').update({ total_bonus: Number(cyc?.total_bonus ?? 0) + amt }).eq('id', cycle.id);
+    }
+    return;
+  }
+
+  if (!approved && Number(rule.discount_amount) > 0) {
+    const amt = Number(rule.discount_amount);
+    const { error: insErr } = await supabase.from('allowance_transactions').insert({
+      id: uuidv4(),
+      family_id: familyId,
+      child_id: task.child_id,
+      cycle_id: cycle.id,
+      task_id: task.id,
+      task_occurrence_id: occurrenceId,
+      type: 'debit',
+      origin: 'task',
+      description: `Desconto: ${title} reprovada`,
+      amount: amt,
+      status: 'approved',
+      approved_by: userId,
+      balance_after: 0,
+    });
+    if (insErr && !/duplicate key|unique constraint/i.test(insErr.message || '')) {
+      console.warn('[task] desconto mesada:', insErr.message);
+      return;
+    }
+    if (!insErr) {
+      const { data: cyc } = await supabase.from('allowance_cycles').select('total_discount').eq('id', cycle.id).maybeSingle();
+      await supabase.from('allowance_cycles').update({ total_discount: Number(cyc?.total_discount ?? 0) + amt }).eq('id', cycle.id);
+    }
+  }
 }
 
 function mapCalendarEventFromDb(d) {
@@ -636,7 +791,7 @@ const api = {
     }
 
     if (path.startsWith('/tasks/occurrences')) {
-      let q = supabase.from('task_occurrences').select('*, tasks(*)').eq('family_id', familyId);
+      let q = supabase.from('task_occurrences').select('*, tasks(*, task_allowance_rules(*))').eq('family_id', familyId);
       const d = config.params?.date || config.params?.occurrence_date;
       if (d) q = q.eq('occurrence_date', String(d).slice(0, 10));
       const childId = config.params?.child_id;
@@ -647,6 +802,8 @@ const api = {
       if (error) throw new Error(error.message);
       const mapOcc = (o) => {
         const t = o.tasks || {};
+        const rRaw = t.task_allowance_rules;
+        const r = Array.isArray(rRaw) ? rRaw[0] : rRaw;
         return {
           ...o,
           occurrence_date: normalizeDbDate(o.occurrence_date),
@@ -659,6 +816,9 @@ const api = {
           is_recurring: t.is_recurring,
           due_time: t.due_time,
           is_health_reminder: t.is_health_reminder,
+          affects_allowance: !!t.affects_allowance || !!r?.affects_allowance,
+          bonus_amount: r?.bonus_amount ?? null,
+          discount_amount: r?.discount_amount ?? null,
         };
       };
       const rows = (data || []).map(mapOcc);
@@ -678,8 +838,20 @@ const api = {
     }
 
     if (path.startsWith('/tasks')) {
-      const { data } = await supabase.from('tasks').select('*').eq('family_id', familyId);
-      return { data: data || [] };
+      const { data, error } = await supabase.from('tasks').select('*, task_allowance_rules(*)').eq('family_id', familyId);
+      if (error) throw new Error(error.message);
+      const rows = (data || []).map((t) => {
+        const rRaw = t.task_allowance_rules;
+        const r = Array.isArray(rRaw) ? rRaw[0] : rRaw;
+        const { task_allowance_rules: _drop, ...rest } = t;
+        return {
+          ...rest,
+          bonus_amount: r?.bonus_amount ?? 0,
+          discount_amount: r?.discount_amount ?? 0,
+          apply_discount_if_late: !!r?.apply_discount_if_late,
+        };
+      });
+      return { data: rows };
     }
 
     if (path === '/families') {
@@ -1212,12 +1384,14 @@ const api = {
     
     if (path.startsWith('/tasks') && !path.startsWith('/tasks/occurrences')) {
       const safeBody = { ...body };
+      const allowanceRule = body.allowance_rule;
       delete safeBody.allowance_rule;
       if (safeBody.end_date === '') safeBody.end_date = null;
       if (safeBody.due_time === '') safeBody.due_time = null;
       if (safeBody.start_date === '') safeBody.start_date = null;
       safeBody.start_date = normalizeDbDate(safeBody.start_date) || toYMDLocal();
       if (safeBody.end_date) safeBody.end_date = normalizeDbDate(safeBody.end_date);
+      safeBody.affects_allowance = !!(allowanceRule && allowanceRule.affects_allowance);
 
       const { data: taskRow, error } = await supabase
         .from('tasks')
@@ -1226,17 +1400,25 @@ const api = {
         .single();
       if (error) throw new Error(error.message);
 
+      if (allowanceRule !== undefined) {
+        await syncTaskAllowanceRules(supabase, taskRow.id, allowanceRule);
+      }
+
       const occDates = computeOccurrenceDatesForTask(taskRow);
       if (occDates.length && taskRow.child_id) {
+        const timePart = taskRow.due_time ? normalizeTimeForDb(taskRow.due_time) : null;
         const occRows = occDates.map((od) => ({
           id: uuidv4(),
           task_id: taskRow.id,
           family_id: familyId,
           child_id: taskRow.child_id,
           occurrence_date: od,
+          due_datetime: timePart ? `${od}T${timePart}` : null,
           status: 'pending',
         }));
-        const { error: ocErr } = await supabase.from('task_occurrences').insert(occRows);
+        const { error: ocErr } = await supabase
+          .from('task_occurrences')
+          .upsert(occRows, { onConflict: 'task_id,child_id,occurrence_date', ignoreDuplicates: true });
         if (ocErr) console.warn('[tasks] ocorrências:', ocErr.message);
       }
       return { data: taskRow };
@@ -1963,6 +2145,36 @@ const api = {
       return { data };
     }
 
+    const updateTaskTemplateMatch = path.match(/^\/tasks\/([^/]+)$/);
+    if (updateTaskTemplateMatch && updateTaskTemplateMatch[1] !== 'occurrences') {
+      const taskId = updateTaskTemplateMatch[1];
+      const safeBody = { ...body };
+      const allowanceRule = body.allowance_rule;
+      delete safeBody.allowance_rule;
+      if (safeBody.end_date === '') safeBody.end_date = null;
+      if (safeBody.due_time === '') safeBody.due_time = null;
+      if (safeBody.start_date === '') safeBody.start_date = null;
+      if (safeBody.start_date) safeBody.start_date = normalizeDbDate(safeBody.start_date);
+      if (safeBody.end_date) safeBody.end_date = normalizeDbDate(safeBody.end_date);
+      if (allowanceRule !== undefined) {
+        safeBody.affects_allowance = !!(allowanceRule && allowanceRule.affects_allowance);
+      }
+
+      const { data: taskRow, error } = await supabase
+        .from('tasks')
+        .update(omitUndefined(safeBody))
+        .eq('id', taskId)
+        .eq('family_id', familyId)
+        .select()
+        .single();
+      if (error) throw new Error(error.message);
+
+      if (allowanceRule !== undefined) {
+        await syncTaskAllowanceRules(supabase, taskId, allowanceRule);
+      }
+      return { data: taskRow };
+    }
+
     const completeMatch = path.match(/^\/tasks\/occurrences\/([^/]+)\/complete$/);
     if (completeMatch) {
       const occId = completeMatch[1];
@@ -1987,21 +2199,30 @@ const api = {
         .eq('id', occId);
       if (error) throw new Error(error.message);
 
-      // Se não precisa de aprovação, atribuir pontos imediatamente
-      if (newStatus === 'completed' && occ.child_id && (task?.points > 0 || task?.coins > 0)) {
+      /* Auto-concluídas (sem aprovação): mesada e gamificação na mesma transição */
+      if (newStatus === 'completed' && occ.child_id && task && !task.is_health_reminder) {
+        await applyTaskOccurrenceAllowanceOnDecision(supabase, { familyId, userId, occurrenceId: occId, approved: true, task });
+      }
+
+      if (newStatus === 'completed' && occ.child_id && task && !task.is_health_reminder && ((task.points || 0) > 0 || (task.coins || 0) > 0)) {
         const taskPoints = task.points || 0;
         const taskCoins = task.coins || 0;
         await supabase.from('task_occurrences').update({ points_awarded: taskPoints }).eq('id', occId);
         const { data: child } = await supabase.from('children').select('points, coins, xp, xp_next_level, level, streak_current, streak_best, streak_last_date').eq('id', occ.child_id).single();
         if (child) {
-          const today = new Date().toISOString().split('T')[0];
-          const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
-          const lastDate = child.streak_last_date;
+          const today = toYMDLocal(new Date());
+          const y = new Date();
+          y.setDate(y.getDate() - 1);
+          const yesterday = toYMDLocal(y);
+          const lastDate = child.streak_last_date ? normalizeDbDate(child.streak_last_date) : null;
           const newStreak = lastDate === yesterday ? (child.streak_current || 0) + 1 : lastDate === today ? child.streak_current : 1;
           const newXp = (child.xp || 0) + taskPoints;
           let newLevel = child.level || 1;
           let newXpNext = child.xp_next_level || 100;
-          if (newXp >= newXpNext) { newLevel++; newXpNext = Math.round(newXpNext * 1.5); }
+          if (newXp >= newXpNext) {
+            newLevel++;
+            newXpNext = Math.round(newXpNext * 1.5);
+          }
           await supabase.from('children').update({
             points: (child.points || 0) + taskPoints,
             coins: (child.coins || 0) + taskCoins,
@@ -2012,9 +2233,14 @@ const api = {
             streak_best: Math.max(newStreak, child.streak_best || 0),
             streak_last_date: today,
           }).eq('id', occ.child_id);
-          await checkAndAwardMedals(supabase, occ.child_id, familyId, newStreak);
         }
       }
+
+      if (newStatus === 'completed' && occ.child_id && task && !task.is_health_reminder) {
+        const { data: chAfter } = await supabase.from('children').select('streak_current').eq('id', occ.child_id).maybeSingle();
+        await checkAndAwardMedals(supabase, occ.child_id, familyId, chAfter?.streak_current || 0);
+      }
+
       return { data: { message: 'Ocorrência atualizada', status: newStatus } };
     }
 
@@ -2022,46 +2248,68 @@ const api = {
     if (approveMatch) {
       const occId = approveMatch[1];
       const approved = !!body?.approved;
+
       const patch = approved
         ? { status: 'approved', approved_at: new Date().toISOString(), approved_by: userId }
         : { status: 'rejected', rejected_at: new Date().toISOString(), rejected_by: userId, rejection_reason: body?.rejection_reason || null };
-      const { data, error } = await supabase.from('task_occurrences').update(patch).eq('id', occId).eq('family_id', familyId).select('*, tasks(points, coins)').single();
-      if (error) throw new Error(error.message);
 
-      // Ao aprovar: atribuir pontos/moedas à criança e verificar medalhas
-      if (approved && data?.child_id) {
-        const taskPoints = data.tasks?.points || 0;
-        const taskCoins = data.tasks?.coins || 0;
-        if (taskPoints > 0 || taskCoins > 0) {
-          // Atualiza points_awarded na ocorrência
-          await supabase.from('task_occurrences').update({ points_awarded: taskPoints }).eq('id', occId);
-          // Incrementa pontos/moedas/xp na criança
-          const { data: child } = await supabase.from('children').select('points, coins, xp, xp_next_level, level, streak_current, streak_best, streak_last_date').eq('id', data.child_id).single();
-          if (child) {
-            const today = new Date().toISOString().split('T')[0];
-            const lastDate = child.streak_last_date;
-            const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
-            const newStreak = lastDate === yesterday ? (child.streak_current || 0) + 1 : lastDate === today ? child.streak_current : 1;
-            const newXp = (child.xp || 0) + taskPoints;
-            let newLevel = child.level || 1;
-            let newXpNext = child.xp_next_level || 100;
-            if (newXp >= newXpNext) { newLevel++; newXpNext = Math.round(newXpNext * 1.5); }
-            await supabase.from('children').update({
-              points: (child.points || 0) + taskPoints,
-              coins: (child.coins || 0) + taskCoins,
-              xp: newXp,
-              level: newLevel,
-              xp_next_level: newXpNext,
-              streak_current: newStreak,
-              streak_best: Math.max(newStreak, child.streak_best || 0),
-              streak_last_date: today,
-              updated_at: new Date().toISOString(),
-            }).eq('id', data.child_id);
-            // Verificar e atribuir medalhas
-            await checkAndAwardMedals(supabase, data.child_id, familyId, newStreak);
+      const { data, error } = await supabase
+        .from('task_occurrences')
+        .update(patch)
+        .eq('id', occId)
+        .eq('family_id', familyId)
+        .eq('status', 'waiting_approval')
+        .select('*, tasks(*)')
+        .maybeSingle();
+
+      if (error) throw new Error(error.message);
+      if (!data) {
+        return { data: { ok: true, noop: true, message: 'Esta ocorrência já foi processada' } };
+      }
+
+      const task = data.tasks;
+      if (task && !task.is_health_reminder) {
+        await applyTaskOccurrenceAllowanceOnDecision(supabase, { familyId, userId, occurrenceId: occId, approved, task });
+      }
+
+      if (approved && data?.child_id && task && !task.is_health_reminder && ((task.points || 0) > 0 || (task.coins || 0) > 0)) {
+        const taskPoints = task.points || 0;
+        const taskCoins = task.coins || 0;
+        await supabase.from('task_occurrences').update({ points_awarded: taskPoints }).eq('id', occId);
+        const { data: child } = await supabase.from('children').select('points, coins, xp, xp_next_level, level, streak_current, streak_best, streak_last_date').eq('id', data.child_id).single();
+        if (child) {
+          const today = toYMDLocal(new Date());
+          const y = new Date();
+          y.setDate(y.getDate() - 1);
+          const yesterday = toYMDLocal(y);
+          const lastDate = child.streak_last_date ? normalizeDbDate(child.streak_last_date) : null;
+          const newStreak = lastDate === yesterday ? (child.streak_current || 0) + 1 : lastDate === today ? child.streak_current : 1;
+          const newXp = (child.xp || 0) + taskPoints;
+          let newLevel = child.level || 1;
+          let newXpNext = child.xp_next_level || 100;
+          if (newXp >= newXpNext) {
+            newLevel++;
+            newXpNext = Math.round(newXpNext * 1.5);
           }
+          await supabase.from('children').update({
+            points: (child.points || 0) + taskPoints,
+            coins: (child.coins || 0) + taskCoins,
+            xp: newXp,
+            level: newLevel,
+            xp_next_level: newXpNext,
+            streak_current: newStreak,
+            streak_best: Math.max(newStreak, child.streak_best || 0),
+            streak_last_date: today,
+            updated_at: new Date().toISOString(),
+          }).eq('id', data.child_id);
         }
       }
+
+      if (approved && data?.child_id && task && !task.is_health_reminder) {
+        const { data: chAfter } = await supabase.from('children').select('streak_current').eq('id', data.child_id).maybeSingle();
+        await checkAndAwardMedals(supabase, data.child_id, familyId, chAfter?.streak_current || 0);
+      }
+
       return { data };
     }
 

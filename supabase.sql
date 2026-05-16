@@ -128,6 +128,16 @@ CREATE TABLE IF NOT EXISTS public.task_occurrences (
     UNIQUE(task_id, child_id, occurrence_date)
 );
 
+CREATE TABLE IF NOT EXISTS public.task_allowance_rules (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    task_id UUID NOT NULL REFERENCES public.tasks(id) ON DELETE CASCADE,
+    affects_allowance BOOLEAN DEFAULT FALSE,
+    bonus_amount NUMERIC DEFAULT 0,
+    discount_amount NUMERIC DEFAULT 0,
+    apply_discount_if_late BOOLEAN DEFAULT FALSE,
+    UNIQUE (task_id)
+);
+
 CREATE TABLE IF NOT EXISTS public.rewards (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name TEXT NOT NULL,
@@ -207,6 +217,10 @@ CREATE TABLE IF NOT EXISTS public.allowance_transactions (
     approved_by UUID REFERENCES public.users(id) ON DELETE SET NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_allowance_tx_task_occurrence_task_origin
+    ON public.allowance_transactions(task_occurrence_id)
+    WHERE task_occurrence_id IS NOT NULL AND origin = 'task';
 
 CREATE TABLE IF NOT EXISTS public.savings_goals (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -328,6 +342,7 @@ ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.children ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.tasks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.task_occurrences ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.task_allowance_rules ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.rewards ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.redemptions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.allowance_settings ENABLE ROW LEVEL SECURITY;
@@ -349,6 +364,11 @@ CREATE POLICY "Users can view family users" ON public.users FOR SELECT USING (fa
 CREATE POLICY "Users can view family children" ON public.children FOR ALL USING (family_id = public.get_current_user_family_id());
 CREATE POLICY "Users can view family tasks" ON public.tasks FOR ALL USING (family_id = public.get_current_user_family_id());
 CREATE POLICY "Users can view family task_occurrences" ON public.task_occurrences FOR ALL USING (family_id = public.get_current_user_family_id());
+CREATE POLICY "Users can view family task_allowance_rules" ON public.task_allowance_rules FOR ALL USING (
+    EXISTS (SELECT 1 FROM public.tasks t WHERE t.id = task_allowance_rules.task_id AND t.family_id = public.get_current_user_family_id())
+) WITH CHECK (
+    EXISTS (SELECT 1 FROM public.tasks t WHERE t.id = task_allowance_rules.task_id AND t.family_id = public.get_current_user_family_id())
+);
 CREATE POLICY "Users can view family rewards" ON public.rewards FOR ALL USING (family_id = public.get_current_user_family_id());
 CREATE POLICY "Users can view family redemptions" ON public.redemptions FOR ALL USING (child_id IN (SELECT id FROM public.children WHERE family_id = public.get_current_user_family_id()));
 CREATE POLICY "Users can view family allowance" ON public.allowance_settings FOR ALL USING (family_id = public.get_current_user_family_id());

@@ -5,6 +5,7 @@
 
 const { v4: uuidv4 } = require('uuid');
 const { isEnabled } = require('../middleware/familyModule');
+const { getCalendarDateYMD } = require('./calendarDate');
 
 function parseTimes(medRow) {
   if (medRow.scheduled_times) {
@@ -54,7 +55,7 @@ async function syncMedicationReminderTasks(db, medicationId) {
   if (!start) return;
   const end = med.end_date || start;
 
-  const today = new Date().toISOString().split('T')[0];
+  const today = getCalendarDateYMD(new Date());
 
   const patientUserId = med.patient_user_id || null;
   const assigneeUserId = patientUserId || null;

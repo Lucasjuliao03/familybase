@@ -1,6 +1,7 @@
 const cron = require('node-cron');
 const { v4: uuidv4 } = require('uuid');
 const { isEnabled } = require('../middleware/familyModule');
+const { getCalendarDateYMD } = require('../lib/calendarDate');
 
 function logCronDbError(context, err) {
   const code = err && (err.code || err.errno);
@@ -18,9 +19,19 @@ function logCronDbError(context, err) {
 async function generateTaskOccurrences(db) {
   try {
   const today = new Date();
-  const todayStr = today.toISOString().split('T')[0];
-  const dayOfWeek = today.getDay();
-  const dayOfMonth = today.getDate();
+  /** Data civil estável por fuso configurável — evita “dia errado” em servidores UTC */
+  const todayStr = getCalendarDateYMD(today);
+  const [, , dayStr] = todayStr.split('-');
+  /** weekday / day-of-month relativos ao calendário do fuso configurado */
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: process.env.FAMILYBASE_CALENDAR_TIMEZONE || 'UTC',
+    weekday: 'short',
+    day: 'numeric',
+  }).formatToParts(today);
+  const wk = parts.find((p) => p.type === 'weekday')?.value;
+  const dowMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  const dayOfWeek = dowMap[wk] ?? today.getDay();
+  const dayOfMonth = Number(dayStr) || today.getDate();
 
   const recurringTasks = await db.prepare(`
     SELECT t.* FROM tasks t
@@ -118,7 +129,7 @@ async function generateTaskOccurrences(db) {
 async function markExpiredOccurrences(db) {
   try {
   const now = new Date().toISOString();
-  const today = new Date().toISOString().split('T')[0];
+  const today = getCalendarDateYMD(new Date());
 
   const delayedResult = await db.prepare(`
     UPDATE task_occurrences 
@@ -129,9 +140,9 @@ async function markExpiredOccurrences(db) {
     AND occurrence_date = ?
   `).run(now, today);
 
-  const yesterday = new Date();
-  yesterday.setDate(yesterday.getDate() - 1);
-  const yesterdayStr = yesterday.toISOString().split('T')[0];
+  const yest = new Date();
+  yest.setDate(yest.getDate() - 1);
+  const yesterdayStr = getCalendarDateYMD(yest);
 
   const expiredResult = await db.prepare(`
     UPDATE task_occurrences 
