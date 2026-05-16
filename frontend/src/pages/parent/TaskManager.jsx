@@ -53,7 +53,7 @@ export default function TaskManager() {
     api.get('/families/children').then(r => setChildren(r.data)).catch(() => {});
   }, [fetchData, location.pathname]);
 
-  useAutoRefresh(fetchData, 2600, { includeRouteChanges: false });
+  useAutoRefresh(fetchData, 2600);
 
   useDailyCalendarRefresh(fetchData);
 

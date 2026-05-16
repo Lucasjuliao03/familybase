@@ -75,7 +75,7 @@ export default function MyCalendar() {
     };
   }, [calendarParams, location.pathname]);
 
-  useAutoRefresh(reloadCalendarRange, 2600, { includeRouteChanges: false });
+  useAutoRefresh(reloadCalendarRange, 2600);
 
   const todayStr = formatLocalYMD(new Date());
 

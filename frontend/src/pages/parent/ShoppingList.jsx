@@ -47,7 +47,7 @@ export default function ShoppingList() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
   /** Ciclo vida (tabs); navegação remonta página e volta a usar o mesmo useEffect — sem throttle aqui. */
-  useAutoRefresh(useCallback(() => fetchData({ silent: true }), [fetchData]), 2500, { includeRouteChanges: false });
+  useAutoRefresh(useCallback(() => fetchData({ silent: true }), [fetchData]), 2500);
 
   const handleCreateOrEdit = async (e) => {
     e.preventDefault();

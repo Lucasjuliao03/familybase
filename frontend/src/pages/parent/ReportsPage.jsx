@@ -85,7 +85,7 @@ export default function ReportsPage() {
     }
   }, [selectedChild]);
 
-  useAutoRefresh(reloadFromVisibility, 2600, { includeRouteChanges: false });
+  useAutoRefresh(reloadFromVisibility, 2600);
 
   if (blocking && !report) {
     return (

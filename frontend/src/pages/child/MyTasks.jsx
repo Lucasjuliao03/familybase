@@ -31,7 +31,7 @@ export default function MyTasks() {
 
   useEffect(() => { fetchTasks(); }, [fetchTasks, location.pathname]);
 
-  useAutoRefresh(fetchTasks, 2600, { includeRouteChanges: false });
+  useAutoRefresh(fetchTasks, 2600);
 
   useDailyCalendarRefresh(fetchTasks);
 

@@ -35,7 +35,7 @@ export default function MyFamilyShop() {
     fetchData();
   }, [fetchData, location.pathname]);
 
-  useAutoRefresh(fetchData, 2600, { includeRouteChanges: false });
+  useAutoRefresh(fetchData, 2600);
 
   const pendingReservedPoints = useMemo(
     () =>

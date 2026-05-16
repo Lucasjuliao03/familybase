@@ -41,7 +41,7 @@ export default function MyGrades() {
     loadBundle();
   }, [loadBundle, location.pathname]);
 
-  useAutoRefresh(loadBundle, 2600, { includeRouteChanges: false });
+  useAutoRefresh(loadBundle, 2600);
 
   const handleCreate = async (e) => {
     e.preventDefault();

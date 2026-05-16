@@ -35,7 +35,7 @@ export default function FamilyShopManager() {
     fetchData();
   }, [fetchData, location.pathname]);
 
-  useAutoRefresh(fetchData, 2600, { includeRouteChanges: false });
+  useAutoRefresh(fetchData, 2600);
 
   const handleSaveReward = async (e) => {
     e.preventDefault();

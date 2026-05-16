@@ -2,6 +2,7 @@ import { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { useAppResume } from './hooks/useAppResume';
+import { ensureAuthResumeBeforeNetwork } from './lib/authResumeCoordinator';
 import { moduleAllowed, anyModuleAllowed } from './lib/familyModules';
 import { LanguageProvider } from './contexts/LanguageContext';
 import { ToastProvider } from './contexts/ToastContext';
@@ -307,10 +308,9 @@ function AppRoutes() {
   );
 }
 
-/** Sincroniza sessão Supabase + perfil/família/módulos após regressar ao primeiro plano (ver useAppResume). */
+/** Sincroniza sessão Supabase globalmente ao regressar ao primeiro plano (`useAppResume` → coordinator). */
 function AppResumeSync() {
-  const { refreshAfterBackground } = useAuth();
-  useAppResume({ onResume: refreshAfterBackground });
+  useAppResume({ onResume: ensureAuthResumeBeforeNetwork });
   return null;
 }
 

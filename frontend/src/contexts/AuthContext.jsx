@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
 import { supabase, mapAuthNetworkError, reconnectSupabaseRealtime } from '../lib/supabase';
+import { registerAuthResumeExecutor } from '../lib/authResumeCoordinator';
 import { famDiag } from '../lib/famDiag';
 
 const AuthContext = createContext(null);
@@ -505,6 +506,11 @@ export function AuthProvider({ children }) {
       }
     }
   }, [loadUserProfile]);
+
+  useEffect(() => {
+    registerAuthResumeExecutor(refreshAfterBackground);
+    return () => registerAuthResumeExecutor(async () => {});
+  }, [refreshAfterBackground]);
 
   const login = async (email, password) => {
     try {

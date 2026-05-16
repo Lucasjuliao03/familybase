@@ -82,8 +82,14 @@ export default function ParentDashboard() {
   }, [now]);
 
   const fetchDashboard = useCallback(async () => {
-    try { const { data: d } = await api.get('/reports/dashboard'); setData(d); }
-    catch {} finally { setLoading(false); }
+    try {
+      const { data: d } = await api.get('/reports/dashboard');
+      setData(d);
+    } catch (err) {
+      console.warn('[ParentDashboard] falha ao carregar painel:', err);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useAutoRefresh(fetchDashboard);

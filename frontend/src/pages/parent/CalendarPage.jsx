@@ -89,7 +89,7 @@ export default function CalendarPage() {
     } catch (_) {}
   }, [tab, calendarParams, historyParams]);
 
-  useAutoRefresh(refreshCurrentRange, 2600, { includeRouteChanges: false });
+  useAutoRefresh(refreshCurrentRange, 2600);
 
   const handleSave = async (e) => {
     e.preventDefault();

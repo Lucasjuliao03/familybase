@@ -1,4 +1,5 @@
 import { supabase, fetchNoStore } from '../lib/supabase';
+import { ensureAuthResumeBeforeNetwork } from '../lib/authResumeCoordinator';
 import { famDiagWarn } from '../lib/famDiag';
 import { createClient } from '@supabase/supabase-js';
 import { normalizeHex } from '../lib/userDisplayColors';
@@ -1212,6 +1213,8 @@ const api = {
       return { data: { ok: true } };
     }
 
+    await ensureAuthResumeBeforeNetwork();
+
     if (path.startsWith('/master/')) {
       const role = await getUserRole();
       if (role !== 'master') {
@@ -2045,6 +2048,8 @@ const api = {
       return { data: { ok: true } };
     }
 
+    await ensureAuthResumeBeforeNetwork();
+
     const familyId = await getFamilyId();
     if (!familyId) throw new Error('Not authenticated');
     const { data: { session } } = await supabase.auth.getSession();
@@ -2661,12 +2666,15 @@ const api = {
   async put(url, body, config = {}) {
     const path = url.split('?')[0];
     const parts = path.split('/').filter(Boolean);
-    const { data: { session } } = await supabase.auth.getSession();
-    const userId = session?.user?.id;
 
     if (path.startsWith('/push/')) {
       return { data: { ok: true } };
     }
+
+    await ensureAuthResumeBeforeNetwork();
+
+    const { data: { session } } = await supabase.auth.getSession();
+    const userId = session?.user?.id;
 
     if (path.startsWith('/master/')) {
       const role = await getUserRole();
@@ -3553,6 +3561,8 @@ const api = {
     if (path.startsWith('/push/')) {
       return { data: { success: true } };
     }
+
+    await ensureAuthResumeBeforeNetwork();
 
     const familyId = await getFamilyId();
     if (!familyId) throw new Error('Not authenticated');

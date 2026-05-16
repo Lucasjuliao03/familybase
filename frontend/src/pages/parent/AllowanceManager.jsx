@@ -47,14 +47,13 @@ export default function AllowanceManager() {
   useEffect(() => { fetchData(); }, [fetchData]);
   useEffect(() => { if (tab === 'piggy') fetchPiggy(); }, [tab, fetchPiggy]);
 
-  // Auto-refresh: ao voltar à página ou trocar de aba, recarrega tudo (sem segunda passagem pela rota; evita double-fetch no mount).
+  // Auto-refresh: ao regressar ao foco / rede e ao navegar dentro da SPA.
   useAutoRefresh(
     useCallback(() => {
       fetchData();
       if (tab === 'piggy') fetchPiggy();
     }, [fetchData, fetchPiggy, tab]),
     2500,
-    { includeRouteChanges: false },
   );
 
   const reviewPiggy = async (id, approved, note) => {

@@ -62,7 +62,7 @@ export default function ChildDashboard() {
   }, [loadDashboard]);
 
   /** Reforço tab/foco/offline sem duplo fetch na entrada (pathname já coberto pelo efecto anterior). */
-  useAutoRefresh(loadDashboard, 800, { includeRouteChanges: false });
+  useAutoRefresh(loadDashboard, 800);
 
   /** Após ~00:01 local e ao virar o dia civil, repede ocorrências (materializa diárias no servidor). */
   useDailyCalendarRefresh(loadDashboard);

@@ -45,7 +45,7 @@ export default function GradeTracker() {
     loadGradesBundle();
   }, [loadGradesBundle, location.pathname]);
 
-  useAutoRefresh(loadGradesBundle, 2600, { includeRouteChanges: false });
+  useAutoRefresh(loadGradesBundle, 2600);
 
   const handleCreate = async (e) => {
     e.preventDefault();
