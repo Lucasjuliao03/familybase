@@ -216,6 +216,45 @@ const TASK_INSERT_COLUMNS = [
   'generate_notification',
 ];
 
+/** Apenas campos físicos da tabela `tasks` (UI/API podem incluir bonus_amount, ícones ou JSON aninhados). */
+function pickTaskColumnsFromBody(body) {
+  const picked = {};
+  if (!body || typeof body !== 'object') return picked;
+  for (const col of TASK_INSERT_COLUMNS) {
+    if (body[col] !== undefined) picked[col] = body[col];
+  }
+  return picked;
+}
+
+/** datas / horário / dias de recorrência antes de PATCH/POST. */
+function normalizeTaskPickedDatesAndRecurrence(picked) {
+  const row = { ...picked };
+  if (row.recurrence_days != null && Array.isArray(row.recurrence_days)) {
+    row.recurrence_days = row.recurrence_days.join(',');
+  }
+  if (row.end_date === '') row.end_date = null;
+  if (row.start_date === '') row.start_date = null;
+  if (row.due_time === '') row.due_time = null;
+  else if (row.due_time != null && row.due_time !== '') row.due_time = normalizeTimeForDb(row.due_time);
+  if (row.start_date != null && row.start_date !== '') row.start_date = normalizeDbDate(row.start_date);
+  if (row.end_date != null && row.end_date !== '') row.end_date = normalizeDbDate(row.end_date);
+  return row;
+}
+
+/** Resposta com descontos/bónus vindos da tabela relacionada task_allowance_rules. */
+function mapTaskRowWithAllowance(t) {
+  if (!t || typeof t !== 'object') return t;
+  const rRaw = t.task_allowance_rules;
+  const r = Array.isArray(rRaw) ? rRaw[0] : rRaw;
+  const { task_allowance_rules: _drop, ...rest } = t;
+  return {
+    ...rest,
+    bonus_amount: r?.bonus_amount ?? 0,
+    discount_amount: r?.discount_amount ?? 0,
+    apply_discount_if_late: !!r?.apply_discount_if_late,
+  };
+}
+
 const CALENDAR_EVENT_SELECT =
   '*, children:child_id(name, color), creator:users!calendar_events_created_by_fkey(id, name)';
 
@@ -1337,18 +1376,7 @@ const api = {
       }
       const { data, error } = await tq;
       if (error) throw new Error(error.message);
-      const rows = (data || []).map((t) => {
-        const rRaw = t.task_allowance_rules;
-        const r = Array.isArray(rRaw) ? rRaw[0] : rRaw;
-        const { task_allowance_rules: _drop, ...rest } = t;
-        return {
-          ...rest,
-          bonus_amount: r?.bonus_amount ?? 0,
-          discount_amount: r?.discount_amount ?? 0,
-          apply_discount_if_late: !!r?.apply_discount_if_late,
-        };
-      });
-      return { data: rows };
+      return { data: (data || []).map(mapTaskRowWithAllowance) };
     }
 
     if (path === '/families') {
@@ -1969,16 +1997,9 @@ const api = {
       const raw = { ...body };
       delete raw.allowance_rule;
 
-      const picked = {};
-      for (const col of TASK_INSERT_COLUMNS) {
-        if (raw[col] !== undefined) picked[col] = raw[col];
-      }
-
-      if (picked.end_date === '') picked.end_date = null;
-      if (picked.due_time === '') picked.due_time = null;
-      if (picked.start_date === '') picked.start_date = null;
+      let picked = normalizeTaskPickedDatesAndRecurrence(pickTaskColumnsFromBody(raw));
+      if (!picked.start_date) picked.start_date = toYMDLocal();
       picked.start_date = normalizeDbDate(picked.start_date) || toYMDLocal();
-      if (picked.end_date) picked.end_date = normalizeDbDate(picked.end_date);
       picked.affects_allowance = !!(allowanceRule && allowanceRule.affects_allowance);
 
       const resolvedChildId = await resolveAuthorizedChildUuidForWrites(
@@ -2002,29 +2023,40 @@ const api = {
         picked.requires_approval = true;
       }
 
-      const insertRow = {
+      const insertRow = omitUndefined({
         ...picked,
         family_id: familyId,
         created_by: userId || null,
         id: uuidv4(),
         child_id: resolvedChildId,
-      };
+      });
 
-      const { data: taskRow, error } = await supabase.from('tasks').insert([insertRow]).select().single();
+      const { data: taskRow, error } = await supabase.from('tasks').insert([insertRow]).select('*, task_allowance_rules(*)').maybeSingle();
       if (error) throw new Error(error.message);
 
-      if (allowanceRule !== undefined) {
-        await syncTaskAllowanceRules(supabase, taskRow.id, allowanceRule);
+      if (allowanceRule !== undefined && taskRow?.id) {
+        try {
+          await syncTaskAllowanceRules(supabase, taskRow.id, allowanceRule);
+        } catch (e) {
+          console.warn('[tasks] regras mesada (post):', e instanceof Error ? e.message : e);
+        }
       }
 
-      const occDates = computeOccurrenceDatesForTask(taskRow);
-      if (occDates.length && taskRow.child_id) {
-        const timePart = taskRow.due_time ? normalizeTimeForDb(taskRow.due_time) : null;
+      let out = taskRow;
+      if (taskRow?.id) {
+        const { data: fr } = await supabase.from('tasks').select('*, task_allowance_rules(*)').eq('id', taskRow.id).eq('family_id', familyId).maybeSingle();
+        if (fr) out = fr;
+      }
+
+      const occDates = computeOccurrenceDatesForTask(taskRow || out);
+      if (occDates.length && (taskRow?.child_id || out?.child_id)) {
+        const cid = taskRow?.child_id || out?.child_id;
+        const timePart = (taskRow?.due_time ?? out?.due_time) ? normalizeTimeForDb(taskRow?.due_time ?? out?.due_time) : null;
         const occRows = occDates.map((od) => ({
           id: uuidv4(),
-          task_id: taskRow.id,
+          task_id: taskRow?.id || out?.id,
           family_id: familyId,
-          child_id: taskRow.child_id,
+          child_id: cid,
           occurrence_date: od,
           due_datetime: timePart ? `${od}T${timePart}` : null,
           status: 'pending',
@@ -2034,7 +2066,7 @@ const api = {
           .upsert(occRows, { onConflict: 'task_id,child_id,occurrence_date', ignoreDuplicates: true });
         if (ocErr) console.warn('[tasks] ocorrências:', ocErr.message);
       }
-      return { data: taskRow };
+      return { data: mapTaskRowWithAllowance(out || taskRow) };
     }
 
     if (path === '/allowance/rewards') {
@@ -2812,31 +2844,39 @@ const api = {
     const updateTaskTemplateMatch = path.match(/^\/tasks\/([^/]+)$/);
     if (updateTaskTemplateMatch && updateTaskTemplateMatch[1] !== 'occurrences') {
       const taskId = updateTaskTemplateMatch[1];
-      const safeBody = { ...body };
       const allowanceRule = body.allowance_rule;
-      delete safeBody.allowance_rule;
-      if (safeBody.end_date === '') safeBody.end_date = null;
-      if (safeBody.due_time === '') safeBody.due_time = null;
-      if (safeBody.start_date === '') safeBody.start_date = null;
-      if (safeBody.start_date) safeBody.start_date = normalizeDbDate(safeBody.start_date);
-      if (safeBody.end_date) safeBody.end_date = normalizeDbDate(safeBody.end_date);
+      let picked = normalizeTaskPickedDatesAndRecurrence(pickTaskColumnsFromBody(body));
       if (allowanceRule !== undefined) {
-        safeBody.affects_allowance = !!(allowanceRule && allowanceRule.affects_allowance);
+        picked.affects_allowance = !!(allowanceRule && allowanceRule.affects_allowance);
       }
 
       const { data: taskRow, error } = await supabase
         .from('tasks')
-        .update(omitUndefined(safeBody))
+        .update(omitUndefined(picked))
         .eq('id', taskId)
         .eq('family_id', familyId)
-        .select()
-        .single();
+        .select('*, task_allowance_rules(*)')
+        .maybeSingle();
       if (error) throw new Error(error.message);
+      if (!taskRow) {
+        throw new Error('Não foi possível atualizar a tarefa (nenhuma linha alterada ou sem permissão).');
+      }
 
       if (allowanceRule !== undefined) {
-        await syncTaskAllowanceRules(supabase, taskId, allowanceRule);
+        try {
+          await syncTaskAllowanceRules(supabase, taskId, allowanceRule);
+        } catch (e) {
+          console.warn('[tasks] regras mesada (put):', e instanceof Error ? e.message : e);
+        }
       }
-      return { data: taskRow };
+
+      const { data: fresh } = await supabase
+        .from('tasks')
+        .select('*, task_allowance_rules(*)')
+        .eq('id', taskId)
+        .eq('family_id', familyId)
+        .maybeSingle();
+      return { data: mapTaskRowWithAllowance(fresh || taskRow) };
     }
 
     const completeMatch = path.match(/^\/tasks\/occurrences\/([^/]+)\/complete$/);
@@ -3260,10 +3300,14 @@ const api = {
 
     const safeBody = { ...body };
     if (table === 'tasks') {
+      const allowanceRule = safeBody.allowance_rule;
       delete safeBody.allowance_rule;
-      if (safeBody.end_date === '') safeBody.end_date = null;
-      if (safeBody.due_time === '') safeBody.due_time = null;
-      if (safeBody.start_date === '') safeBody.start_date = null;
+      let picked = normalizeTaskPickedDatesAndRecurrence(pickTaskColumnsFromBody(safeBody));
+      if (allowanceRule !== undefined) {
+        picked.affects_allowance = !!(allowanceRule && allowanceRule.affects_allowance);
+      }
+      Object.keys(safeBody).forEach((k) => delete safeBody[k]);
+      Object.assign(safeBody, omitUndefined(picked));
     } else if (table === 'calendar_events' || table === 'calendar') {
       const calPatch = pickCalendarRow(safeBody, familyId, userId, false);
       delete calPatch.family_id;
