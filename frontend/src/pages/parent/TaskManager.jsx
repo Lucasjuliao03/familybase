@@ -77,7 +77,9 @@ export default function TaskManager() {
       setEditTask(null);
       setForm(initialForm);
       fetchData();
-    } catch (err) { toast.error(err.response?.data?.error || t('error_occurred')); }
+    } catch (err) {
+      toast.error(err.response?.data?.error || err.message || t('error_occurred'));
+    }
   };
 
   const handleApproveOcc = async (id, approved) => {

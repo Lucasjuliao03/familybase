@@ -13,7 +13,7 @@ const PREDEFINED_SUBJECTS = [
 ];
 
 export default function MyGrades() {
-  const { childProfile } = useAuth();
+  const { childProfile, ensureChildProfile } = useAuth();
   const { t } = useLanguage();
   const toast = useToast();
   const location = useLocation();
@@ -60,7 +60,9 @@ export default function MyGrades() {
       setShowModal(false);
       setForm({ subject: '', type: 'test', score: '', max_score: '10', concept: '', observation: '', date: '' });
       loadBundle();
-    } catch (err) { toast.error(err.response?.data?.error || t('error_occurred')); }
+    } catch (err) {
+      toast.error(err.response?.data?.error || err.message || t('error_occurred'));
+    }
   };
 
   const bySubject = {};

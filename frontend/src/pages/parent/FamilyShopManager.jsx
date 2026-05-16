@@ -66,8 +66,8 @@ export default function FamilyShopManager() {
       await api.put(`/allowance/redemptions/${id}/approve`, { approved });
       toast.success(approved ? t('task_approved_msg') : t('task_rejected_msg'));
       fetchData();
-    } catch {
-      toast.error(t('error_occurred'));
+    } catch (e) {
+      toast.error(e.response?.data?.error || e.message || t('error_occurred'));
     }
   };
 

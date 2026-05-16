@@ -20,6 +20,38 @@ const DEFAULT_MODULES = {
   health: true,
 };
 
+/**
+ * Perfil na tabela children para conta com login de criança:
+ * primeiro `children.user_id` = Auth; fallback a `child_id` nos metadados JWT (sessão válida).
+ */
+async function fetchChildProfileRowByAuth(supabaseClient, userId, familyId) {
+  if (!userId || !familyId || !supabaseClient) return null;
+  const { data: byUser } = await supabaseClient
+    .from('children')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('family_id', familyId)
+    .maybeSingle();
+  if (byUser) return byUser;
+
+  const { data: sessWrap, error: sessErr } = await supabaseClient.auth.getSession();
+  if (sessErr || !sessWrap?.session?.user || sessWrap.session.user.id !== userId) return null;
+  const { user } = sessWrap.session;
+  const um = user.user_metadata || {};
+  const am = user.app_metadata || {};
+  const raw = um.child_id || um.childId || am.child_id || am.childId;
+  const meta = raw != null ? String(raw).trim() : '';
+  if (!meta || meta === 'undefined') return null;
+
+  const { data: byMeta } = await supabaseClient
+    .from('children')
+    .select('*')
+    .eq('family_id', familyId)
+    .eq('id', meta)
+    .maybeSingle();
+  return byMeta || null;
+}
+
 /** Fallback cliente se RPC get_effective_subscription ainda não estiver deployado. */
 function buildEffectiveSubscriptionFallback(profileRow, resolvedFamily, userId) {
   const fam = resolvedFamily;
@@ -243,22 +275,7 @@ export function AuthProvider({ children }) {
 
             let effectiveChildRow = cData;
             if (!effectiveChildRow && wantsChildRow && fid) {
-              try {
-                const { data: { session: sessCh } } = await supabase.auth.getSession();
-                const uMd = sessCh?.user?.user_metadata || {};
-                const aMd = sessCh?.user?.app_metadata || {};
-                const metaCidRaw = uMd.child_id || uMd.childId || aMd.child_id || aMd.childId;
-                const metaCid = metaCidRaw != null ? String(metaCidRaw).trim() : '';
-                if (metaCid && metaCid !== 'undefined') {
-                  const { data: chByMeta } = await supabase
-                    .from('children')
-                    .select('*')
-                    .eq('family_id', fid)
-                    .eq('id', metaCid)
-                    .maybeSingle();
-                  if (chByMeta) effectiveChildRow = chByMeta;
-                }
-              } catch (_) { /* noop */ }
+              effectiveChildRow = await fetchChildProfileRowByAuth(supabase, userId, fid);
             }
 
             let resolvedFamily = familyData;
@@ -618,6 +635,15 @@ export function AuthProvider({ children }) {
     if (user) await loadUserProfile(user.id, user.email, { force: true });
   };
 
+  /** Re-resolve children.* após login tardio ou vínculo recente (sem exigir reload). */
+  const ensureChildProfile = useCallback(async () => {
+    const u = userRef.current;
+    if (!u?.id || u.role !== 'child' || !u.family_id) return null;
+    const row = await fetchChildProfileRowByAuth(supabase, u.id, u.family_id);
+    if (row) setChildProfile(row);
+    return row;
+  }, []);
+
   const clearMustChangePassword = () => setMustChangePassword(false);
 
   return (
@@ -634,6 +660,7 @@ export function AuthProvider({ children }) {
       register,
       logout,
       fetchMe,
+      ensureChildProfile,
       clearMustChangePassword,
     }}>
       {children}

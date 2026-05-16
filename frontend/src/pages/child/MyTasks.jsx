@@ -8,7 +8,7 @@ import useAutoRefresh from '../../hooks/useAutoRefresh';
 import useDailyCalendarRefresh from '../../hooks/useDailyCalendarRefresh';
 
 export default function MyTasks() {
-  const { childProfile } = useAuth();
+  const { childProfile, ensureChildProfile } = useAuth();
   const location = useLocation();
   const { t } = useLanguage();
   const toast = useToast();
@@ -57,15 +57,19 @@ export default function MyTasks() {
 
   const handleCreate = async (e) => {
     e.preventDefault();
-    if (!childProfile?.id) {
-      toast.error('Perfil em carregamento. Tente dentro de instantes.');
+    let row = childProfile;
+    if (!row?.id) row = await ensureChildProfile();
+    if (!row?.id) {
+      toast.error(
+        'Ainda não conseguimos carregar o teu perfil de criança. Aguarda uns segundos e tenta de novo, ou pede a um gestor para confirmar que a tua conta está ligada ao teu nome na família.',
+      );
       return;
     }
     try {
       // Sugestão: gestor define pontos / mesada depois ao editar a tarefa
       await api.post('/tasks', {
         ...form,
-        child_id: childProfile.id,
+        child_id: row.id,
         frequency: 'once',
         requires_approval: true,
         is_recurring: false,
@@ -74,7 +78,9 @@ export default function MyTasks() {
       setShowModal(false);
       setForm({ title: '', description: '', type: 'routine', due_time: '' });
       fetchTasks();
-    } catch (err) { toast.error(err.response?.data?.error || t('error_occurred')); }
+    } catch (err) {
+      toast.error(err.response?.data?.error || err.message || t('error_occurred'));
+    }
   };
 
   const statusEmoji = { pending: '⏳', in_progress: '🏃', waiting_approval: '📤', approved: '✅', rejected: '❌', delayed: '⚠️', expired: '👻' };

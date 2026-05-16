@@ -106,35 +106,87 @@ function normalizeAuthChildUuid(v) {
 }
 
 /**
- * Resolver `child_id` para cadastros feitos pela criança (ou corpo já com id).
- * O cliente JS do Supabase omite chaves com valor `undefined` no INSERT — causa 23502 em `NOT NULL`.
+ * Valida `child.id` declarado nos metadados JWT contra `children` × família actual.
  */
-async function resolveActorChildUuid(body, familyId, authUserId) {
-  let cid =
+async function expandChildUuidFromJwtMetadataValidated(familyId, authUserId) {
+  if (!familyId || !authUserId) return '';
+  try {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    if (!session?.user || session.user.id !== authUserId) return '';
+    const um = session.user.user_metadata || {};
+    const am = session.user.app_metadata || {};
+    const raw = um.child_id ?? um.childId ?? am.child_id ?? am.childId;
+    const meta = normalizeAuthChildUuid(raw);
+    if (!meta) return '';
+    const { data: chByMeta } = await supabase
+      .from('children')
+      .select('id')
+      .eq('family_id', familyId)
+      .eq('id', meta)
+      .maybeSingle();
+    return chByMeta?.id ? normalizeAuthChildUuid(chByMeta.id) : '';
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * child_id efectivo para escrita — criança: só o próprio filho da sessão (ignora spoof no body).
+ * Pais/auxiliares: usam body.child_id se legítimo OU lookup por vínculo.
+ */
+async function resolveAuthorizedChildUuidForWrites(body, familyId, authUserId) {
+  const fromHint =
     normalizeAuthChildUuid(body?.child_id) ||
     normalizeAuthChildUuid(body?.child_profile_id) ||
     normalizeAuthChildUuid(body?.childId);
 
-  if (cid) return cid;
+  if (!authUserId || !familyId) return '';
 
-  if (authUserId && familyId) {
-    const fromTbl = await getChildIdForLoggedInUser(authUserId, familyId);
-    if (fromTbl) return normalizeAuthChildUuid(fromTbl);
+  const role = await getUserRole();
 
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session?.user?.id === authUserId) {
-        const um = session.user.user_metadata || {};
-        const am = session.user.app_metadata || {};
-        cid = normalizeAuthChildUuid(um.child_id || um.childId || am.child_id || am.childId);
-        if (cid) return cid;
-      }
-    } catch {
-      /* sessão não legível neste momento — continua sem metadata */
+  if (role === 'child') {
+    const linked =
+      normalizeAuthChildUuid(await getChildIdForLoggedInUser(authUserId, familyId)) ||
+      (await expandChildUuidFromJwtMetadataValidated(familyId, authUserId));
+    if (!linked) return '';
+    if (fromHint && fromHint !== linked) {
+      throw new Error('Operação não permitida: só podes registar dados do teu perfil.');
     }
+    return linked;
   }
 
-  return '';
+  if (role === 'parent' || role === 'relative' || role === 'master') {
+    if (fromHint) {
+      const { data: childOk } = await supabase
+        .from('children')
+        .select('id')
+        .eq('family_id', familyId)
+        .eq('id', fromHint)
+        .maybeSingle();
+      if (childOk?.id) return fromHint;
+    }
+    const fromLink = normalizeAuthChildUuid(await getChildIdForLoggedInUser(authUserId, familyId));
+    return fromLink || '';
+  }
+
+  if (fromHint) return fromHint;
+  const fromLink = normalizeAuthChildUuid(await getChildIdForLoggedInUser(authUserId, familyId));
+  return fromLink || '';
+}
+
+/**
+ * Para listagens READ: mesmo âmbito de filho para contas role=child.
+ */
+async function resolveViewerChildScope(familyId, authUserId) {
+  if (!authUserId || !familyId) return '';
+  const role = await getUserRole();
+  if (role !== 'child') return '';
+  const linked =
+    normalizeAuthChildUuid(await getChildIdForLoggedInUser(authUserId, familyId)) ||
+    (await expandChildUuidFromJwtMetadataValidated(familyId, authUserId));
+  return linked || '';
 }
 
 /** Colunas permitidas ao criar uma linha em `tasks` (evita chaves estranhas no corpo REST). */
@@ -182,6 +234,29 @@ function omitNullish(obj) {
     if (out[k] === undefined || out[k] === null) delete out[k];
   });
   return out;
+}
+
+/** FK embutida pelo PostgREST: objeto singular ou um elemento num array. */
+function unwrapEmbeddedRow(v) {
+  if (!v || typeof v !== 'object') return null;
+  return Array.isArray(v) ? v[0] ?? null : v;
+}
+
+/**
+ * Lista `/allowance/redemptions/list`: formato plano como o SQLite antigo (`reward_name`, `child_name`, ícone…).
+ */
+function mapRedemptionListRow(raw) {
+  if (!raw || typeof raw !== 'object') return raw;
+  const rew = unwrapEmbeddedRow(raw.rewards);
+  const ch = unwrapEmbeddedRow(raw.children);
+  const { rewards: _rw, children: _chd, ...rest } = raw;
+  return {
+    ...rest,
+    reward_name: rew?.name || rest.reward_name || '',
+    icon: rew?.icon || '🎁',
+    point_cost: rew?.point_cost != null ? Number(rew.point_cost) : Number(rest.point_cost ?? 0) || 0,
+    child_name: ch?.name || rest.child_name || '',
+  };
 }
 
 /** Senha mínima para contas de criança criadas pelo gestor (login próprio). */
@@ -465,12 +540,15 @@ async function allowanceTaskTxnPosted(supabase, occId) {
 async function syncTaskAllowanceRules(supabase, taskId, allowanceRule) {
   if (!taskId) return;
   if (!allowanceRule || !allowanceRule.affects_allowance) {
-    await supabase.from('task_allowance_rules').delete().eq('task_id', taskId).catch(() => {});
-    await supabase.from('tasks').update({ affects_allowance: false }).eq('id', taskId).catch(() => {});
+    const { error: dErr } = await supabase.from('task_allowance_rules').delete().eq('task_id', taskId);
+    if (dErr) throw new Error(dErr.message || 'Erro ao limpar regras de mesada da tarefa.');
+    const { error: tErr } = await supabase.from('tasks').update({ affects_allowance: false }).eq('id', taskId);
+    if (tErr) throw new Error(tErr.message);
     return;
   }
 
   const row = {
+    id: uuidv4(),
     task_id: taskId,
     affects_allowance: true,
     bonus_amount: Number(allowanceRule.bonus_amount ?? 0),
@@ -478,17 +556,18 @@ async function syncTaskAllowanceRules(supabase, taskId, allowanceRule) {
     apply_discount_if_late: !!allowanceRule.apply_discount_if_late,
   };
 
-  // Evita upsert(onConflict: task_id): muitos projetos Supabase criaram esta tabela sem UNIQUE(task_id)
-  const { data: existing } = await supabase.from('task_allowance_rules').select('id').eq('task_id', taskId).maybeSingle();
-  if (existing?.id) {
-    const { error } = await supabase.from('task_allowance_rules').update(row).eq('id', existing.id);
-    if (error) console.warn('[task_allowance_rules]', error.message);
-  } else {
-    const { error } = await supabase.from('task_allowance_rules').insert(row);
-    if (error) console.warn('[task_allowance_rules]', error.message);
-  }
+  /**
+   * Nunca usar upsert(onConflict: task_id) aqui: (1) PostgREST devolve 400 se não existir UNIQUE em task_id;
+   * (2) linhas duplicadas antigas fazem maybeSingle falhar. Estratégia idempotente: apagar + inserir uma linha.
+   */
+  const { error: delErr } = await supabase.from('task_allowance_rules').delete().eq('task_id', taskId);
+  if (delErr) throw new Error(delErr.message || 'Erro ao actualizar regras de mesada (eliminar registos antigos).');
 
-  await supabase.from('tasks').update({ affects_allowance: true }).eq('id', taskId).catch(() => {});
+  const { error: insErr } = await supabase.from('task_allowance_rules').insert(row);
+  if (insErr) throw new Error(insErr.message || 'Erro ao guardar regras de mesada da tarefa.');
+
+  const { error: tErr } = await supabase.from('tasks').update({ affects_allowance: true }).eq('id', taskId);
+  if (tErr) throw new Error(tErr.message);
 }
 
 async function applyTaskOccurrenceAllowanceOnDecision(supabase, { familyId, userId, occurrenceId, approved, task }) {
@@ -1047,8 +1126,9 @@ const api = {
       const { data: { session: sessSub } } = await supabase.auth.getSession();
       const uidSub = sessSub?.user?.id;
       if ((await getUserRole()) === 'child' && uidSub) {
-        const onlyChild = await getChildIdForLoggedInUser(uidSub, familyId);
-        if (onlyChild) subjQ = subjQ.eq('child_id', onlyChild);
+        const scopeSub = await resolveViewerChildScope(familyId, uidSub);
+        if (!scopeSub) return { data: [] };
+        subjQ = subjQ.eq('child_id', scopeSub);
       }
       const { data: grades } = await subjQ;
       const uniq = [...new Set((grades || []).map((g) => g.subject).filter(Boolean))];
@@ -1059,10 +1139,11 @@ const api = {
       let q = supabase.from('grades').select('*, children:child_id(name, color, avatar_url, avatar_preset)').eq('family_id', familyId);
       const { data: { session: sessGr } } = await supabase.auth.getSession();
       const uidGr = sessGr?.user?.id;
-      let childIdParam = config.params?.child_id;
+      let childIdParam = normalizeAuthChildUuid(config.params?.child_id);
       if ((await getUserRole()) === 'child' && uidGr) {
-        const onlyChild = await getChildIdForLoggedInUser(uidGr, familyId);
-        if (onlyChild) childIdParam = onlyChild;
+        const scopeGr = await resolveViewerChildScope(familyId, uidGr);
+        if (!scopeGr) return { data: [] };
+        childIdParam = scopeGr;
       }
       if (childIdParam) q = q.eq('child_id', childIdParam);
       const { data } = await q.order('date', { ascending: false });
@@ -1186,8 +1267,15 @@ const api = {
       } else if (!expandAll && d && String(d).length >= 10) {
         q = q.eq('occurrence_date', String(d).slice(0, 10));
       }
-      const childId = config.params?.child_id;
-      if (childId) q = q.eq('child_id', childId);
+      const { data: { session: sessOc } } = await supabase.auth.getSession();
+      const uidOc = sessOc?.user?.id;
+      let occChildFilter = normalizeAuthChildUuid(config.params?.child_id);
+      if ((await getUserRole()) === 'child' && uidOc) {
+        const scopeOc = await resolveViewerChildScope(familyId, uidOc);
+        if (!scopeOc) return { data: [] };
+        occChildFilter = scopeOc;
+      }
+      if (occChildFilter) q = q.eq('child_id', occChildFilter);
       const statusParam = config.params?.status;
       if (statusParam) q = q.eq('status', statusParam);
       const { data, error } = await q.order('occurrence_date', { ascending: true });
@@ -1239,7 +1327,15 @@ const api = {
     }
 
     if (path.startsWith('/tasks')) {
-      const { data, error } = await supabase.from('tasks').select('*, task_allowance_rules(*)').eq('family_id', familyId);
+      let tq = supabase.from('tasks').select('*, task_allowance_rules(*)').eq('family_id', familyId);
+      const { data: { session: sessTk } } = await supabase.auth.getSession();
+      const uidTk = sessTk?.user?.id;
+      if ((await getUserRole()) === 'child' && uidTk) {
+        const scopeTk = await resolveViewerChildScope(familyId, uidTk);
+        if (!scopeTk) return { data: [] };
+        tq = tq.eq('child_id', scopeTk);
+      }
+      const { data, error } = await tq;
       if (error) throw new Error(error.message);
       const rows = (data || []).map((t) => {
         const rRaw = t.task_allowance_rules;
@@ -1339,11 +1435,29 @@ const api = {
     }
 
     if (path.startsWith('/allowance/redemptions/list')) {
-      const { data: children } = await supabase.from('children').select('id').eq('family_id', familyId);
-      const childIds = (children || []).map((c) => c.id);
-      if (!childIds.length) return { data: [] };
-      const { data: rows } = await supabase.from('redemptions').select('*, rewards(*), children:child_id(name)').in('child_id', childIds).order('created_at', { ascending: false });
-      return { data: rows || [] };
+      let redQ = supabase
+        .from('redemptions')
+        .select('*, rewards(name,description,icon,point_cost,type), children:child_id(name)')
+        .order('created_at', { ascending: false });
+
+      const roleList = await getUserRole();
+      const { data: { session: sessRed } } = await supabase.auth.getSession();
+      const uidRed = sessRed?.user?.id;
+
+      if (roleList === 'child' && uidRed) {
+        const scopeRd = await resolveViewerChildScope(familyId, uidRed);
+        if (!scopeRd) return { data: [] };
+        redQ = redQ.eq('child_id', scopeRd);
+      } else {
+        const { data: kids } = await supabase.from('children').select('id').eq('family_id', familyId);
+        const childIds = (kids || []).map((c) => c.id);
+        if (!childIds.length) return { data: [] };
+        redQ = redQ.in('child_id', childIds);
+      }
+
+      const { data: rows, error: redErr } = await redQ;
+      if (redErr) throw new Error(redErr.message);
+      return { data: (rows || []).map(mapRedemptionListRow) };
     }
 
     if (path.startsWith('/allowance/transactions')) {
@@ -1730,15 +1844,19 @@ const api = {
 
     if (path.startsWith('/grades')) {
       let gradePayload = { ...body };
-      const cid = await resolveActorChildUuid(gradePayload, familyId, userId);
-      if (cid) gradePayload.child_id = cid;
-      const row = normalizeGradeRow(gradePayload, familyId);
-      if (!row.child_id || !normalizeAuthChildUuid(row.child_id)) {
+      const forcedGradeChild = await resolveAuthorizedChildUuidForWrites(gradePayload, familyId, userId);
+      if (!forcedGradeChild) {
         throw new Error(
-          'É necessário o perfil da criança para registar notas (child_id). Recarregue a página ou peça ao gestor para ligar o login ao filho.',
+          'Perfil da criança ainda não está disponível. Aguarde alguns segundos e volte a tentar, ou peça ao gestor para confirmar na família que a tua conta está ligada ao teu perfil.',
         );
       }
-      const { data, error } = await supabase.from('grades').insert([omitUndefined(row)]).select('*, children:child_id(name, color, avatar_url, avatar_preset)').single();
+      const row = normalizeGradeRow({ ...gradePayload, child_id: forcedGradeChild }, familyId);
+      /** Garante string explícita: o cliente Supabase omite chaves undefined no JSON para o REST. */
+      const insertGrade = {
+        ...omitUndefined(row),
+        child_id: forcedGradeChild,
+      };
+      const { data, error } = await supabase.from('grades').insert([insertGrade]).select('*, children:child_id(name, color, avatar_url, avatar_preset)').single();
       if (error) throw new Error(error.message);
       const childIdAward = data?.child_id;
       if (childIdAward) {
@@ -1863,7 +1981,7 @@ const api = {
       if (picked.end_date) picked.end_date = normalizeDbDate(picked.end_date);
       picked.affects_allowance = !!(allowanceRule && allowanceRule.affects_allowance);
 
-      const resolvedChildId = await resolveActorChildUuid(
+      const resolvedChildId = await resolveAuthorizedChildUuidForWrites(
         { ...raw, child_id: picked.child_id },
         familyId,
         userId,
@@ -1871,8 +1989,7 @@ const api = {
 
       if (!resolvedChildId) {
         throw new Error(
-          'Não foi encontrado o perfil filho ligado a esta sessão (child_id em falta). ' +
-            'Recarregue a página ou peça ao gestor para associar a conta com o registo do filho.',
+          'Perfil da criança ainda não está disponível para criar tarefas. Aguarde alguns segundos e volte a tentar, ou peça ao gestor para ligar a tua conta ao teu registo na família.',
         );
       }
 
@@ -1929,19 +2046,52 @@ const api = {
     const redeemMatch = path.match(/^\/allowance\/rewards\/([^/]+)\/redeem$/);
     if (redeemMatch) {
       const rewardId = redeemMatch[1];
-      let childId = body?.child_id;
-      if (!childId) {
-        const { data: ch } = await supabase.from('children').select('id').eq('user_id', userId).maybeSingle();
-        childId = ch?.id;
+      const { data: rew, error: rewErr } = await supabase
+        .from('rewards')
+        .select('id,name,icon,point_cost,family_id,is_active,available')
+        .eq('id', rewardId)
+        .eq('family_id', familyId)
+        .maybeSingle();
+      if (rewErr) throw new Error(rewErr.message);
+      if (!rew?.id || rew.is_active === false || rew.available === false) {
+        throw new Error('Esta recompensa não está disponível neste momento.');
       }
-      if (!childId) throw new Error('child_id obrigatório para resgate');
+
+      const resolvedChildId = await resolveAuthorizedChildUuidForWrites(
+        { ...body, child_id: body?.child_id ?? body?.childId },
+        familyId,
+        userId,
+      );
+      if (!resolvedChildId) {
+        throw new Error(
+          'Não conseguimos identificar o perfil para o resgate. Aguarda uns segundos ou pede ao gestor para ligar a conta ao nome da criança na família.',
+        );
+      }
+
+      const { data: chRow } = await supabase
+        .from('children')
+        .select('points')
+        .eq('id', resolvedChildId)
+        .eq('family_id', familyId)
+        .maybeSingle();
+      if (!chRow) throw new Error('Perfil não encontrado nesta família.');
+      const cost = Number(rew.point_cost ?? 0);
+      if (cost > Number(chRow.points ?? 0)) {
+        throw new Error('Pontos insuficientes para pedir esta recompensa.');
+      }
+
       const { data, error } = await supabase
         .from('redemptions')
-        .insert([{ reward_id: rewardId, child_id: childId, status: 'pending', id: uuidv4() }])
+        .insert([{ reward_id: rewardId, child_id: resolvedChildId, status: 'pending', id: uuidv4() }])
         .select()
         .single();
       if (error) throw new Error(error.message);
-      return { data };
+      return {
+        data: mapRedemptionListRow({
+          ...data,
+          rewards: { name: rew.name, icon: rew.icon ?? '🎁', point_cost: rew.point_cost },
+        }),
+      };
     }
 
     if (path === '/allowance/goals') {
@@ -2855,19 +3005,91 @@ const api = {
     }
 
     if (path.match(/^\/allowance\/redemptions\/[^/]+\/approve$/)) {
-      const rid = parts[2];
-      const patch = { status: body?.approved ? 'approved' : 'rejected', approved_by: userId, approved_at: new Date().toISOString() };
-      const { data, error } = await supabase.from('redemptions').update(patch).eq('id', rid).select().single();
-      if (error) throw new Error(error.message);
-      if (body?.approved && data?.child_id) {
-        const { data: chAfter } = await supabase
-          .from('children')
-          .select('streak_current')
-          .eq('id', data.child_id)
-          .maybeSingle();
-        await checkAndAwardMedals(supabase, data.child_id, familyId, chAfter?.streak_current || 0);
+      const roleAppr = await getUserRole();
+      if (roleAppr !== 'master' && roleAppr !== 'parent' && roleAppr !== 'relative') {
+        throw new Error('Sem permissão para aprovar resgates.');
       }
-      return { data };
+
+      const rid = parts[2];
+      const { data: redemption, error: rdmErr } = await supabase
+        .from('redemptions')
+        .select('*')
+        .eq('id', rid)
+        .maybeSingle();
+      if (rdmErr) throw new Error(rdmErr.message);
+      if (!redemption) throw new Error('Pedido não encontrado.');
+
+      const { data: reward, error: rwErr } = await supabase
+        .from('rewards')
+        .select('id,name,icon,point_cost,family_id')
+        .eq('id', redemption.reward_id)
+        .eq('family_id', familyId)
+        .maybeSingle();
+      if (rwErr) throw new Error(rwErr.message);
+      if (!reward) throw new Error('Recompensa não encontrada nesta família.');
+
+      const { data: childRow } = await supabase
+        .from('children')
+        .select('id,family_id,name')
+        .eq('id', redemption.child_id)
+        .maybeSingle();
+      if (!childRow || childRow.family_id !== familyId) throw new Error('Pedido não pertence à tua família.');
+
+      const wasPending = redemption.status === 'pending';
+      const approved = !!body?.approved;
+      const patch = {
+        status: approved ? 'approved' : 'rejected',
+        approved_by: userId ?? null,
+        approved_at: new Date().toISOString(),
+      };
+
+      const { data: updatedRed, error: updRedErr } = await supabase
+        .from('redemptions')
+        .update(patch)
+        .eq('id', rid)
+        .select()
+        .maybeSingle();
+      if (updRedErr) throw new Error(updRedErr.message);
+
+      if (approved && wasPending && updatedRed?.child_id) {
+        const cost = Number(reward.point_cost ?? 0);
+        if (cost > 0) {
+          const { data: ptsRow } = await supabase
+            .from('children')
+            .select('points')
+            .eq('id', redemption.child_id)
+            .maybeSingle();
+          const currentPts = Number(ptsRow?.points ?? 0);
+          const nextPts = currentPts - cost;
+          await supabase.from('children').update({ points: nextPts }).eq('id', redemption.child_id);
+
+          const { error: txErr } = await supabase.from('allowance_transactions').insert({
+            id: uuidv4(),
+            family_id: familyId,
+            child_id: redemption.child_id,
+            reward_id: reward.id,
+            type: 'debit',
+            origin: 'reward',
+            description: `Resgate: ${reward.name}`,
+            amount: cost,
+            status: 'approved',
+            approved_by: userId ?? null,
+            balance_after: 0,
+          });
+          if (txErr && import.meta.env.DEV) console.warn('[redemptions] lançamento mesada:', txErr.message);
+        }
+
+        const { data: chAfter } = await supabase.from('children').select('streak_current').eq('id', redemption.child_id).maybeSingle();
+        await checkAndAwardMedals(supabase, redemption.child_id, familyId, chAfter?.streak_current || 0);
+      }
+
+      return {
+        data: mapRedemptionListRow({
+          ...updatedRed,
+          rewards: reward,
+          children: { name: childRow?.name ?? '' },
+        }),
+      };
     }
 
     if (path.startsWith('/allowance/settings/')) {

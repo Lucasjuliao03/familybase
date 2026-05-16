@@ -43,7 +43,7 @@ export default function MyFamilyShop() {
       toast.success('Resgate solicitado! 🎉');
       fetchData();
     } catch (err) {
-      toast.error(err.response?.data?.error || t('error_occurred'));
+      toast.error(err.response?.data?.error || err.message || t('error_occurred'));
     }
   };
 
