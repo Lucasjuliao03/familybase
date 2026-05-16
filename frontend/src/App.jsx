@@ -6,6 +6,7 @@ import { LanguageProvider } from './contexts/LanguageContext';
 import { ToastProvider } from './contexts/ToastContext';
 import { PWAProvider } from './contexts/PWAContext';
 import PWAInstallBanner from './components/PWAInstallBanner';
+import PWAUpdateModal from './components/PWAUpdateModal';
 import FirstAccessPasswordModal from './components/FirstAccessPasswordModal';
 import PageLoader from './components/PageLoader';
 
@@ -314,6 +315,7 @@ export default function App() {
           <PWAProvider>
             <ToastProvider>
               <FirstAccessPasswordModal />
+              <PWAUpdateModal />
               <AppRoutes />
               <PWAInstallBanner />
             </ToastProvider>

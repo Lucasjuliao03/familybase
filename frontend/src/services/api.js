@@ -44,6 +44,20 @@ async function getUserRole() {
   return data?.role || null;
 }
 
+async function getChildIdForLoggedInUser(userId, familyId) {
+  if (!userId || !familyId) return null;
+  const { data } = await supabase
+    .from('children')
+    .select('id')
+    .eq('family_id', familyId)
+    .eq('user_id', userId)
+    .maybeSingle();
+  return data?.id ?? null;
+}
+
+const CALENDAR_EVENT_SELECT =
+  '*, children:child_id(name, color), creator:users!calendar_events_created_by_fkey(id, name)';
+
 function omitUndefined(obj) {
   const out = { ...obj };
   Object.keys(out).forEach((k) => {
@@ -357,14 +371,30 @@ async function applyTaskOccurrenceAllowanceOnDecision(supabase, { familyId, user
 
 function mapCalendarEventFromDb(d) {
   if (!d) return d;
+  const crRaw = d.creator;
+  const cr = Array.isArray(crRaw) ? crRaw[0] : crRaw;
+  const creatorName = cr?.name ?? null;
+  const childName = d.children?.name ?? null;
   return {
     ...d,
     date: normalizeDbDate(d.date),
     end_date: d.end_date != null ? normalizeDbDate(d.end_date) : d.end_date,
     time: d.time != null ? String(d.time).slice(0, 8) : d.time,
-    child_name: d.children?.name,
+    child_name: childName,
     child_color: d.children?.color,
+    creator_name: creatorName,
+    linked_user_label:
+      childName || (!d.child_id ? (creatorName ? `Família · ${creatorName}` : 'Família') : '—'),
   };
+}
+
+function dedupeCalendarEvents(rows) {
+  const byId = new Map();
+  (rows || []).forEach((r) => {
+    if (!r?.id) return;
+    if (!byId.has(r.id)) byId.set(r.id, r);
+  });
+  return [...byId.values()];
 }
 
 /** Gera ocorrências após criar tarefa (sem cron no Supabase). */
@@ -750,19 +780,60 @@ const api = {
     
     if (path.startsWith('/calendar')) {
       const params = config.params || {};
+      let fromStr = params.from ? String(params.from).slice(0, 10) : '';
+      let toStr = params.to ? String(params.to).slice(0, 10) : '';
+
       const y = params.year != null ? parseInt(String(params.year), 10) : null;
       const m = params.month != null ? parseInt(String(params.month), 10) : null;
-      let q = supabase.from('calendar_events').select('*, children:child_id(name, color)').eq('family_id', familyId).order('date', { ascending: true });
-      if (y && m >= 1 && m <= 12) {
+      if ((!fromStr || !toStr) && y != null && m != null && m >= 1 && m <= 12) {
         const pad = (n) => String(n).padStart(2, '0');
-        const startM = `${y}-${pad(m)}-01`;
+        fromStr = `${y}-${pad(m)}-01`;
         const lastDay = new Date(y, m, 0).getDate();
-        const endM = `${y}-${pad(m)}-${String(lastDay).padStart(2, '0')}`;
-        q = q.gte('date', startM).lte('date', endM);
+        toStr = `${y}-${pad(m)}-${pad(lastDay)}`;
       }
+
+      let filterChildUuid = '';
+      let rawFc = params.filter_child_id ?? params.filterChildId ?? '';
+      if (rawFc != null && rawFc !== '' && rawFc !== 'all') filterChildUuid = String(rawFc).trim();
+
+      const role = await getUserRole();
+      const { data: { session } } = await supabase.auth.getSession();
+      const authUserId = session?.user?.id;
+      /** Dependente não escolhe filtro por outra conta; segurança mesmo com RLS ampla na família. */
+      if (role === 'child') filterChildUuid = '';
+
+      let q = supabase
+        .from('calendar_events')
+        .select(CALENDAR_EVENT_SELECT)
+        .eq('family_id', familyId)
+        .order('date', { ascending: true })
+        .order('time', { ascending: true });
+
+      if (fromStr && toStr && /^\d{4}-\d{2}-\d{2}$/.test(fromStr) && /^\d{4}-\d{2}-\d{2}$/.test(toStr)) {
+        q = q.gte('date', fromStr).lte('date', toStr);
+      }
+
+      if ((role === 'parent' || role === 'relative') && filterChildUuid) {
+        q = q.eq('child_id', filterChildUuid);
+      }
+
       const { data, error } = await q;
       if (error) throw new Error(error.message);
-      return { data: (data || []).map(mapCalendarEventFromDb) };
+      let rows = data || [];
+
+      if (role === 'child' && authUserId) {
+        const myChildId = await getChildIdForLoggedInUser(authUserId, familyId);
+        rows = rows.filter((ev) => {
+          if (!ev || typeof ev !== 'object') return false;
+          if (ev.visibility === 'private') return false;
+          if (ev.visible_to_child === false) return false;
+          if (!ev.child_id) return true;
+          return myChildId != null && String(ev.child_id) === String(myChildId);
+        });
+      }
+
+      rows = dedupeCalendarEvents(rows);
+      return { data: rows.map(mapCalendarEventFromDb) };
     }
 
     if (path.startsWith('/shopping')) {
@@ -1291,7 +1362,7 @@ const api = {
     if (path.startsWith('/calendar')) {
       const row = omitNullish(pickCalendarRow(body, familyId, userId, true));
       if (!row.date) throw new Error('Indique a data do evento.');
-      const { data, error } = await supabase.from('calendar_events').insert([row]).select('*, children:child_id(name, color)').single();
+      const { data, error } = await supabase.from('calendar_events').insert([row]).select(CALENDAR_EVENT_SELECT).single();
       if (error) throw new Error(error.message);
       return { data: mapCalendarEventFromDb(data) };
     }

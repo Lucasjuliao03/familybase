@@ -11,7 +11,9 @@ export default defineConfig({
 
     VitePWA({
       strategies: 'generateSW',
-      registerType: 'autoUpdate',
+      /** Nova build fica “waiting”; o usuário confirma com registerSW/onNeedRefresh. */
+      registerType: 'prompt',
+      injectRegister: false,
 
       manifest: {
         name: 'Base Familiar',
@@ -31,7 +33,11 @@ export default defineConfig({
       },
 
       workbox: {
+        skipWaiting: false,
+        clientsClaim: true,
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
+        /** Handlers de push (antes em public/sw.js; o SW efetivo é gerido pelo plugin). */
+        importScripts: ['/sw-push-import.js'],
         runtimeCaching: [
           {
             // NUNCA incluir /auth/v1/ — cache de refresh token quebra sessão e gera erros no bundle (ex.: pages-child).

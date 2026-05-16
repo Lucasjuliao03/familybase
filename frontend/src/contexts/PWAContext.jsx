@@ -27,24 +27,22 @@ export function PWAProvider({ children }) {
   const [swReady, setSwReady] = useState(false);
   const subscribedRef = useRef(false);
 
-  // Register Service Worker
+  // SW é registado em produção pelo virtual:pwa-register em main.jsx; aqui só esperamos ready.
   useEffect(() => {
     if (!('serviceWorker' in navigator)) return;
-
-    navigator.serviceWorker.register('/sw.js', { scope: '/' })
+    navigator.serviceWorker
+      .getRegistration()
       .then((reg) => {
+        if (!reg) {
+          setSwRegistration(null);
+          setSwReady(false);
+          return;
+        }
         setSwRegistration(reg);
         setSwReady(true);
-        console.log('[PWA] Service Worker registered:', reg.scope);
-
-        // Check if already subscribed
-        reg.pushManager?.getSubscription().then((sub) => {
-          setIsPushSubscribed(!!sub);
-        });
+        reg.pushManager?.getSubscription().then((sub) => setIsPushSubscribed(!!sub));
       })
-      .catch((err) => {
-        console.warn('[PWA] SW registration failed:', err);
-      });
+      .catch(() => {});
   }, []);
 
   // Catch install prompt event
