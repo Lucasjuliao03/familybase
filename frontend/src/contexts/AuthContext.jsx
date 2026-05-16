@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
-import { supabase, mapAuthNetworkError } from '../lib/supabase';
+import { supabase, mapAuthNetworkError, reconnectSupabaseRealtime } from '../lib/supabase';
 import { famDiag } from '../lib/famDiag';
 
 const AuthContext = createContext(null);
@@ -438,108 +438,72 @@ export function AuthProvider({ children }) {
     };
   }, [loadUserProfile, clearState]);
 
-  /**
-   * Aba/WebView ao fundo: conexões podem ficar presas até morrer pelo timeout fetch.
-   * Ao voltar, invalidamos cargas zombie, refreshSession com cortes curtos e evento aos módulos.
-   */
+  /** Marca instante em que a aba passou a oculta (invalidação de cargas “zombie”). */
   useEffect(() => {
-    if (typeof document === 'undefined' || typeof window === 'undefined') return undefined;
-
-    let debTimer;
-
-    const dispatchResumeEvent = () => {
-      try {
-        window.dispatchEvent(new CustomEvent('familia-app-visible'));
-      } catch {
-        /* noop */
-      }
+    if (typeof document === 'undefined') return undefined;
+    const markHidden = () => {
+      if (document.visibilityState === 'hidden') tabHiddenAtRef.current = Date.now();
     };
+    document.addEventListener('visibilitychange', markHidden);
+    return () => document.removeEventListener('visibilitychange', markHidden);
+  }, []);
 
-    /** Despreza promessa de perfil antiga quando a página ficou tempo oculta (ligações suspensas). */
-    const releaseStaleLoadsIfNeeded = () => {
-      const t = tabHiddenAtRef.current;
-      if (!t) return;
+  /**
+   * Chamado pelo useAppResume global ao regressar ao primeiro plano.
+   * Importante: faz sempre loadUserProfile com force=true (sessão válida mesmo com mesmo user.id).
+   */
+  const refreshAfterBackground = useCallback(async () => {
+    if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+
+    const t = tabHiddenAtRef.current;
+    if (t) {
       tabHiddenAtRef.current = 0;
       if (Date.now() - t > 280) {
         profileInflightRef.current = null;
         profileLoadGenerationRef.current += 1;
       }
-    };
+    }
 
-    const reconcile = async () => {
-      if (document.visibilityState !== 'visible') return;
+    try {
+      const sessWrap = await raceMs(supabase.auth.getSession(), 6000);
+      if (!sessWrap) {
+        famDiag('auth/resume', 'getSession_timeout');
+        return;
+      }
+      const { data: sessData, error: sessErr } = sessWrap;
+      if (sessErr || !sessData?.session?.user?.id) return;
 
-      releaseStaleLoadsIfNeeded();
+      await raceMs(supabase.auth.refreshSession(), 6000).catch(() => {});
 
-      dispatchResumeEvent();
+      const refreshed = await raceMs(supabase.auth.getSession(), 5000);
 
+      let session = sessData.session;
+      let accessToken = session?.access_token ?? null;
+      if (refreshed?.data?.session) {
+        session = refreshed.data.session;
+        accessToken = session?.access_token ?? null;
+      }
+
+      const uid = session?.user?.id;
+      if (!uid) return;
+
+      await reconnectSupabaseRealtime(supabase, accessToken ?? undefined);
+
+      const em =
+        session.user.email ||
+        session.user.user_metadata?.email ||
+        session.user.new_email ||
+        '';
+      await loadUserProfile(uid, em, { force: true }).catch(console.warn);
+    } catch (e) {
+      console.warn('[auth] refreshAfterBackground:', e);
+    } finally {
       try {
-        const sessWrap = await raceMs(supabase.auth.getSession(), 6000);
-        if (!sessWrap) {
-          famDiag('auth/resume', 'getSession_timeout');
-          return;
-        }
-
-        const { data: sessData, error: sessErr } = sessWrap;
-        if (sessErr || !sessData?.session?.user?.id) return;
-
-        await raceMs(supabase.auth.refreshSession(), 6000).catch(() => {});
-
-        const refreshed = await raceMs(supabase.auth.getSession(), 5000);
-
-        let session = sessData.session;
-        if (refreshed?.data?.session) session = refreshed.data.session;
-
-        const uid = session?.user?.id;
-        if (!uid) return;
-
-        const em =
-          session.user.email ||
-          session.user.user_metadata?.email ||
-          session.user.new_email ||
-          '';
-        const u = userRef.current;
-        const loadingNow = loadingRef.current;
-
-        if (loadingNow || !u || u.id !== uid) {
-          await loadUserProfile(uid, em, { force: true }).catch(console.warn);
-        }
-      } catch (e) {
-        dispatchResumeEvent();
-        console.warn('[auth] resume/visibility reconcile:', e);
+        window.dispatchEvent(new CustomEvent('familia-app-visible'));
+      } catch {
+        /* noop */
       }
-    };
-
-    const onVisibilityChange = () => {
-      if (document.visibilityState === 'hidden') {
-        tabHiddenAtRef.current = Date.now();
-      } else {
-        scheduleResume();
-      }
-    };
-
-    const scheduleResume = () => {
-      clearTimeout(debTimer);
-      debTimer = setTimeout(() => {
-        reconcile();
-      }, 180);
-    };
-
-    document.addEventListener('visibilitychange', onVisibilityChange);
-    /** Page Lifecycle (descongelar aba suspendida — Chromium). */
-    document.addEventListener('resume', scheduleResume);
-
-    /** BFCache / Android WebView. */
-    window.addEventListener('pageshow', scheduleResume);
-    window.addEventListener('online', scheduleResume);
-
-    return () => {
-      document.removeEventListener('visibilitychange', onVisibilityChange);
-      document.removeEventListener('resume', scheduleResume);
-      window.removeEventListener('pageshow', scheduleResume);
-      window.removeEventListener('online', scheduleResume);
-      clearTimeout(debTimer);
-    };
+    }
   }, [loadUserProfile]);
 
   const login = async (email, password) => {
@@ -662,6 +626,7 @@ export function AuthProvider({ children }) {
       fetchMe,
       ensureChildProfile,
       clearMustChangePassword,
+      refreshAfterBackground,
     }}>
       {children}
     </AuthContext.Provider>

@@ -1,6 +1,7 @@
 import { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { useAppResume } from './hooks/useAppResume';
 import { moduleAllowed, anyModuleAllowed } from './lib/familyModules';
 import { LanguageProvider } from './contexts/LanguageContext';
 import { ToastProvider } from './contexts/ToastContext';
@@ -102,7 +103,7 @@ function SubscribeGateway() {
 
 function ProtectedRoute({ children, allowedRoles }) {
   const { user, family, effectiveSubscription, loading } = useAuth();
-  if (loading) return <AuthLoading message={message ?? 'A carregar…'} />;
+  if (loading) return <AuthLoading message="A carregar…" />;
   if (!user) return <Navigate to="/login" replace />;
 
   if (user.role !== 'master') {
@@ -306,12 +307,20 @@ function AppRoutes() {
   );
 }
 
+/** Sincroniza sessão Supabase + perfil/família/módulos após regressar ao primeiro plano (ver useAppResume). */
+function AppResumeSync() {
+  const { refreshAfterBackground } = useAuth();
+  useAppResume({ onResume: refreshAfterBackground });
+  return null;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 export default function App() {
   return (
     <BrowserRouter>
       <LanguageProvider>
         <AuthProvider>
+          <AppResumeSync />
           <PWAProvider>
             <ToastProvider>
               <FirstAccessPasswordModal />

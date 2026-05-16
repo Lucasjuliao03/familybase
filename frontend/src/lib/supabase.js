@@ -44,3 +44,34 @@ export const supabase = createClient(supabaseUrl || '', supabaseAnonKey || '', {
     fetch: fetchNoStoreWithDeadline,
   },
 });
+
+/**
+ * Após suspensão da aba/PWA o WebSocket do Realtime pode ficar morto sem o PostgREST “parar”.
+ * Força novo socket e reenvia o JWT às subscrições existentes.
+ *
+ * @param {import('@supabase/supabase-js').SupabaseClient} [client]
+ * @param {string | null | undefined} [accessToken] — se omitido, usa getSession()
+ */
+export async function reconnectSupabaseRealtime(client = supabase, accessToken) {
+  const rt = client?.realtime;
+  if (!rt) return;
+  try {
+    let token = accessToken;
+    if (token === undefined) {
+      const { data } = await client.auth.getSession();
+      token = data?.session?.access_token ?? null;
+    }
+    if (typeof rt.disconnect === 'function') {
+      await rt.disconnect();
+    }
+    if (typeof rt.connect === 'function') {
+      rt.connect();
+    }
+    if (typeof rt.setAuth === 'function') {
+      if (token) rt.setAuth(token);
+      else rt.setAuth();
+    }
+  } catch (e) {
+    console.warn('[supabase] realtime reconnect:', e);
+  }
+}

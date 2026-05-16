@@ -40,9 +40,8 @@ export default defineConfig({
         importScripts: ['/sw-push-import.js'],
         runtimeCaching: [
           {
-            // Dados devem sempre ir à rede; NetworkFirst pode servir respostas antigas após timeout e “congelar” a SPA.
-            // NUNCA incluir /auth/v1/ aqui nem em cache manual (refresh token quebra sessão).
-            urlPattern: /^https:\/\/[a-z0-9-]+\.supabase\.co\/(rest\/v1|storage\/v1|functions\/v1)\//i,
+            // Todo o host público Supabase (auth/rest/realtime via fetch, storage, functions) — sempre rede; evita SPA “presa”.
+            urlPattern: /^https:\/\/[a-z0-9-]+\.supabase\.co\//i,
             handler: 'NetworkOnly',
           },
           {
@@ -52,7 +51,18 @@ export default defineConfig({
           {
             urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
             handler: 'CacheFirst',
-            options: { cacheName: 'google-fonts', expiration: { maxAgeSeconds: 60 * 60 * 24 * 365 } },
+            options: {
+              cacheName: 'google-fonts-stylesheets',
+              expiration: { maxEntries: 20, maxAgeSeconds: 60 * 60 * 24 * 365 },
+            },
+          },
+          {
+            urlPattern: /^https:\/\/fonts\.gstatic\.com\/.*/i,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'google-fonts-files',
+              expiration: { maxEntries: 30, maxAgeSeconds: 60 * 60 * 24 * 365 },
+            },
           },
         ],
       },
