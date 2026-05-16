@@ -248,10 +248,15 @@ CREATE TABLE IF NOT EXISTS public.medals (
     extra_points INTEGER DEFAULT 0,
     rule_description TEXT,
     medal_group TEXT,
+    catalog_slug TEXT,
     is_active BOOLEAN DEFAULT true,
     family_id UUID REFERENCES public.families(id) ON DELETE CASCADE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now())
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_medals_global_catalog_slug
+  ON public.medals (catalog_slug)
+  WHERE (family_id IS NULL AND catalog_slug IS NOT NULL);
 
 CREATE TABLE IF NOT EXISTS public.earned_medals (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -355,6 +360,26 @@ ALTER TABLE public.health_records ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.medications ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.family_modules ENABLE ROW LEVEL SECURITY;
 
+-- Políticas idempotentes (permite re-executar este script sem erro 42710)
+DROP POLICY IF EXISTS "Users can view their own family" ON public.families;
+DROP POLICY IF EXISTS "Users can update their own family" ON public.families;
+DROP POLICY IF EXISTS "Users can view family users" ON public.users;
+DROP POLICY IF EXISTS "Users can view family children" ON public.children;
+DROP POLICY IF EXISTS "Users can view family tasks" ON public.tasks;
+DROP POLICY IF EXISTS "Users can view family task_occurrences" ON public.task_occurrences;
+DROP POLICY IF EXISTS "Users can view family task_allowance_rules" ON public.task_allowance_rules;
+DROP POLICY IF EXISTS "Users can view family rewards" ON public.rewards;
+DROP POLICY IF EXISTS "Users can view family redemptions" ON public.redemptions;
+DROP POLICY IF EXISTS "Users can view family allowance" ON public.allowance_settings;
+DROP POLICY IF EXISTS "Users can view family allowance_cycles" ON public.allowance_cycles;
+DROP POLICY IF EXISTS "Users can view family allowance_transactions" ON public.allowance_transactions;
+DROP POLICY IF EXISTS "Users can view family savings_goals" ON public.savings_goals;
+DROP POLICY IF EXISTS "Users can view family medals" ON public.medals;
+DROP POLICY IF EXISTS "Users can view family earned_medals" ON public.earned_medals;
+DROP POLICY IF EXISTS "Users can view family health_records" ON public.health_records;
+DROP POLICY IF EXISTS "Users can view family medications" ON public.medications;
+DROP POLICY IF EXISTS "Users can view family_modules" ON public.family_modules;
+
 -- Policies para 'families' (Usuário só vê e edita a própria família)
 CREATE POLICY "Users can view their own family" ON public.families FOR SELECT USING (id = public.get_current_user_family_id());
 CREATE POLICY "Users can update their own family" ON public.families FOR UPDATE USING (id = public.get_current_user_family_id());
@@ -390,6 +415,10 @@ BEGIN
 END;
 $$ language 'plpgsql';
 
+DROP TRIGGER IF EXISTS update_tasks_modtime ON public.tasks;
+DROP TRIGGER IF EXISTS update_users_modtime ON public.users;
+DROP TRIGGER IF EXISTS update_families_modtime ON public.families;
+
 CREATE TRIGGER update_tasks_modtime BEFORE UPDATE ON public.tasks FOR EACH ROW EXECUTE PROCEDURE update_modified_column();
 CREATE TRIGGER update_users_modtime BEFORE UPDATE ON public.users FOR EACH ROW EXECUTE PROCEDURE update_modified_column();
 CREATE TRIGGER update_families_modtime BEFORE UPDATE ON public.families FOR EACH ROW EXECUTE PROCEDURE update_modified_column();
@@ -404,6 +433,11 @@ INSERT INTO storage.buckets (id, name, public) VALUES ('health-files', 'health-f
 INSERT INTO storage.buckets (id, name, public) VALUES ('reward-images', 'reward-images', true) ON CONFLICT DO NOTHING;
 
 -- Policy para avatars: qualquer um logado pode ver, só o próprio usuario atualiza
+DROP POLICY IF EXISTS "Avatars are public" ON storage.objects;
+DROP POLICY IF EXISTS "Users can upload their own avatars" ON storage.objects;
+DROP POLICY IF EXISTS "Health files are private" ON storage.objects;
+DROP POLICY IF EXISTS "Users can upload health files" ON storage.objects;
+
 CREATE POLICY "Avatars are public" ON storage.objects FOR SELECT USING (bucket_id = 'avatars');
 CREATE POLICY "Users can upload their own avatars" ON storage.objects FOR INSERT WITH CHECK (bucket_id = 'avatars' AND auth.role() = 'authenticated');
 

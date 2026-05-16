@@ -2,6 +2,7 @@ import { supabase, fetchNoStore } from '../lib/supabase';
 import { famDiagWarn } from '../lib/famDiag';
 import { createClient } from '@supabase/supabase-js';
 import {
+  canonicalMedalRequirementType,
   dedupeEarnedMedalsForDisplay,
   dedupeMedalsForAwardingCatalog,
   normalizedMedalDedupeKey,
@@ -178,17 +179,82 @@ async function createLinkedChildAuthUser({
   throw new Error(lastRpcErr?.message || 'Não foi possível associar o filho à família (RPC add_member_to_family).');
 }
 
-// Verifica e atribui medalhas à criança após aprovação de tarefa
-async function checkAndAwardMedals(supabase, childId, familyId, currentStreak) {
-  try {
-    // Contar tarefas aprovadas
-    const { count: taskCount } = await supabase
+// Verifica e atribui medalhas à criança (tarefas, notas máximas, mesada, recompensas, etc.)
+async function loadMedalProgressSnapshot(supabase, childId) {
+  const [taskRes, childRes, gradesRes, redemptionRes, cycleRes] = await Promise.all([
+    supabase
       .from('task_occurrences')
       .select('*', { count: 'exact', head: true })
       .eq('child_id', childId)
-      .eq('status', 'approved');
+      .eq('status', 'approved'),
+    supabase.from('children').select('points, streak_current').eq('id', childId).maybeSingle(),
+    supabase.from('grades').select('score, max_score').eq('child_id', childId),
+    supabase
+      .from('redemptions')
+      .select('*', { count: 'exact', head: true })
+      .eq('child_id', childId)
+      .eq('status', 'approved'),
+    supabase
+      .from('allowance_cycles')
+      .select('*', { count: 'exact', head: true })
+      .eq('child_id', childId)
+      .eq('status', 'paid'),
+  ]);
 
-    // Obter medalhas disponíveis (família + globais)
+  let perfectGradesCount = 0;
+  for (const g of gradesRes.data || []) {
+    const sc = Number(g.score);
+    const mx = Number(g.max_score);
+    const cap = Number.isFinite(mx) && mx > 0 ? mx : 10;
+    if (Number.isFinite(sc) && sc >= cap) perfectGradesCount += 1;
+  }
+
+  return {
+    taskCount: taskRes.count ?? 0,
+    streakCurrent: Number(childRes.data?.streak_current) || 0,
+    points: Number(childRes.data?.points) || 0,
+    perfectGradesCount,
+    approvedRedemptions: redemptionRes.count ?? 0,
+    paidAllowanceCycles: cycleRes.count ?? 0,
+  };
+}
+
+function medalRequirementThresholdMedalAward(medal, crt) {
+  const rv = Number(medal.requirement_value);
+  if (!Number.isFinite(rv) || rv < 1) return 1;
+  if (
+    crt === 'task_count' ||
+    crt === 'task_streak' ||
+    crt === 'perfect_grade' ||
+    crt === 'reward_redemptions' ||
+    crt === 'allowance_paid_cycles'
+  ) {
+    return Math.max(1, Math.floor(rv));
+  }
+  if (crt === 'points_goal') return Math.max(1, Math.floor(rv));
+  return rv;
+}
+
+function isMedalQualifiedBySnapshot(medal, snap, streakUse) {
+  const crt = canonicalMedalRequirementType(medal.requirement_type);
+  const thr = medalRequirementThresholdMedalAward(medal, crt);
+  if (crt === 'task_count' && snap.taskCount >= thr) return true;
+  if (crt === 'task_streak' && streakUse >= thr) return true;
+  if (crt === 'perfect_grade' && snap.perfectGradesCount >= thr) return true;
+  if (crt === 'points_goal' && snap.points >= thr) return true;
+  if (crt === 'reward_redemptions' && snap.approvedRedemptions >= thr) return true;
+  if (crt === 'allowance_paid_cycles' && snap.paidAllowanceCycles >= thr) return true;
+  return false;
+}
+
+async function checkAndAwardMedals(supabase, childId, familyId, currentStreakHint) {
+  try {
+    const snap = await loadMedalProgressSnapshot(supabase, childId);
+    const streakUse =
+      currentStreakHint != null && Number.isFinite(Number(currentStreakHint))
+        ? Number(currentStreakHint)
+        : snap.streakCurrent;
+
     const { data: medals } = await supabase
       .from('medals')
       .select('*')
@@ -199,7 +265,6 @@ async function checkAndAwardMedals(supabase, childId, familyId, currentStreak) {
 
     const catalog = dedupeMedalsForAwardingCatalog(medals);
 
-    // Conquistas já cobertas (vários medal_id na BD podem ser a mesma conquista)
     const { data: earnedRows } = await supabase
       .from('earned_medals')
       .select('medal_id, medals(*)')
@@ -220,18 +285,16 @@ async function checkAndAwardMedals(supabase, childId, familyId, currentStreak) {
       const achievementKey = normalizedMedalDedupeKey(medal);
       if (achievementKey && earnedKeys.has(achievementKey)) continue;
       if (earnedIds.has(medal.id)) continue;
-      let qualified = false;
-      if (medal.requirement_type === 'task_count' && taskCount >= (medal.requirement_value || 1)) qualified = true;
-      if (medal.requirement_type === 'task_streak' && currentStreak >= (medal.requirement_value || 1)) qualified = true;
-      if (qualified) {
-        toAward.push({ id: uuidv4(), medal_id: medal.id, child_id: childId });
-        if (achievementKey) earnedKeys.add(achievementKey);
-        bonusPoints += medal.extra_points || 0;
-      }
+      if (!isMedalQualifiedBySnapshot(medal, snap, streakUse)) continue;
+      toAward.push({ id: uuidv4(), medal_id: medal.id, child_id: childId });
+      if (achievementKey) earnedKeys.add(achievementKey);
+      bonusPoints += medal.extra_points || 0;
     }
 
     if (toAward.length) {
-      const { error: upEmErr } = await supabase.from('earned_medals').upsert(toAward, { onConflict: 'medal_id,child_id', ignoreDuplicates: true });
+      const { error: upEmErr } = await supabase
+        .from('earned_medals')
+        .upsert(toAward, { onConflict: 'medal_id,child_id', ignoreDuplicates: true });
       if (upEmErr) console.warn('earned_medals upsert:', upEmErr.message);
       if (bonusPoints > 0) {
         const { data: ch } = await supabase.from('children').select('points').eq('id', childId).single();
@@ -1148,9 +1211,14 @@ const api = {
       try {
         const [{ data: famMedals }, { data: globalMedals }] = await Promise.all([
           supabase.from('medals').select('*').eq('family_id', familyId).order('created_at', { ascending: true }),
-          supabase.from('medals').select('*').is('family_id', null).order('created_at', { ascending: true }),
+          supabase.from('medals').select('*').is('family_id', null).order('catalog_slug', { ascending: true }).order('created_at', { ascending: true }),
         ]);
-        return { data: [...(famMedals || []), ...(globalMedals || [])] };
+        const fam = famMedals || [];
+        const glob = dedupeMedalsForAwardingCatalog(globalMedals || []);
+        glob.sort((a, b) =>
+          String(a.catalog_slug || a.name || '').localeCompare(String(b.catalog_slug || b.name || ''), 'pt'),
+        );
+        return { data: [...fam, ...glob] };
       } catch {
         return { data: [] };
       }
@@ -1567,6 +1635,15 @@ const api = {
       const row = normalizeGradeRow(body, familyId);
       const { data, error } = await supabase.from('grades').insert([omitUndefined(row)]).select('*, children:child_id(name, color, avatar_url, avatar_preset)').single();
       if (error) throw new Error(error.message);
+      const childIdAward = data?.child_id;
+      if (childIdAward) {
+        const { data: chAfter } = await supabase
+          .from('children')
+          .select('streak_current')
+          .eq('id', childIdAward)
+          .maybeSingle();
+        await checkAndAwardMedals(supabase, childIdAward, familyId, chAfter?.streak_current || 0);
+      }
       return { data: mapGradeFromDb(data) };
     }
 
@@ -1904,7 +1981,11 @@ const api = {
     }
 
     if (path === '/gamification/medals') {
-      const { data, error } = await supabase.from('medals').insert([{ ...body, family_id: familyId, id: uuidv4() }]).select().single();
+      const { data, error } = await supabase
+        .from('medals')
+        .insert([omitNullish({ ...body, family_id: familyId, id: uuidv4() })])
+        .select()
+        .single();
       if (error) throw new Error(error.message);
       return { data };
     }
@@ -2023,7 +2104,21 @@ const api = {
 
     if (path.startsWith('/allowance/cycles/') && path.endsWith('/pay')) {
       const cycleId = path.split('/')[3];
+      const { data: cyc } = await supabase
+        .from('allowance_cycles')
+        .select('child_id')
+        .eq('id', cycleId)
+        .eq('family_id', familyId)
+        .maybeSingle();
       await supabase.from('allowance_cycles').update({ status: 'paid' }).eq('id', cycleId).eq('family_id', familyId);
+      if (cyc?.child_id) {
+        const { data: chAfter } = await supabase
+          .from('children')
+          .select('streak_current')
+          .eq('id', cyc.child_id)
+          .maybeSingle();
+        await checkAndAwardMedals(supabase, cyc.child_id, familyId, chAfter?.streak_current || 0);
+      }
       return { data: { ok: true } };
     }
 
@@ -2597,7 +2692,13 @@ const api = {
 
     if (path.match(/^\/gamification\/medals\/[^/]+$/)) {
       const mid = parts[2];
-      const { data, error } = await supabase.from('medals').update({ ...body }).eq('id', mid).select().single();
+      const { data, error } = await supabase
+        .from('medals')
+        .update(omitNullish(body))
+        .eq('id', mid)
+        .eq('family_id', familyId)
+        .select()
+        .single();
       if (error) throw new Error(error.message);
       return { data };
     }
@@ -2621,6 +2722,14 @@ const api = {
       const patch = { status: body?.approved ? 'approved' : 'rejected', approved_by: userId, approved_at: new Date().toISOString() };
       const { data, error } = await supabase.from('redemptions').update(patch).eq('id', rid).select().single();
       if (error) throw new Error(error.message);
+      if (body?.approved && data?.child_id) {
+        const { data: chAfter } = await supabase
+          .from('children')
+          .select('streak_current')
+          .eq('id', data.child_id)
+          .maybeSingle();
+        await checkAndAwardMedals(supabase, data.child_id, familyId, chAfter?.streak_current || 0);
+      }
       return { data };
     }
 
@@ -2847,7 +2956,7 @@ const api = {
 
     if (path.match(/^\/gamification\/medals\/[^/]+$/)) {
       const mid = parts[2];
-      await supabase.from('medals').delete().eq('id', mid);
+      await supabase.from('medals').delete().eq('id', mid).eq('family_id', familyId);
       return { data: { success: true } };
     }
 

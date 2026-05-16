@@ -12,8 +12,26 @@ import {
   isUserDisplaySwatchDisabled,
   USER_DISPLAY_COLOR_PALETTE,
 } from '../../lib/userDisplayColors';
+import { dedupeMedalsForAwardingCatalog } from '../../lib/childDashboardDedupe';
 
 const COLOR_PRESETS = ['#6C5CE7', '#E84393', '#00B894', '#FDCB6E', '#74B9FF', '#E17055', '#A29BFE', '#55EFC4', '#0984E3', '#FD79A8', '#636E72'];
+
+/** Alinha valores do formulário com o motor de concessão automática (api.js). */
+function normalizeMedalRequirementTypeForSave(v) {
+  const x = String(v || '').trim().toLowerCase();
+  switch (x) {
+    case 'tasks_completed':
+      return 'task_count';
+    case 'streak':
+      return 'task_streak';
+    case 'first_reward':
+      return 'reward_redemptions';
+    case 'allowance_goal':
+      return 'allowance_paid_cycles';
+    default:
+      return x || 'task_count';
+  }
+}
 
 function imgUrl(path) {
   if (!path) return null;
@@ -39,6 +57,12 @@ const MODULE_ICONS = {
 
 function inferMedalGroup(m) {
   if (m.medal_group) return m.medal_group;
+  const rt = String(m.requirement_type || '').trim().toLowerCase();
+  const rNorm = normalizeMedalRequirementTypeForSave(rt || m.requirement_type);
+  if (rNorm === 'task_count' || rNorm === 'task_streak') return 'routine';
+  if (rt === 'perfect_grade') return 'studies';
+  if (rt === 'allowance_paid_cycles' || rt === 'allowance_goal') return 'allowance';
+  if (rt === 'points_goal' || rt === 'reward_redemptions' || rt === 'first_reward') return 'rewards';
   const c = m.category;
   if (c === 'grades') return 'studies';
   if (c === 'tasks' || c === 'streak') return 'routine';
@@ -47,6 +71,12 @@ function inferMedalGroup(m) {
 }
 
 function inferCategoryForApi(m) {
+  const crt = normalizeMedalRequirementTypeForSave(m.requirement_type);
+  if (crt === 'perfect_grade') return 'grades';
+  if (crt === 'task_streak') return 'streak';
+  if (crt === 'task_count') return 'tasks';
+  if (crt === 'allowance_paid_cycles') return 'allowance';
+  if (crt === 'points_goal' || crt === 'reward_redemptions') return 'special';
   const c = m.category;
   if (c && ['tasks', 'grades', 'streak', 'special', 'allowance'].includes(c)) return c;
   const g = inferMedalGroup(m);
@@ -115,6 +145,16 @@ export default function FamilyAdministration() {
   }, [tab, toast, t]);
 
   const parentsList = useMemo(() => (Array.isArray(members) ? members : []).filter((m) => m.role === 'parent'), [members]);
+
+  const displayMedals = useMemo(() => {
+    const list = Array.isArray(medals) ? medals : [];
+    const fam = list.filter((m) => m.family_id);
+    const globDedup = dedupeMedalsForAwardingCatalog(list.filter((m) => !m.family_id));
+    globDedup.sort((a, b) =>
+      String(a.catalog_slug || a.name || '').localeCompare(String(b.catalog_slug || b.name || ''), 'pt'),
+    );
+    return [...fam, ...globDedup];
+  }, [medals]);
 
   const accessProfile = user?.access_profile ?? user?.accessProfile ?? 'gestor';
   const isGestorUser = user?.role === 'parent' && accessProfile === 'gestor';
@@ -190,11 +230,11 @@ export default function FamilyAdministration() {
       color: m.color || '#6C5CE7',
       category: inferCategoryForApi(m),
       medal_group: inferMedalGroup(m),
-      requirement_type: m.requirement_type || 'tasks_completed',
+      requirement_type: normalizeMedalRequirementTypeForSave(m.requirement_type),
       requirement_value: m.requirement_value ?? 1,
       extra_points: m.extra_points ?? 0,
       rule_description: m.rule_description || '',
-      is_active: 1,
+      is_active: true,
     });
   };
 
@@ -254,12 +294,28 @@ export default function FamilyAdministration() {
   const saveMedal = async (e) => {
     e.preventDefault();
     try {
-      if (medalModal.id) {
-        await api.put(`/gamification/medals/${medalModal.id}`, medalModal);
-      } else {
-        const { id: _omit, family_id: _f, ...rest } = medalModal;
-        await api.post('/gamification/medals', rest);
-      }
+      const slugTrim = medalModal.catalog_slug != null ? String(medalModal.catalog_slug).trim() : '';
+      const body = {
+        name: medalModal.name,
+        name_en: medalModal.name_en ?? null,
+        description: medalModal.description ?? null,
+        description_en: medalModal.description_en ?? null,
+        icon: medalModal.icon || '🏅',
+        color: medalModal.color || null,
+        category: inferCategoryForApi(medalModal),
+        medal_group: medalModal.medal_group || 'routine',
+        requirement_type: normalizeMedalRequirementTypeForSave(medalModal.requirement_type),
+        requirement_value: Math.max(0, Number(medalModal.requirement_value) || 0),
+        extra_points: Number(medalModal.extra_points) || 0,
+        rule_description: medalModal.rule_description ?? null,
+        is_active:
+          medalModal.is_active !== 0 && medalModal.is_active !== false && medalModal.is_active !== '0' ? true : false,
+      };
+      if (slugTrim) body.catalog_slug = slugTrim;
+
+      if (medalModal.id) await api.put(`/gamification/medals/${medalModal.id}`, body);
+      else await api.post('/gamification/medals', body);
+
       toast.success(t('fam_admin_saved'));
       setMedalModal(null);
       loadAll();
@@ -667,20 +723,53 @@ export default function FamilyAdministration() {
       {tab === 'medals' && (
         <div className="fam-admin-section">
           <div className="flex-between mb-16">
-            <h2 className="card-title">{t('medals')}</h2>
-            <button type="button" className="btn btn-primary" onClick={() => setMedalModal({ icon: '🏅', is_active: 1, requirement_type: 'tasks_completed', requirement_value: 5, medal_group: 'routine' })}>
+            <div>
+              <h2 className="card-title">{t('medals')}</h2>
+              <p style={{ color: 'var(--text-light)', fontSize: '0.88rem', marginTop: 6, maxWidth: 620 }}>
+                {t('fam_admin_medals_intro')}
+              </p>
+            </div>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() =>
+                setMedalModal({
+                  icon: '🏅',
+                  is_active: true,
+                  requirement_type: 'task_count',
+                  requirement_value: 5,
+                  medal_group: 'routine',
+                })
+              }
+            >
               + {t('fam_admin_new_medal')}
             </button>
           </div>
           <div className="grid grid-3">
-            {medals.map((m) => (
+            {displayMedals.map((m) => (
               <div key={m.id} className="card" style={{ textAlign: 'center', borderTop: `4px solid ${m.color || '#6C5CE7'}` }}>
                 <div style={{ fontSize: '2.2rem' }}>{m.icon}</div>
                 <h3 style={{ fontWeight: 700, marginTop: 8 }}>{m.name}</h3>
-                <p style={{ fontSize: '0.82rem', color: 'var(--text-light)' }}>{m.description}</p>
+                {m.catalog_slug && (
+                  <p style={{ fontSize: '0.72rem', color: 'var(--text-light)', marginTop: 4, fontFamily: 'monospace' }}>
+                    {m.catalog_slug}
+                  </p>
+                )}
+                <p style={{ fontSize: '0.82rem', color: 'var(--text-light)', marginTop: 6 }}>{m.description}</p>
+                <p style={{ fontSize: '0.74rem', color: 'var(--text-light)', marginTop: 4 }}>{m.rule_description}</p>
                 {m.family_id && (
                   <div className="flex gap-8" style={{ justifyContent: 'center', marginTop: 8 }}>
-                    <button type="button" className="btn btn-sm btn-ghost" onClick={() => setMedalModal({ ...m, is_active: m.is_active !== 0 ? 1 : 0 })}>
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-ghost"
+                      onClick={() =>
+                        setMedalModal({
+                          ...m,
+                          is_active: m.is_active !== 0 && m.is_active !== false,
+                          requirement_type: normalizeMedalRequirementTypeForSave(m.requirement_type),
+                        })
+                      }
+                    >
                       {t('edit')}
                     </button>
                     <button type="button" className="btn btn-sm btn-danger" onClick={() => deleteMedal(m.id)}>
@@ -696,7 +785,9 @@ export default function FamilyAdministration() {
                     </button>
                   </div>
                 )}
-                {(m.is_active === 0 || m.is_active === false) && m.family_id && <span className="badge badge-warning mt-8">{t('fam_admin_inactive')}</span>}
+                {(m.is_active === 0 || m.is_active === false) && m.family_id && (
+                  <span className="badge badge-warning mt-8">{t('fam_admin_inactive')}</span>
+                )}
               </div>
             ))}
           </div>
@@ -836,6 +927,17 @@ export default function FamilyAdministration() {
                 <label className="form-label">{t('name')} *</label>
                 <input className="form-input" value={medalModal.name || ''} onChange={(e) => setMedalModal((p) => ({ ...p, name: e.target.value }))} required />
               </div>
+              <div className="form-group">
+                <label className="form-label">{t('fam_admin_medal_slug')}</label>
+                <input
+                  className="form-input"
+                  value={medalModal.catalog_slug || ''}
+                  onChange={(e) => setMedalModal((p) => ({ ...p, catalog_slug: e.target.value }))}
+                  placeholder="minha_medalha_01"
+                  autoComplete="off"
+                />
+                <p style={{ fontSize: '0.78rem', color: 'var(--text-light)', marginTop: 6 }}>{t('fam_admin_medal_slug_hint')}</p>
+              </div>
               <div className="grid grid-2">
                 <div className="form-group">
                   <label className="form-label">{t('fam_admin_medal_icon')}</label>
@@ -890,14 +992,15 @@ export default function FamilyAdministration() {
                   <label className="form-label">{t('fam_admin_medal_req_type')}</label>
                   <select
                     className="form-select"
-                    value={medalModal.requirement_type || 'tasks_completed'}
+                    value={normalizeMedalRequirementTypeForSave(medalModal.requirement_type || 'task_count')}
                     onChange={(e) => setMedalModal((p) => ({ ...p, requirement_type: e.target.value }))}
                   >
-                    <option value="tasks_completed">{t('fam_rule_tasks')}</option>
-                    <option value="streak">{t('fam_rule_streak')}</option>
-                    <option value="points_goal">{t('fam_rule_points')}</option>
-                    <option value="allowance_goal">{t('fam_rule_allowance')}</option>
-                    <option value="first_reward">{t('fam_rule_reward')}</option>
+                    <option value="task_count">{t('fam_rule_task_count')}</option>
+                    <option value="task_streak">{t('fam_rule_task_streak')}</option>
+                    <option value="perfect_grade">{t('fam_rule_perfect_grade')}</option>
+                    <option value="points_goal">{t('fam_rule_points_goal')}</option>
+                    <option value="reward_redemptions">{t('fam_rule_reward_redemptions')}</option>
+                    <option value="allowance_paid_cycles">{t('fam_rule_allowance_paid_cycles')}</option>
                     <option value="custom">{t('fam_rule_custom')}</option>
                   </select>
                 </div>
@@ -911,19 +1014,17 @@ export default function FamilyAdministration() {
                   />
                 </div>
               </div>
-              {medalModal.id && (
-                <div className="form-group">
-                  <label className="form-label">{t('fam_admin_table_status')}</label>
-                  <select
-                    className="form-select"
-                    value={medalModal.is_active !== 0 && medalModal.is_active !== false ? 1 : 0}
-                    onChange={(e) => setMedalModal((p) => ({ ...p, is_active: Number(e.target.value) }))}
-                  >
-                    <option value={1}>{t('fam_admin_status_active')}</option>
-                    <option value={0}>{t('fam_admin_inactive')}</option>
-                  </select>
-                </div>
-              )}
+              <div className="form-group">
+                <label className="form-label">{t('fam_admin_table_status')}</label>
+                <select
+                  className="form-select"
+                  value={medalModal.is_active !== 0 && medalModal.is_active !== false ? 1 : 0}
+                  onChange={(e) => setMedalModal((p) => ({ ...p, is_active: Number(e.target.value) }))}
+                >
+                  <option value={1}>{t('fam_admin_status_active')}</option>
+                  <option value={0}>{t('fam_admin_inactive')}</option>
+                </select>
+              </div>
               <div className="modal-footer">
                 <button type="button" className="btn btn-ghost" onClick={() => setMedalModal(null)}>
                   {t('cancel')}

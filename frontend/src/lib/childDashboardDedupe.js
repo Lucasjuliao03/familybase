@@ -36,15 +36,40 @@ export function dedupeOccurrencesByDayAndTitle(rows) {
   return [...m.values()];
 }
 
+/** Tipos históricos no formulário/admin → valores canónicos para dedup e concessão automática */
+export function canonicalMedalRequirementType(rt) {
+  const x = String(rt || '').trim().toLowerCase();
+  switch (x) {
+    case 'tasks_completed':
+      return 'task_count';
+    case 'streak':
+      return 'task_streak';
+    case 'first_reward':
+      return 'reward_redemptions';
+    case 'allowance_goal':
+      return 'allowance_paid_cycles';
+    default:
+      return x;
+  }
+}
+
 /**
  * Chave lógica “uma conquista = uma medalha”: tipo de requisito + limiar normalizado + grupo.
  * Sem requirement_type na definição, cai no nome normalizado (legado).
  */
 export function normalizedMedalDedupeKey(m) {
   if (!m) return '';
-  const rt = String(m.requirement_type || '').trim().toLowerCase();
+  const rtRaw = String(m.requirement_type || '').trim().toLowerCase();
+  const crt = canonicalMedalRequirementType(rtRaw);
   const mg = String(m.medal_group || '').trim().toLowerCase();
-  if (!rt) {
+  if (crt === 'custom') {
+    const name = String(m.name || '')
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, ' ');
+    return name ? `custom:${name}|${mg}` : '';
+  }
+  if (!rtRaw) {
     const name = String(m.name || '')
       .trim()
       .toLowerCase()
@@ -52,12 +77,20 @@ export function normalizedMedalDedupeKey(m) {
     return name ? `name:${name}` : '';
   }
   let rv = Number(m.requirement_value);
-  if (rt === 'task_count' || rt === 'task_streak') {
+  if (
+    crt === 'task_count' ||
+    crt === 'task_streak' ||
+    crt === 'perfect_grade' ||
+    crt === 'reward_redemptions' ||
+    crt === 'allowance_paid_cycles'
+  ) {
+    if (!Number.isFinite(rv) || rv < 1) rv = 1;
+  } else if (crt === 'points_goal') {
     if (!Number.isFinite(rv) || rv < 1) rv = 1;
   } else if (!Number.isFinite(rv)) {
     rv = 0;
   }
-  return `req:${rt}|${rv}|${mg}`;
+  return `req:${crt}|${rv}|${mg}`;
 }
 
 /**

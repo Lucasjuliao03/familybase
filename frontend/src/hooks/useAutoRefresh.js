@@ -1,14 +1,26 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { useLocation } from 'react-router-dom';
 
+function dispatchResumeEvent() {
+  if (typeof window === 'undefined') return;
+  try {
+    window.dispatchEvent(new CustomEvent('familia-app-visible'));
+  } catch {
+    /* noop */
+  }
+}
+
 /**
- * Invoca dados ao mudar rota e, com throttle, ao voltar à aba, foco ou rede (online).
+ * Invoca dados ao mudar rota e, com throttle, ao regressar ao foco / rede online.
  *
- * Mudanças de `pathname` / `search` NUNCA passam pelo throttle (evita módulos vazios ao navegar rápido entre itens do menu).
+ * Ao voltar para a **aba** (`visibilitychange` → visible) o pedido corre **logo** —
+ * sem esperar pela janela de throttle que deixaria a SPA vazia após suspensão do navegador.
+ *
+ * Mudanças de `pathname` / `search` NUNCA passam pelo throttle entre módulos.
  *
  * @param {() => void} callback — idempotente
- * @param {number} [throttleMs=2500] — só ciclo de vida (aba/foco/rede), não navegação
- * @param {{ includeRouteChanges?: boolean }} [opts] — includeRouteChanges default true (defina false quando outro useEffect gere o carregamento na rota, ex.: dependência childProfile).
+ * @param {number} [throttleMs=2500] — foco/janela/online apenas
+ * @param {{ includeRouteChanges?: boolean }} [opts]
  */
 export default function useAutoRefresh(callback, throttleMs = 2500, opts = {}) {
   const { includeRouteChanges = true } = opts;
@@ -20,6 +32,10 @@ export default function useAutoRefresh(callback, throttleMs = 2500, opts = {}) {
     cbRef.current = callback;
   }, [callback]);
 
+  const notifyResume = useCallback(() => {
+    dispatchResumeEvent();
+  }, []);
+
   const throttledLifecycleRefresh = useCallback(() => {
     const now = Date.now();
     if (now - lastThrottledRunRef.current < throttleMs) return;
@@ -29,9 +45,9 @@ export default function useAutoRefresh(callback, throttleMs = 2500, opts = {}) {
     } catch {
       /* engole para não partir o ciclo React */
     }
-  }, [throttleMs]);
+    notifyResume();
+  }, [throttleMs, notifyResume]);
 
-  /** Ao entrar no módulo / mudar query (sem throttle). Opcional quando o ecrã já tem useEffect próprio. */
   useEffect(() => {
     if (!includeRouteChanges) return;
     try {
@@ -43,18 +59,27 @@ export default function useAutoRefresh(callback, throttleMs = 2500, opts = {}) {
 
   useEffect(() => {
     const onVisibility = () => {
-      if (document.visibilityState === 'visible') throttledLifecycleRefresh();
+      if (document.visibilityState !== 'visible') return;
+      /** Imediato: aba recuperada ≠ evento foco (evita esperar throttle). */
+      lastThrottledRunRef.current = Date.now();
+      try {
+        cbRef.current?.();
+      } catch {
+        /* idem */
+      }
+      notifyResume();
     };
-    const onFocus = () => throttledLifecycleRefresh();
+    /** Regressar à app sem troca visível estrita — reforço. */
+    const onWindowFocus = () => throttledLifecycleRefresh();
     const onOnline = () => throttledLifecycleRefresh();
 
     document.addEventListener('visibilitychange', onVisibility);
-    window.addEventListener('focus', onFocus);
+    window.addEventListener('focus', onWindowFocus);
     window.addEventListener('online', onOnline);
     return () => {
       document.removeEventListener('visibilitychange', onVisibility);
-      window.removeEventListener('focus', onFocus);
+      window.removeEventListener('focus', onWindowFocus);
       window.removeEventListener('online', onOnline);
     };
-  }, [throttledLifecycleRefresh]);
+  }, [throttledLifecycleRefresh, notifyResume]);
 }

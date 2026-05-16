@@ -264,7 +264,9 @@ BEGIN
 END
 $em$;
 
--- Medalhas padrão globais (se não existirem)
+-- Medalhas padrão globais: ver supabase/migrations/20260515_medals_catalog_unique_global.sql
+-- (30 conquistas com catalog_slug, índice único e deduplicação — evita INSERT sem ON CONFLICT repetir linhas).
+-- Manter abaixo apenas se ainda precisar de placeholders mínimos antes de correr a migração:
 INSERT INTO public.medals (name, name_en, description, icon, category, requirement_type, requirement_value, extra_points, rule_description, is_active)
 VALUES
   ('Primeiros Passos',   'First Steps',    'Completa a tua primeira tarefa',       '🌱', 'tasks',  'task_count',  1,   5,  'Completa 1 tarefa',        true),

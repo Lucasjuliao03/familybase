@@ -1,13 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
+import { fetchNoStoreWithDeadline } from './fetchWithDeadline';
 
-/**
- * fetch que evita respostas stale do cache HTTP intermediário ou do browser ( importante em PWA ).
- */
-export function fetchNoStore(input, options = {}) {
-  const merged = typeof options === 'object' && options !== null ? { ...options } : {};
-  if (merged.cache == null) merged.cache = 'no-store';
-  return fetch(input, merged);
-}
+export { fetchNoStoreWithDeadline, fetchNoStoreWithDeadline as fetchNoStore } from './fetchWithDeadline';
 
 /**
  * URL que o browser usa para Auth/REST/Storage/Functions.
@@ -47,6 +41,6 @@ export const supabase = createClient(supabaseUrl || '', supabaseAnonKey || '', {
     detectSessionInUrl: true,
   },
   global: {
-    fetch: fetchNoStore,
+    fetch: fetchNoStoreWithDeadline,
   },
 });

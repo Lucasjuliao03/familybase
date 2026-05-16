@@ -81,6 +81,21 @@ function buildEffectiveSubscriptionFallback(profileRow, resolvedFamily, userId) 
   };
 }
 
+/**
+ * Evita `await` infinito quando a aba esteve suspensa (ligações HTTP congeladas até morrerem).
+ * @template T
+ * @param {Promise<T>} promise
+ * @param {number} ms
+ * @returns {Promise<T|undefined>}
+ */
+async function raceMs(promise, ms) {
+  const boxed = await Promise.race([
+    promise.then((v) => ({ ok: true, v })),
+    new Promise((resolve) => setTimeout(() => resolve({ ok: false }), ms)),
+  ]);
+  return boxed.ok ? boxed.v : undefined;
+}
+
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [family, setFamily] = useState(null);
@@ -98,6 +113,7 @@ export function AuthProvider({ children }) {
   const authHydrateSeqRef = useRef(0);
   const userRef = useRef(null);
   const loadingRef = useRef(true);
+  const tabHiddenAtRef = useRef(0);
 
   useEffect(() => {
     userRef.current = user;
@@ -228,7 +244,14 @@ export function AuthProvider({ children }) {
             let resolvedFamily = familyData;
 
             try {
-              const { data: effData, error: effErr } = await supabase.rpc('get_effective_subscription');
+              const rpcDeadlineMs = 12_000;
+              const rpcRes = await Promise.race([
+                supabase.rpc('get_effective_subscription'),
+                new Promise((_, rej) =>
+                  setTimeout(() => rej(Object.assign(new Error('subscription_rpc_deadline'), { code: 'DEADLINE' })), rpcDeadlineMs),
+                ),
+              ]);
+              const { data: effData, error: effErr } = rpcRes;
               if (!effErr && effData != null && typeof effData === 'object') {
                 if (generation !== profileLoadGenerationRef.current) return;
                 setEffectiveSubscription(effData);
@@ -270,12 +293,16 @@ export function AuthProvider({ children }) {
       } catch (err) {
         const msg = String(err?.message || err);
         if (msg === 'profile_load_timeout') {
+          profileInflightRef.current = null;
           profileLoadGenerationRef.current += 1;
           console.warn(
             '[auth] Carregamento do perfil excedeu o tempo seguro. Mantém-se a sessão — se a UI falhar, actualize a página. ' +
               '(Rede lenta, RPC get_effective_subscription ou RLS no projeto.)',
           );
           // IMPORTANT: após incrementar a geração, o finally abaixo não desliga loading — fazemo-lo aqui
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('familia-app-visible'));
+          }
           setLoading(false);
         } else {
           console.error('Erro ao carregar perfil:', err);
@@ -375,64 +402,105 @@ export function AuthProvider({ children }) {
   }, [loadUserProfile, clearState]);
 
   /**
-   * PWA / WebView ao fundo pode suspender a rede; ao voltar, refrescar token e garantir perfil quando necessário.
+   * Aba/WebView ao fundo: conexões podem ficar presas até morrer pelo timeout fetch.
+   * Ao voltar, invalidamos cargas zombie, refreshSession com cortes curtos e evento aos módulos.
    */
   useEffect(() => {
     if (typeof document === 'undefined' || typeof window === 'undefined') return undefined;
 
     let debTimer;
 
+    const dispatchResumeEvent = () => {
+      try {
+        window.dispatchEvent(new CustomEvent('familia-app-visible'));
+      } catch {
+        /* noop */
+      }
+    };
+
+    /** Despreza promessa de perfil antiga quando a página ficou tempo oculta (ligações suspensas). */
+    const releaseStaleLoadsIfNeeded = () => {
+      const t = tabHiddenAtRef.current;
+      if (!t) return;
+      tabHiddenAtRef.current = 0;
+      if (Date.now() - t > 280) {
+        profileInflightRef.current = null;
+        profileLoadGenerationRef.current += 1;
+      }
+    };
+
     const reconcile = async () => {
       if (document.visibilityState !== 'visible') return;
-      try {
-        const { data: sessWrap, error: sessErr } = await supabase.auth.getSession();
-        if (sessErr) return;
-        const session = sessWrap?.session;
-        if (!session?.user?.id) return;
 
-        await supabase.auth.refreshSession().catch(() => {});
-        const { data: refreshed } = await supabase.auth.getSession();
-        const active = refreshed?.session ?? session;
-        const uid = active?.user?.id;
+      releaseStaleLoadsIfNeeded();
+
+      dispatchResumeEvent();
+
+      try {
+        const sessWrap = await raceMs(supabase.auth.getSession(), 6000);
+        if (!sessWrap) {
+          famDiag('auth/resume', 'getSession_timeout');
+          return;
+        }
+
+        const { data: sessData, error: sessErr } = sessWrap;
+        if (sessErr || !sessData?.session?.user?.id) return;
+
+        await raceMs(supabase.auth.refreshSession(), 6000).catch(() => {});
+
+        const refreshed = await raceMs(supabase.auth.getSession(), 5000);
+
+        let session = sessData.session;
+        if (refreshed?.data?.session) session = refreshed.data.session;
+
+        const uid = session?.user?.id;
         if (!uid) return;
 
         const em =
-          active.user.email ||
-          active.user.user_metadata?.email ||
-          active.user.new_email ||
+          session.user.email ||
+          session.user.user_metadata?.email ||
+          session.user.new_email ||
           '';
         const u = userRef.current;
         const loadingNow = loadingRef.current;
 
-        /* Re-hidrata se ainda está a carregar, não há utilizador ou o estado não bate certo com a sessão em memória. */
         if (loadingNow || !u || u.id !== uid) {
           await loadUserProfile(uid, em, { force: true }).catch(console.warn);
         }
       } catch (e) {
+        dispatchResumeEvent();
         console.warn('[auth] resume/visibility reconcile:', e);
       }
     };
 
-    const schedule = () => {
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        tabHiddenAtRef.current = Date.now();
+      } else {
+        scheduleResume();
+      }
+    };
+
+    const scheduleResume = () => {
       clearTimeout(debTimer);
       debTimer = setTimeout(() => {
         reconcile();
-      }, 280);
+      }, 180);
     };
 
-    document.addEventListener('visibilitychange', schedule);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    /** Page Lifecycle (descongelar aba suspendida — Chromium). */
+    document.addEventListener('resume', scheduleResume);
 
-    /* Volta pela cache de página (Firefox/Safari). */
-    const onPageshow = (ev) => {
-      if (ev.persisted) schedule();
-    };
-    window.addEventListener('pageshow', onPageshow);
-    window.addEventListener('online', schedule);
+    /** BFCache / Android WebView. */
+    window.addEventListener('pageshow', scheduleResume);
+    window.addEventListener('online', scheduleResume);
 
     return () => {
-      document.removeEventListener('visibilitychange', schedule);
-      window.removeEventListener('pageshow', onPageshow);
-      window.removeEventListener('online', schedule);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      document.removeEventListener('resume', scheduleResume);
+      window.removeEventListener('pageshow', scheduleResume);
+      window.removeEventListener('online', scheduleResume);
       clearTimeout(debTimer);
     };
   }, [loadUserProfile]);

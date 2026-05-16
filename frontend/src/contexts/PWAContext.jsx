@@ -45,7 +45,8 @@ export function PWAProvider({ children }) {
       .catch(() => {});
   }, []);
 
-  // Catch install prompt event
+  // beforeinstallprompt: Chrome suprime o mini-infobar e guarda o evento para `prompt()` no clique.
+  // O DevTools pode avisar enquanto `preventDefault()` foi chamado e `prompt()` ainda não — é esperado com UI custom.
   useEffect(() => {
     const handler = (e) => {
       e.preventDefault();
