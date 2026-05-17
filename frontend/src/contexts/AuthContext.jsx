@@ -494,7 +494,10 @@ export function AuthProvider({ children }) {
         const uid = session?.user?.id;
         if (!uid) return;
 
-        if (shouldReconnectSupabaseRealtime(supabase, hiddenMs)) {
+        const needsRealtimeKick =
+          hiddenMs >= 4200 ||
+          shouldReconnectSupabaseRealtime(supabase, hiddenMs);
+        if (needsRealtimeKick) {
           await reconnectSupabaseRealtime(supabase, accessToken ?? undefined);
         }
 
@@ -504,9 +507,10 @@ export function AuthProvider({ children }) {
           session.user.new_email ||
           '';
         await loadUserProfile(uid, em, { force: true }).catch(console.warn);
-        dispatchFamiliaControlledResume();
       } catch (e) {
         console.warn('[auth] performControlledResume:', e);
+      } finally {
+        dispatchFamiliaControlledResume();
       }
     })();
 

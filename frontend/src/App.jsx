@@ -309,8 +309,9 @@ function AppRoutes() {
 
 /** Uma rotina por retorno à app: sessão/perfil primeiro; páginas reagem só ao evento único (`useAutoRefresh`). */
 function AppResumeSync() {
-  const { performControlledResume, user } = useAuth();
-  useAppResume({ onResume: performControlledResume, enabled: !!user?.id });
+  const { performControlledResume, loading } = useAuth();
+  /** Depois do primeiro hydrate não bloqueamos: sessão existe mas `user` pode ainda actualizar um tick. */
+  useAppResume({ onResume: performControlledResume, enabled: !loading });
   return null;
 }
 

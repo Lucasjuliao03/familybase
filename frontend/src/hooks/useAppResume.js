@@ -4,9 +4,8 @@ import { useEffect, useRef } from 'react';
 const DEBOUNCE_MS = 720;
 
 /**
- * Retomada global da PWA: um debounce único para visibility → visible + focus + online.
- *
- * Usa apenas os três ganhos solicitados (`visibilitychange` para visível, `focus`, `online`),
+ * Retomada global da PWA: debounce para visibility → visible, focus e online — mais
+ * `pageshow` / `resume` quando o navegador reactiva tabs suspensas (BFCache/PWA/Android).
  * mutex em `resumeInFlightRef` e espera até `visibilityState === 'visible'` para correr callbacks.
  *
  * @param {{
@@ -63,11 +62,15 @@ export function useAppResume({ onResume, enabled = true }) {
     document.addEventListener('visibilitychange', onVisibilityChange);
     window.addEventListener('focus', onFocus);
     window.addEventListener('online', onOnline);
+    window.addEventListener('pageshow', schedule);
+    document.addEventListener('resume', schedule);
 
     return () => {
       document.removeEventListener('visibilitychange', onVisibilityChange);
       window.removeEventListener('focus', onFocus);
       window.removeEventListener('online', onOnline);
+      window.removeEventListener('pageshow', schedule);
+      document.removeEventListener('resume', schedule);
       clearTimeout(debounceTimerRef.current);
       debounceTimerRef.current = null;
     };
