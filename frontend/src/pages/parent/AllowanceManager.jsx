@@ -3,6 +3,7 @@ import { useLanguage } from '../../contexts/LanguageContext';
 import { useToast } from '../../contexts/ToastContext';
 import api from '../../services/api';
 import useAutoRefresh from '../../hooks/useAutoRefresh';
+import { fmtMoney } from '../../lib/moneyFormat';
 
 export default function AllowanceManager() {
   const { t } = useLanguage();
@@ -163,17 +164,17 @@ export default function AllowanceManager() {
                   <div className="grid grid-2 mb-16">
                     <div style={{ background: 'var(--bg-app)', padding: 12, borderRadius: 8 }}>
                       <div style={{ fontSize: '0.75rem', color: 'var(--text-light)' }}>Saldo Anterior</div>
-                      <div style={{ fontWeight: 700 }}>{set.currency} {prevFinal.toFixed(2)}</div>
+                      <div style={{ fontWeight: 700 }}>{fmtMoney(set.currency, prevFinal)}</div>
                     </div>
                     <div style={{ background: 'var(--bg-app)', padding: 12, borderRadius: 8 }}>
                       <div style={{ fontSize: '0.75rem', color: 'var(--text-light)' }}>Previsão do Mês</div>
-                      <div style={{ fontWeight: 700, color: 'var(--primary)', fontSize: '1.1rem' }}>{set.currency} {Math.max(currentBalance, 0).toFixed(2)}</div>
+                      <div style={{ fontWeight: 700, color: 'var(--primary)', fontSize: '1.1rem' }}>{fmtMoney(set.currency, Math.max(currentBalance, 0))}</div>
                     </div>
                   </div>
 
                   <div className="flex-between" style={{ fontSize: '0.85rem' }}>
-                    <span style={{ color: 'var(--success)' }}>+ {set.currency} {(cycle.total_bonus + (cycle.manual_adjustments > 0 ? cycle.manual_adjustments : 0)).toFixed(2)} bônus</span>
-                    <span style={{ color: 'var(--danger)' }}>- {set.currency} {(cycle.total_discount + (cycle.manual_adjustments < 0 ? Math.abs(cycle.manual_adjustments) : 0)).toFixed(2)} descontos</span>
+                    <span style={{ color: 'var(--success)' }}>+ {fmtMoney(set.currency, cycle.total_bonus + (cycle.manual_adjustments > 0 ? cycle.manual_adjustments : 0))} bônus</span>
+                    <span style={{ color: 'var(--danger)' }}>- {fmtMoney(set.currency, cycle.total_discount + (cycle.manual_adjustments < 0 ? Math.abs(cycle.manual_adjustments) : 0))} descontos</span>
                   </div>
 
                   <div className="flex gap-8 mt-16">
@@ -191,10 +192,10 @@ export default function AllowanceManager() {
               <tbody>
                 {cycles.filter((c) => c.status !== 'open').slice(0, 10).map((c) => (
                   <tr key={c.id}>
-                    <td data-label="Filho">{c.child_name}</td>
+                    <td data-label="Filho">{c.child_name || '—'}</td>
                     <td data-label="Mês/Ano">{c.month}/{c.year}</td>
                     <td data-label="Status"><span className={`badge badge-${c.status === 'closed' ? 'warning' : 'success'}`}>{c.status === 'closed' ? 'Fechado' : 'Pago'}</span></td>
-                    <td data-label="Saldo final" style={{ fontWeight: 700 }}>R$ {c.final_amount.toFixed(2)}</td>
+                    <td data-label="Saldo final" style={{ fontWeight: 700 }}>{fmtMoney('BRL', c.final_amount)}</td>
                     <td data-label="Ações">
                       {c.status === 'closed' && <button type="button" className="btn-icon btn-ghost" onClick={() => handlePayCycle(c.id)}>💸 Pagar</button>}
                     </td>
@@ -227,7 +228,7 @@ export default function AllowanceManager() {
                         <p>
                           Valor Base:
                           {' '}
-                          <strong>{set.currency} {set.base_amount.toFixed(2)}</strong>
+                          <strong>{fmtMoney(set.currency, set.base_amount)}</strong>
                         </p>
                         <p>{set.is_active ? 'Ativo ✅' : 'Inativo ❌'}</p>
                       </div>
@@ -309,7 +310,7 @@ export default function AllowanceManager() {
               </div>
               <div className="grid grid-2">
                 <div className="form-group"><label className="form-label">Valor Base (R$) *</label><input type="number" step="0.01" min="0" className="form-input" value={settingsForm.base_amount || ''} onChange={(e) => setSettingsForm((p) => ({ ...p, base_amount: parseFloat(e.target.value) || 0 }))} required disabled={settingsForm.model_type === 'accumulative'} /></div>
-                <div className="form-group"><label className="form-label">Moeda</label><select className="form-select" value={settingsForm.currency} onChange={(e) => setSettingsForm((p) => ({ ...p, currency: e.target.value }))}><option value="BRL">R$ (Real)</option><option value="USD">$ (Dólar)</option></select></div>
+                <div className="form-group"><label className="form-label">Moeda</label><select className="form-select" value={settingsForm.currency} onChange={(e) => setSettingsForm((p) => ({ ...p, currency: e.target.value }))}><option value="BRL">Real brasileiro (R$)</option><option value="USD">Dólar (US$)</option></select></div>
               </div>
               <div className="grid grid-2">
                 <div className="form-group">

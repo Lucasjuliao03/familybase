@@ -11,6 +11,11 @@ import { PRESET_AVATARS } from '../../components/AvatarPicker';
 const ChildCard = memo(function ChildCard({ child, t }) {
   const xpPct = child.xp_next_level > 0 ? Math.min((child.xp / child.xp_next_level) * 100, 100) : 0;
   const avatar = PRESET_AVATARS.find(a => a.id === child.avatar_preset);
+  const allowancePrev = child.allowance_balance_preview;
+  const allowanceDisplay =
+    allowancePrev != null && !Number.isNaN(Number(allowancePrev))
+      ? `R$ ${Number(allowancePrev).toFixed(2)}`
+      : '—';
   return (
     <div className="child-dash-card" style={{ '--c': child.color || '#6366F1' }}>
       <div className="child-dash-card__header">
@@ -42,10 +47,10 @@ const ChildCard = memo(function ChildCard({ child, t }) {
           </div>
         </div>
         <div className="child-dash-card__stat">
-          <span className="child-dash-card__stat-icon" style={{ background: 'rgba(249,115,22,0.1)', color: '#F97316' }}>🪙</span>
+          <span className="child-dash-card__stat-icon" style={{ background: 'rgba(249,115,22,0.1)', color: '#F97316' }}>💰</span>
           <div>
-            <div className="child-dash-card__stat-val">{child.coins}</div>
-            <div className="child-dash-card__stat-lbl">{t('coins')}</div>
+            <div className="child-dash-card__stat-val" style={{ fontSize: 'clamp(0.82rem, 2.5vw, 1rem)' }}>{allowanceDisplay}</div>
+            <div className="child-dash-card__stat-lbl">{t('allowance')}</div>
           </div>
         </div>
         <div className="child-dash-card__stat">

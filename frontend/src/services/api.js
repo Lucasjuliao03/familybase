@@ -1690,13 +1690,48 @@ const api = {
     }
 
     if (path === '/allowance/cycles') {
-      const { data } = await supabase.from('allowance_cycles').select('*').eq('family_id', familyId);
-      return { data: data || [] };
+      const { data: cyclesRaw } = await supabase
+        .from('allowance_cycles')
+        .select('*')
+        .eq('family_id', familyId)
+        .order('year', { ascending: false })
+        .order('month', { ascending: false });
+      const cycles = cyclesRaw || [];
+      const cidSet = [...new Set(cycles.map((c) => c.child_id).filter(Boolean))];
+      let nameByChildId = {};
+      if (cidSet.length) {
+        const { data: chRows } = await supabase.from('children').select('id, name').in('id', cidSet);
+        (chRows || []).forEach((c) => {
+          nameByChildId[c.id] = c.name ?? '';
+        });
+      }
+      return {
+        data: cycles.map((c) => ({
+          ...c,
+          child_name: nameByChildId[c.child_id] ?? '',
+        })),
+      };
     }
 
     if (path === '/allowance/piggy-requests') {
-      const { data } = await supabase.from('piggy_requests').select('*').eq('family_id', familyId);
-      return { data: data || [] };
+      const { data: reqs } = await supabase.from('piggy_requests').select('*').eq('family_id', familyId).order('created_at', { ascending: false });
+      const list = reqs || [];
+      const needNames = list.filter((r) => !r.child_name?.trim?.() && r.child_id).map((r) => r.child_id);
+      const uniq = [...new Set(needNames)];
+      let nm = {};
+      if (uniq.length) {
+        const { data: ch } = await supabase.from('children').select('id, name').in('id', uniq);
+        (ch || []).forEach((c) => {
+          nm[c.id] = c.name ?? '';
+        });
+      }
+      return {
+        data: list.map((r) => ({
+          ...r,
+          child_name: (r.child_name && String(r.child_name).trim()) ? r.child_name : (nm[r.child_id] || ''),
+          goal_title: r.goal_title || '',
+        })),
+      };
     }
 
     if (path.startsWith('/gamification/profile/')) {
@@ -1777,7 +1812,8 @@ const api = {
     }
 
     if (path.startsWith('/reports/dashboard')) {
-      const { data: children } = await supabase.from('children').select('*').eq('family_id', familyId);
+      const { data: childrenRaw } = await supabase.from('children').select('*').eq('family_id', familyId);
+      const children = childrenRaw || [];
       const todayStr = toYMDLocal();
       /** Só conta o que é “para fazer hoje”, não todas as pendências futuras/passadas das recorrentes */
       let pendingToday = 0;
@@ -1853,6 +1889,52 @@ const api = {
         }));
       }
 
+      const childIdsDash = children.map((c) => c.id).filter(Boolean);
+      const allowanceBalanceByChild = {};
+      if (childIdsDash.length) {
+        const [{ data: settingsRows }, { data: openCycleRows }] = await Promise.all([
+          supabase.from('allowance_settings').select('*').eq('family_id', familyId).in('child_id', childIdsDash),
+          supabase.from('allowance_cycles').select('*').eq('family_id', familyId).eq('status', 'open').in('child_id', childIdsDash),
+        ]);
+        const bySettings = {};
+        (settingsRows || []).forEach((s) => {
+          bySettings[s.child_id] = s;
+        });
+        const nowD = new Date();
+        const curM = nowD.getMonth() + 1;
+        const curY = nowD.getFullYear();
+        (openCycleRows || [])
+          .filter((cy) => Number(cy.month) === curM && Number(cy.year) === curY)
+          .forEach((cycle) => {
+            const st = bySettings[cycle.child_id];
+            if (!st) {
+              allowanceBalanceByChild[cycle.child_id] = null;
+              return;
+            }
+            const inactive =
+              st.is_active === false ||
+              st.is_active === 0 ||
+              String(st.is_active).toLowerCase() === 'false';
+            if (inactive) {
+              allowanceBalanceByChild[cycle.child_id] = null;
+              return;
+            }
+            let bal = computePredictedAllowanceBalance(st, cycle);
+            const allowNeg =
+              st.allow_negative_balance === true ||
+              st.allow_negative_balance === 1 ||
+              String(st.allow_negative_balance).toLowerCase() === 'true';
+            if (!allowNeg) bal = Math.max(0, bal);
+            allowanceBalanceByChild[cycle.child_id] = bal;
+          });
+      }
+
+      const childrenWithAllowance = children.map((ch) => ({
+        ...ch,
+        allowance_balance_preview:
+          allowanceBalanceByChild[ch.id] !== undefined ? allowanceBalanceByChild[ch.id] : null,
+      }));
+
       return {
         data: {
           stats: {
@@ -1861,7 +1943,7 @@ const api = {
             approved: approved || 0,
             pendingRedemptions: pendingRedemptions || 0,
           },
-          children: children || [],
+          children: childrenWithAllowance,
           upcomingEvents: (upcomingRaw || []).map(mapCalendarEventFromDb),
           recentHistory,
         },
@@ -2612,8 +2694,34 @@ const api = {
 
     if (path.startsWith('/allowance/cycles/') && path.endsWith('/close')) {
       const cycleId = path.split('/')[3];
-      await supabase.from('allowance_cycles').update({ status: 'closed' }).eq('id', cycleId).eq('family_id', familyId);
-      return { data: { ok: true } };
+      const { data: cycle, error: cErr } = await supabase
+        .from('allowance_cycles')
+        .select('*')
+        .eq('id', cycleId)
+        .eq('family_id', familyId)
+        .maybeSingle();
+      if (cErr) throw new Error(cErr.message || 'Erro ao carregar ciclo.');
+      if (!cycle) throw new Error('Ciclo não encontrado.');
+      if (cycle.status !== 'open') throw new Error('Este ciclo já não está aberto.');
+      const { data: settings } = await supabase.from('allowance_settings').select('*').eq('child_id', cycle.child_id).maybeSingle();
+      let finalAmt = computePredictedAllowanceBalance(settings, cycle);
+      const allowNeg =
+        settings &&
+        (settings.allow_negative_balance === true ||
+          settings.allow_negative_balance === 1 ||
+          String(settings.allow_negative_balance).toLowerCase() === 'true');
+      if (settings && !allowNeg && finalAmt < 0) finalAmt = 0;
+      const { error: closeErr } = await supabase
+        .from('allowance_cycles')
+        .update({
+          status: 'closed',
+          final_amount: finalAmt,
+          closed_at: new Date().toISOString(),
+        })
+        .eq('id', cycleId)
+        .eq('family_id', familyId);
+      if (closeErr) throw new Error(closeErr.message || 'Erro ao fechar ciclo.');
+      return { data: { ok: true, final_amount: finalAmt } };
     }
 
     if (path.startsWith('/allowance/cycles/') && path.endsWith('/pay')) {

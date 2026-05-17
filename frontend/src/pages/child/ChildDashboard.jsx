@@ -70,6 +70,16 @@ export default function ChildDashboard() {
     dayKey,
   );
 
+  const allowanceEstQuery = useQuery({
+    queryKey: ['allowance', 'estimated-balance', childProfile?.id],
+    queryFn: async () => {
+      const { data } = await api.get('/allowance/estimated-balance', { params: { child_id: childProfile.id } });
+      return data;
+    },
+    enabled: enabled && !!childProfile?.id,
+    staleTime: 45_000,
+  });
+
   const occurrencesQuery = useQuery({
     queryKey: occQueryKey,
     queryFn: async () => {
@@ -93,6 +103,7 @@ export default function ChildDashboard() {
     if (!id) return;
     queryClient.invalidateQueries({ queryKey: childGamificationProfileKey(id) });
     queryClient.invalidateQueries({ queryKey: ['tasks', 'occurrences'] });
+    queryClient.invalidateQueries({ queryKey: ['allowance', 'estimated-balance', id] });
   }, { enabled: !!childProfile?.id });
 
   const profile = profileQuery.data;
@@ -130,6 +141,14 @@ export default function ChildDashboard() {
   }
 
   const xpPercent = child.xp_next_level > 0 ? (child.xp / child.xp_next_level) * 100 : 0;
+
+  const estAllow = allowanceEstQuery.data;
+  const allowanceStatText =
+    allowanceEstQuery.isPending && estAllow == null
+      ? '…'
+      : estAllow
+        ? `${estAllow.symbol || 'R$'} ${Number(estAllow.balance ?? 0).toFixed(2)}`
+        : '—';
 
   const showFatalProfileError = profileQuery.isError && profile == null;
 
@@ -225,11 +244,11 @@ export default function ChildDashboard() {
             className="stat-icon"
             style={{ background: 'rgba(253,203,110,0.15)', color: '#E67E22', fontSize: '1.5rem' }}
           >
-            🪙
+            💰
           </div>
           <div className="stat-info">
-            <h3>{child.coins}</h3>
-            <p>Moedas</p>
+            <h3 style={{ fontSize: 'clamp(0.95rem, 3.5vw, 1.25rem)', wordBreak: 'break-word' }}>{allowanceStatText}</h3>
+            <p>{t('allowance')}</p>
           </div>
         </div>
         <div className="stat-card" style={{ boxShadow: '0 8px 20px rgba(225,112,85,0.1)' }}>
@@ -303,9 +322,6 @@ export default function ChildDashboard() {
                   </div>
                   <div style={{ textAlign: 'right', flexShrink: 0 }}>
                     <div style={{ fontWeight: 800, color: 'var(--primary)' }}>⭐ {occ.points}</div>
-                    {occ.coins > 0 && (
-                      <div style={{ fontSize: '0.8rem', color: '#E67E22', fontWeight: 600 }}>🪙 {occ.coins}</div>
-                    )}
                   </div>
                 </div>
               ))

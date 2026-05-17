@@ -4,6 +4,7 @@ import { useLanguage } from '../../contexts/LanguageContext';
 import { useToast } from '../../contexts/ToastContext';
 import api from '../../services/api';
 import useAutoRefresh from '../../hooks/useAutoRefresh';
+import { fmtMoney } from '../../lib/moneyFormat';
 
 export default function MyAllowance() {
   const { childProfile } = useAuth();
@@ -104,9 +105,7 @@ export default function MyAllowance() {
           <div className="card" style={{ textAlign: 'center', background: 'linear-gradient(135deg, var(--primary-light), var(--primary))', color: '#fff' }}>
             <h3>Saldo Atual Previsível</h3>
             <div style={{ fontSize: '3rem', fontWeight: 800, margin: '16px 0' }}>
-              {settings?.currency || 'R$'}
-              {' '}
-              {Math.max(currentBalance, 0).toFixed(2)}
+              {fmtMoney(settings?.currency, Math.max(currentBalance, 0))}
             </div>
             <p style={{ opacity: 0.9 }}>Continue completando tarefas para aumentar esse valor!</p>
           </div>
@@ -125,9 +124,7 @@ export default function MyAllowance() {
                   <div style={{ fontWeight: 700, color: tx.type === 'credit' ? 'var(--success)' : 'var(--danger)' }}>
                     {tx.type === 'credit' ? '+' : '-'}
                     {' '}
-                    {settings?.currency || 'R$'}
-                    {' '}
-                    {tx.amount.toFixed(2)}
+                    {fmtMoney(settings?.currency, tx.amount)}
                   </div>
                 </div>
               ))
@@ -153,12 +150,11 @@ export default function MyAllowance() {
                     <span className={`badge badge-${g.status === 'completed' ? 'success' : 'primary'}`}>{g.status === 'completed' ? 'Concluída' : 'Ativa'}</span>
                   </div>
                   <div className="flex-between mb-8" style={{ fontSize: '0.9rem', color: 'var(--text-light)' }}>
-                    <span>{settings?.currency || 'R$'} {g.current_amount.toFixed(2)} guardados</span>
+                    <span>{fmtMoney(settings?.currency, g.current_amount)} guardados</span>
                     <span>
                       Meta:
-                      {settings?.currency || 'R$'}
                       {' '}
-                      {g.target_amount.toFixed(2)}
+                      {fmtMoney(settings?.currency, g.target_amount)}
                     </span>
                   </div>
                   <div className="xp-bar" style={{ height: 12 }}>
@@ -177,7 +173,7 @@ export default function MyAllowance() {
         <div className="grid grid-2">
           <div className="card">
             <h3 className="card-title mb-16">{t('piggy_available')}</h3>
-            <div style={{ fontSize: '2rem', fontWeight: 800 }}>{settings?.currency || 'R$'} {Math.max(currentBalance, 0).toFixed(2)}</div>
+            <div style={{ fontSize: '2rem', fontWeight: 800 }}>{fmtMoney(settings?.currency, Math.max(currentBalance, 0))}</div>
             <form className="mt-24" onSubmit={submitPiggy}>
               <div className="form-group">
                 <label className="form-label">{t('piggy_goal')}</label>
