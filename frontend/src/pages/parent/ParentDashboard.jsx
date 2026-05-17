@@ -1,11 +1,12 @@
-import { useState, memo, useMemo, useCallback } from 'react';
+import { memo, useMemo } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { moduleAllowed } from '../../lib/familyModules';
 import api, { publicAssetUrl } from '../../services/api';
+import { parentDashboardQueryKey } from '../../lib/familiaQueryKeys';
 import { PRESET_AVATARS } from '../../components/AvatarPicker';
-import useAutoRefresh from '../../hooks/useAutoRefresh';
 
 const ChildCard = memo(function ChildCard({ child, t }) {
   const xpPct = child.xp_next_level > 0 ? Math.min((child.xp / child.xp_next_level) * 100, 100) : 0;
@@ -68,12 +69,49 @@ const QuickAction = memo(function QuickAction({ to, icon, label, color }) {
   );
 });
 
+function ParentDashboardSkeleton() {
+  return (
+    <div className="parent-dash animate-fade-in" aria-busy="true" aria-label="A carregar painel">
+      <div className="dash-hero" style={{ opacity: 0.55 }}>
+        <div className="dash-hero__left" style={{ flex: 1 }}>
+          <div className="fam-sk fam-sk-line" style={{ maxWidth: 320, height: 28 }} />
+          <div className="fam-sk fam-sk-line fam-sk-line--med" />
+          <div className="flex gap-12" style={{ marginTop: 20 }}>
+            <div className="fam-sk fam-sk-chip" />
+            <div className="fam-sk fam-sk-chip" />
+          </div>
+        </div>
+      </div>
+      <div className="dash-kpis">
+        {[1, 2, 3, 4].map((k) => (
+          <div key={k} className="fam-sk-card">
+            <div className="fam-sk fam-sk-line" style={{ width: 72, marginBottom: 16 }} />
+            <div className="fam-sk fam-sk-line fam-sk-line--short" />
+          </div>
+        ))}
+      </div>
+      <div className="fam-sk-card" style={{ minHeight: 120 }}>
+        <div className="fam-sk fam-sk-line" style={{ width: '40%', marginBottom: 20 }} />
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+          {[1, 2, 3, 4, 5].map((k) => <div key={k} className="fam-sk fam-sk-chip" style={{ width: 118 }} />)}
+        </div>
+      </div>
+      <div className="dash-section dash-bottom-grid">
+        {[1, 2].map((k) => (
+          <div key={k} className="fam-sk-card card" style={{ minHeight: 220 }}>
+            <div className="fam-sk fam-sk-line" style={{ width: '50%', marginBottom: 18 }} />
+            {[1, 2, 3].map((row) => <div key={row} className="fam-sk fam-sk-line fam-sk-line--med" style={{ marginBottom: 14 }} />)}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function ParentDashboard() {
   const { t } = useLanguage();
   const { user, family, modules } = useAuth();
   const navigate = useNavigate();
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
 
   const now = useMemo(() => new Date(), []);
   const greeting = useMemo(() => {
@@ -81,36 +119,60 @@ export default function ParentDashboard() {
     return h < 12 ? 'Bom dia' : h < 18 ? 'Boa tarde' : 'Boa noite';
   }, [now]);
 
-  const fetchDashboard = useCallback(async () => {
-    try {
+  const dashboardQuery = useQuery({
+    queryKey: parentDashboardQueryKey(),
+    queryFn: async () => {
       const { data: d } = await api.get('/reports/dashboard');
-      setData(d);
-    } catch (err) {
-      console.warn('[ParentDashboard] falha ao carregar painel:', err);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+      return d;
+    },
+    staleTime: 90_000,
+  });
 
-  useAutoRefresh(fetchDashboard);
+  const {
+    data,
+    isPending,
+    isFetching,
+    isSuccess,
+    isError,
+    error,
+    refetch,
+    dataUpdatedAt,
+  } = dashboardQuery;
 
-  // IMPORTANTE: todos os hooks têm de vir ANTES de qualquer return (Rules of Hooks).
-  const stats    = useMemo(() => data?.stats           || {}, [data]);
-  const children = useMemo(() => data?.children        || [], [data]);
-  const events   = useMemo(() => data?.upcomingEvents  || [], [data]);
-  const history  = useMemo(() => data?.recentHistory   || [], [data]);
+  const stats    = data?.stats          ?? {};
+  const children = data?.children       ?? [];
+  const events   = data?.upcomingEvents ?? [];
+  const history  = data?.recentHistory  ?? [];
 
-  if (loading) {
+  const showFullSkeleton = isPending && data == null;
+  const showFatalError = isError && !data;
+
+  /** “Sem dados” só após primeira resposta bem-sucedida (evita falso empty durante fetch). */
+  const hasLoadedOnce = isSuccess || (dataUpdatedAt > 0);
+
+  if (showFullSkeleton) {
+    return <ParentDashboardSkeleton />;
+  }
+
+  if (showFatalError) {
     return (
-      <div className="dash-loading">
-        <div className="dash-loading__spinner" />
-        <p>Carregando painel…</p>
+      <div className="card animate-fade-in" style={{ maxWidth: 480, margin: '48px auto', textAlign: 'center', padding: 32 }}>
+        <div className="empty-icon" style={{ fontSize: '2.5rem' }}>⚠️</div>
+        <h2 className="card-title">Não foi possível carregar o painel</h2>
+        <p style={{ color: 'var(--text-light)', marginBottom: 20 }}>
+          {(error instanceof Error ? error.message : String(error ?? ''))
+            || 'Verifique a ligação e tente novamente.'}
+        </p>
+        <button type="button" className="btn btn-primary" onClick={() => refetch()}>Tentar novamente</button>
       </div>
     );
   }
 
   return (
     <div className="parent-dash animate-fade-in">
+      {(isFetching && hasLoadedOnce && !showFatalError) && (
+        <p className="parent-dash__refetch-banner" aria-live="polite">A atualizar dados…</p>
+      )}
 
       {/* ── Hero Banner ────────────────────────── */}
       <div className="dash-hero">
@@ -155,21 +217,21 @@ export default function ParentDashboard() {
         <div className="stat-card grad-purple">
           <div className="stat-icon" style={{ background: 'rgba(255,255,255,0.2)' }}>📋</div>
           <div className="stat-info">
-            <h3>{stats.pending ?? '–'}</h3>
+            <h3>{hasLoadedOnce ? (stats.pending ?? '–') : '–'}</h3>
             <p>{t('pending_tasks')}</p>
           </div>
         </div>
         <div className="stat-card grad-orange">
           <div className="stat-icon" style={{ background: 'rgba(255,255,255,0.2)' }}>⏳</div>
           <div className="stat-info">
-            <h3>{stats.waitingApproval ?? stats.completed ?? '–'}</h3>
+            <h3>{hasLoadedOnce ? (stats.waitingApproval ?? stats.completed ?? '–') : '–'}</h3>
             <p>Aguardam Aprovação</p>
           </div>
         </div>
         <div className="stat-card grad-green">
           <div className="stat-icon" style={{ background: 'rgba(255,255,255,0.2)' }}>✅</div>
           <div className="stat-info">
-            <h3>{stats.approved ?? '–'}</h3>
+            <h3>{hasLoadedOnce ? (stats.approved ?? '–') : '–'}</h3>
             <p>{t('tasks_completed')}</p>
           </div>
         </div>
@@ -177,7 +239,7 @@ export default function ParentDashboard() {
           <div className="stat-card grad-blue">
             <div className="stat-icon" style={{ background: 'rgba(255,255,255,0.2)' }}>🛍️</div>
             <div className="stat-info">
-              <h3>{stats.pendingRedemptions ?? '–'}</h3>
+              <h3>{hasLoadedOnce ? (stats.pendingRedemptions ?? '–') : '–'}</h3>
               <p>Resgates Pendentes</p>
             </div>
           </div>
@@ -201,7 +263,7 @@ export default function ParentDashboard() {
         </div>
       </div>
 
-      {/* ── Filhos ────────────────────────────── */}
+      {/* ── Filhos — só quando sabemos que a lista veio da API ───────────── */}
       {children.length > 0 && (
         <div className="dash-section">
           <div className="dash-section__head">
@@ -221,7 +283,12 @@ export default function ParentDashboard() {
             <h3 className="card-title">📅 {t('upcoming_events')}</h3>
             <Link to="/parent/calendar" className="btn btn-sm btn-ghost">{t('calendar')}</Link>
           </div>
-          {events.length === 0 ? (
+          {(!hasLoadedOnce && events.length === 0) ? (
+            <div className="empty-state fam-sk-card" style={{ padding: '28px 0', margin: '0 12px' }}>
+              <div className="fam-sk fam-sk-line fam-sk-line--med" />
+              <div className="fam-sk fam-sk-line fam-sk-line--short" />
+            </div>
+          ) : events.length === 0 ? (
             <div className="empty-state" style={{ padding: '28px 0' }}>
               <div className="empty-icon">📅</div>
               <h3>Sem eventos próximos</h3>
@@ -245,7 +312,12 @@ export default function ParentDashboard() {
           <div className="card-header">
             <h3 className="card-title">🕐 {t('recent_activity')}</h3>
           </div>
-          {history.length === 0 ? (
+          {(!hasLoadedOnce && history.length === 0) ? (
+            <div className="empty-state fam-sk-card" style={{ padding: '28px 0', margin: '0 12px' }}>
+              <div className="fam-sk fam-sk-line fam-sk-line--med" />
+              <div className="fam-sk fam-sk-line fam-sk-line--short" />
+            </div>
+          ) : history.length === 0 ? (
             <div className="empty-state" style={{ padding: '28px 0' }}>
               <div className="empty-icon">📝</div>
               <h3>Sem atividade recente</h3>

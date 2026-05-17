@@ -1556,6 +1556,37 @@ tr:hover td { background: rgba(108,92,231,0.03); }
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+/* Skeleton (Carregamento conteúdo) */
+@keyframes fam-sk-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+.fam-sk {
+  border-radius: 10px;
+  background: linear-gradient(
+    90deg,
+    var(--border, #e9ecef) 0%,
+    rgba(155, 160, 170, 0.22) 40%,
+    var(--border, #e9ecef) 80%
+  );
+  background-size: 200% 100%;
+  animation: fam-sk-shimmer 1.15s ease-in-out infinite;
+}
+.fam-sk-line { height: 14px; margin-bottom: 10px; }
+.fam-sk-line--short { width: 55%; }
+.fam-sk-line--med { width: 78%; }
+.fam-sk-chip { height: 32px; width: 92px; border-radius: 8px; }
+.fam-sk-card { padding: 20px; border-radius: var(--radius-lg); border: 1px solid var(--border); background: var(--bg); }
+.table-skel-row td { vertical-align: middle; }
+
+.parent-dash__refetch-banner {
+  font-size: 0.82rem;
+  color: var(--text-light);
+  text-align: right;
+  margin: -8px 0 12px;
+  opacity: 0.92;
+}
+
 .parent-dash { display: flex; flex-direction: column; gap: 28px; }
 
 /* Hero Banner */

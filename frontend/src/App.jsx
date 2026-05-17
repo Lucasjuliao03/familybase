@@ -1,5 +1,6 @@
 import { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import FamiliaQueryProvider from './providers/FamiliaQueryProvider';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { useAppResume } from './hooks/useAppResume';
 import { moduleAllowed, anyModuleAllowed } from './lib/familyModules';
@@ -319,8 +320,9 @@ function AppResumeSync() {
 export default function App() {
   return (
     <BrowserRouter>
-      <LanguageProvider>
-        <AuthProvider>
+      <FamiliaQueryProvider>
+        <LanguageProvider>
+          <AuthProvider>
           <AppResumeSync />
           <PWAProvider>
             <ToastProvider>
@@ -330,8 +332,9 @@ export default function App() {
               <PWAInstallBanner />
             </ToastProvider>
           </PWAProvider>
-        </AuthProvider>
-      </LanguageProvider>
+          </AuthProvider>
+        </LanguageProvider>
+      </FamiliaQueryProvider>
     </BrowserRouter>
   );
 }
