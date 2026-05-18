@@ -48,7 +48,8 @@ export default function FamilyLocationPage() {
   const [selectedMemberId, setSelectedMemberId] = useState(null);
   const [alerts, setAlerts] = useState([]);
   const [showZoneModal, setShowZoneModal] = useState(false);
-  const [zoneForm, setZoneForm] = useState({ name: '', type: 'home', radius_meters: 200 });
+  const [isDrawingMode, setIsDrawingMode] = useState(false);
+  const [zoneForm, setZoneForm] = useState({ name: '', type: 'home', radius_meters: 200, latitude: null, longitude: null });
   const [savingZone, setSavingZone] = useState(false);
   const [togglingVisibility, setTogglingVisibility] = useState(false);
 
@@ -154,7 +155,7 @@ export default function FamilyLocationPage() {
 
   // Create safe zone
   const handleCreateZone = async () => {
-    if (!zoneForm.name.trim() || !position) return;
+    if (!zoneForm.name.trim() || !zoneForm.latitude || !zoneForm.longitude) return;
     setSavingZone(true);
     try {
       const { data, error } = await supabase.from('safe_zones').insert({
@@ -162,8 +163,8 @@ export default function FamilyLocationPage() {
         name: zoneForm.name.trim(),
         type: zoneForm.type,
         icon: ZONE_TYPE_ICONS[zoneForm.type],
-        latitude: position.lat,
-        longitude: position.lng,
+        latitude: zoneForm.latitude,
+        longitude: zoneForm.longitude,
         radius_meters: Number(zoneForm.radius_meters) || 200,
         color: ZONE_TYPE_COLORS[zoneForm.type],
         created_by: userId,
@@ -171,12 +172,20 @@ export default function FamilyLocationPage() {
       if (error) throw error;
       setZones((prev) => [...prev, data]);
       setShowZoneModal(false);
-      setZoneForm({ name: '', type: 'home', radius_meters: 200 });
+      setZoneForm({ name: '', type: 'home', radius_meters: 200, latitude: null, longitude: null });
     } catch (e) {
       console.error('[location] create zone:', e);
     }
     setSavingZone(false);
   };
+
+  const handleMapClick = useCallback((latlng) => {
+    if (isDrawingMode) {
+      setZoneForm(prev => ({ ...prev, latitude: latlng.lat, longitude: latlng.lng }));
+      setIsDrawingMode(false);
+      setShowZoneModal(true);
+    }
+  }, [isDrawingMode]);
 
   const deleteZone = async (zoneId) => {
     await supabase.from('safe_zones').delete().eq('id', zoneId).eq('family_id', familyId);
@@ -255,7 +264,21 @@ export default function FamilyLocationPage() {
         selectedMemberId={selectedMemberId}
         onSelectMember={setSelectedMemberId}
         currentUserId={userId}
+        zoneDraft={showZoneModal && zoneForm.latitude ? zoneForm : (isDrawingMode ? { latitude: position?.lat || 0, longitude: position?.lng || 0, radius_meters: 0 } : null)}
+        onMapClick={handleMapClick}
       />
+
+      {/* Drawing Mode Banner */}
+      {isDrawingMode && (
+        <div style={{
+          position: 'absolute', top: 80, left: '50%', transform: 'translateX(-50%)',
+          background: 'var(--primary)', color: '#fff', padding: '10px 20px',
+          borderRadius: 30, zIndex: 1000, fontWeight: 600, boxShadow: 'var(--shadow-lg)',
+          pointerEvents: 'none'
+        }}>
+          🎯 Clique no mapa para definir o centro da zona
+        </div>
+      )}
 
       {/* Top bar overlay */}
       <div className="location-top-bar">
@@ -275,8 +298,8 @@ export default function FamilyLocationPage() {
           {canManageZones && (
             <button
               className="location-btn-zone"
-              onClick={() => setShowZoneModal(true)}
-              title="Adicionar zona segura"
+              onClick={() => setIsDrawingMode(true)}
+              title="Adicionar zona segura no mapa"
             >
               ＋ Zona
             </button>
@@ -327,12 +350,12 @@ export default function FamilyLocationPage() {
               <button className="modal-close" onClick={() => setShowZoneModal(false)}>×</button>
             </div>
 
-            {!position ? (
+            {!zoneForm.latitude ? (
               <div className="empty-state" style={{ padding: '24px 0' }}>
                 <div className="empty-icon">📍</div>
-                <h3>Localização necessária</h3>
+                <h3>Ponto inválido</h3>
                 <p style={{ fontSize: '0.85rem' }}>
-                  Ative a localização no browser. A zona será criada na sua posição atual.
+                  Por favor, cancele e clique no mapa para criar a zona.
                 </p>
               </div>
             ) : (
@@ -369,20 +392,22 @@ export default function FamilyLocationPage() {
                   <label className="form-label">Raio (metros)</label>
                   <input
                     className="form-input"
-                    type="number"
+                    type="range"
                     min={50}
                     max={2000}
                     step={50}
                     value={zoneForm.radius_meters}
-                    onChange={(e) => setZoneForm((f) => ({ ...f, radius_meters: e.target.value }))}
+                    onChange={(e) => setZoneForm((f) => ({ ...f, radius_meters: Number(e.target.value) }))}
                   />
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 4 }}>
-                    A zona será centrada na sua posição atual ({position.lat.toFixed(4)}, {position.lng.toFixed(4)})
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 4 }}>
+                    <span>50m</span>
+                    <span style={{ fontWeight: 600, color: 'var(--primary)' }}>{zoneForm.radius_meters}m</span>
+                    <span>2000m</span>
                   </div>
                 </div>
 
                 <div className="modal-footer">
-                  <button className="btn btn-ghost" onClick={() => setShowZoneModal(false)}>Cancelar</button>
+                  <button className="btn btn-ghost" onClick={() => { setShowZoneModal(false); setIsDrawingMode(false); }}>Cancelar</button>
                   <button
                     className="btn btn-primary"
                     onClick={handleCreateZone}

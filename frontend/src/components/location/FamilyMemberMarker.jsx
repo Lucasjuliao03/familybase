@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { Marker, Tooltip } from 'react-leaflet';
 import L from 'leaflet';
+import { publicAssetUrl } from '../../services/api';
 
 const PRESET_EMOJIS = {
   astronaut: '🚀', explorer: '🗺️', artist: '🎨', scientist: '🔬',
@@ -52,7 +53,7 @@ export default function FamilyMemberMarker({ location, isSelected, isCurrentUser
     const current = isCurrentUser ? 'location-marker-current' : '';
 
     const imgContent = avatarUrl
-      ? `<img src="${avatarUrl}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:50%;" />`
+      ? `<img src="${avatarUrl.startsWith('http') ? avatarUrl : publicAssetUrl(avatarUrl)}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:50%;" />`
       : `<span style="font-size:18px;line-height:1;">${emoji}</span>`;
 
     const html = `

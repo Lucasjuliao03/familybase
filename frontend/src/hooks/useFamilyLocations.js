@@ -64,12 +64,32 @@ export function useFamilyLocations({ familyId, enabled = true }) {
           if (!row?.user_id) return;
           setLocations((prev) => {
             const next = new Map(prev);
-            // Merge user data if we already have it
             const existing = prev.get(row.user_id);
+            
             if (existing?.users && !row.users) {
               next.set(row.user_id, { ...row, users: existing.users });
             } else {
               next.set(row.user_id, row);
+              // If it's a completely new row without users relation, fetch it asynchronously
+              if (!existing?.users && !row.users) {
+                supabase
+                  .from('users')
+                  .select('id, name, email, avatar_url, avatar_preset, role, display_color')
+                  .eq('id', row.user_id)
+                  .single()
+                  .then(({ data: userData }) => {
+                    if (userData && mountedRef.current) {
+                      setLocations((currentMap) => {
+                        const updatedMap = new Map(currentMap);
+                        const currentLoc = updatedMap.get(row.user_id);
+                        if (currentLoc) {
+                          updatedMap.set(row.user_id, { ...currentLoc, users: userData });
+                        }
+                        return updatedMap;
+                      });
+                    }
+                  });
+              }
             }
             return next;
           });

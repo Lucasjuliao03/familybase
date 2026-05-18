@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { MapContainer, TileLayer, useMap } from 'react-leaflet';
+import { MapContainer, TileLayer, useMap, useMapEvents } from 'react-leaflet';
 import FamilyMemberMarker from './FamilyMemberMarker';
 import SafeZoneCircle from './SafeZoneCircle';
 import 'leaflet/dist/leaflet.css';
@@ -57,6 +57,29 @@ function AutoFitBounds({ locations, selectedMemberId, zones }) {
 }
 
 /**
+ * Componente interno para escutar cliques (modo desenho).
+ */
+function MapClickListener({ onMapClick, isDrawing }) {
+  const map = useMapEvents({
+    click(e) {
+      if (isDrawing && onMapClick) {
+        onMapClick(e.latlng);
+      }
+    },
+  });
+  
+  useEffect(() => {
+    if (isDrawing) {
+      map.getContainer().style.cursor = 'crosshair';
+    } else {
+      map.getContainer().style.cursor = '';
+    }
+  }, [isDrawing, map]);
+
+  return null;
+}
+
+/**
  * FamilyMap — mapa Leaflet com markers de membros e zonas seguras.
  */
 export default function FamilyMap({
@@ -65,6 +88,8 @@ export default function FamilyMap({
   selectedMemberId,
   onSelectMember,
   currentUserId,
+  zoneDraft,
+  onMapClick,
   children: childNodes,
 }) {
   const center = (() => {
@@ -100,6 +125,15 @@ export default function FamilyMap({
         {zones.map((zone) => (
           <SafeZoneCircle key={zone.id} zone={zone} />
         ))}
+
+        {/* Draft Zone */}
+        {zoneDraft && (
+          <SafeZoneCircle 
+            zone={{ ...zoneDraft, id: 'draft', color: '#10B981', type: 'home' }} 
+          />
+        )}
+
+        <MapClickListener onMapClick={onMapClick} isDrawing={!!zoneDraft} />
 
         {/* Member markers */}
         {locations.map((loc) => (
