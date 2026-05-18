@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS public.family_locations (
     speed DOUBLE PRECISION,
     heading DOUBLE PRECISION,
     battery_level DOUBLE PRECISION,
+    share_with_children BOOLEAN DEFAULT true,
     status TEXT DEFAULT 'moving' CHECK(status IN ('home','school','work','moving','offline')),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()),

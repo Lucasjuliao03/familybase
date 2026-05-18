@@ -50,6 +50,7 @@ export default function FamilyLocationPage() {
   const [showZoneModal, setShowZoneModal] = useState(false);
   const [zoneForm, setZoneForm] = useState({ name: '', type: 'home', radius_meters: 200 });
   const [savingZone, setSavingZone] = useState(false);
+  const [togglingVisibility, setTogglingVisibility] = useState(false);
 
   // Track zone occupancy para detectar enter/exit
   const zoneOccupancyRef = useRef(new Map());
@@ -182,11 +183,38 @@ export default function FamilyLocationPage() {
     setZones((prev) => prev.filter((z) => z.id !== zoneId));
   };
 
-  // Convert Map to array
-  const locArray = Array.from(locMap.values());
+  // Convert Map to array and apply visibility rules
+  const locArray = Array.from(locMap.values()).filter((loc) => {
+    // Gestores and Master can see everyone
+    if (userRole === 'parent' || userRole === 'master') return true;
+    
+    // Children and relatives can always see their own location
+    if (loc.user_id === userId) return true;
+    
+    // Other users are only visible if they share their location with children
+    return loc.share_with_children !== false;
+  });
 
   const isLoading = locsLoading && zonesLoading;
   const canManageZones = userRole === 'parent' || userRole === 'master';
+
+  const myLocation = locMap.get(userId);
+  const isSharingWithChildren = myLocation?.share_with_children ?? true;
+
+  const toggleShareWithChildren = async () => {
+    if (!myLocation || togglingVisibility) return;
+    setTogglingVisibility(true);
+    try {
+      const newStatus = !isSharingWithChildren;
+      await supabase
+        .from('family_locations')
+        .update({ share_with_children: newStatus })
+        .eq('user_id', userId);
+    } catch (e) {
+      console.error('[location] toggle visibility:', e);
+    }
+    setTogglingVisibility(false);
+  };
 
   return (
     <div className="location-page">
@@ -232,7 +260,18 @@ export default function FamilyLocationPage() {
       {/* Top bar overlay */}
       <div className="location-top-bar">
         <h1 className="location-top-title">📍 Localização</h1>
-        <div className="location-top-actions">
+        <div className="location-top-actions" style={{ display: 'flex', gap: 8 }}>
+          {canManageZones && (
+            <button
+              className="location-btn-zone"
+              onClick={toggleShareWithChildren}
+              disabled={togglingVisibility}
+              title="Alternar visibilidade para os filhos"
+              style={{ padding: '8px 12px' }}
+            >
+              {isSharingWithChildren ? '👁️ Visível' : '🙈 Oculto'}
+            </button>
+          )}
           {canManageZones && (
             <button
               className="location-btn-zone"
