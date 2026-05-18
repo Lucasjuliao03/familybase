@@ -19,6 +19,7 @@ const DEFAULT_MODULES = {
   goals: true,
   notifications: true,
   health: true,
+  location: true,
 };
 
 /**

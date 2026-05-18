@@ -44,6 +44,7 @@ const MyCalendar     = lazy(() => import('./pages/child/MyCalendar'));
 // ─── Módulos partilhados — lazy (chunk: pages-shared) ────────────────────────
 const HealthCenter     = lazy(() => import('./pages/HealthCenter'));
 const MuralBoard       = lazy(() => import('./pages/MuralBoard'));
+const FamilyLocationPage = lazy(() => import('./pages/FamilyLocationPage'));
 const MasterDashboard  = lazy(() => import('./pages/master/MasterDashboard'));
 const SubscribePage    = lazy(() => import('./pages/SubscribePage'));
 
@@ -222,6 +223,11 @@ function AppRoutes() {
             <Suspense fallback={<PageLoader />}><MuralBoard /></Suspense>
           </ModuleRoute>
         } />
+        <Route path="location" element={
+          <ModuleRoute module="location">
+            <Suspense fallback={<PageLoader />}><FamilyLocationPage /></Suspense>
+          </ModuleRoute>
+        } />
         <Route path="reports" element={
           <ModuleRoute module="reports">
             <Suspense fallback={<PageLoader />}><ReportsPage /></Suspense>
@@ -288,6 +294,11 @@ function AppRoutes() {
         <Route path="mural" element={
           <ModuleRoute module="mural">
             <Suspense fallback={<PageLoader />}><MuralBoard /></Suspense>
+          </ModuleRoute>
+        } />
+        <Route path="location" element={
+          <ModuleRoute module="location">
+            <Suspense fallback={<PageLoader />}><FamilyLocationPage /></Suspense>
           </ModuleRoute>
         } />
       </Route>

@@ -26,6 +26,7 @@ const NAV_SECTIONS = [
       { to: '/parent/health', icon: '❤️', label: null, key: 'nav_health', module: 'health' },
       { to: '/parent/mural', icon: '📌', label: null, key: 'nav_mural', module: 'mural' },
       { to: '/parent/shopping', icon: '🛒', label: null, key: 'nav_shopping', module: 'shopping' },
+      { to: '/parent/location', icon: '📍', label: null, key: 'nav_location', module: 'location' },
     ],
   },
   {

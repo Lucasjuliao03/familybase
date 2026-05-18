@@ -1156,7 +1156,7 @@ function buildAppointmentUpdate(body) {
 
 const DEFAULT_MODULE_KEYS = [
   'tasks', 'routines', 'calendar', 'allowance', 'family_shop', 'medals', 'grades',
-  'piggy_bank', 'goals', 'reports', 'notifications', 'shopping', 'health', 'mural',
+  'piggy_bank', 'goals', 'reports', 'notifications', 'shopping', 'health', 'mural', 'location',
 ];
 
 const MODULE_META = {
@@ -1174,6 +1174,7 @@ const MODULE_META = {
   shopping: { is_premium: false },
   health: { is_premium: true },
   mural: { is_premium: false },
+  location: { is_premium: true },
 };
 
 async function buildModulesPayload(familyId) {
