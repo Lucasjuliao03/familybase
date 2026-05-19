@@ -339,7 +339,7 @@ export default function HealthCenter() {
       </div>
 
       {!isChild && canManage && hcContext?.showChildrenTab && (
-        <div className="tabs mb-16" style={{ flexWrap: 'wrap', gap: 8 }}>
+        <div className="tabs tabs-scroll mb-16">
           <button type="button" className={`tab ${healthScope === 'mine' ? 'active' : ''}`} onClick={() => setHealthScope('mine')}>
             {t('health_scope_mine')}
           </button>
@@ -362,9 +362,16 @@ export default function HealthCenter() {
         </div>
       )}
 
-      <div className="tabs mb-24" style={{ flexWrap: 'wrap', gap: 8 }}>
+      <div className="tabs tabs-scroll mb-24">
         {['overview', 'records', 'appointments', 'medications', 'history', 'attachments'].map((k) => (
-          <button key={k} type="button" className={`tab ${tab === k ? 'active' : ''}`} onClick={() => setTab(k)}>{t(`health_tab_${k}`)}</button>
+          <button 
+            key={k} 
+            type="button" 
+            className={`tab ${tab === k ? 'active' : ''}`} 
+            onClick={() => setTab(k)}
+          >
+            {t(`health_tab_${k}`)}
+          </button>
         ))}
       </div>
 

@@ -126,12 +126,12 @@ export default function AvatarPicker({ currentAvatarUrl, currentPreset, onSave, 
 
       {/* Picker Modal */}
       {open && (
-        <>
-          <div style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(0,0,0,0.4)' }} onClick={() => setOpen(false)} />
+        <div style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+          <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.5)' }} onClick={() => setOpen(false)} />
           <div style={{
-            position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
-            width: 320, background: 'var(--bg-card)', border: '1px solid var(--border)',
+            position: 'relative', width: '100%', maxWidth: 320, background: 'var(--bg-card)', border: '1px solid var(--border)',
             borderRadius: 'var(--radius)', boxShadow: 'var(--shadow-lg)', zIndex: 10000,
+            maxHeight: '90vh', overflowY: 'auto', display: 'flex', flexDirection: 'column'
           }}>
             <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
               <strong style={{ fontSize: '0.9rem' }}>Escolher Avatar</strong>
@@ -197,7 +197,7 @@ export default function AvatarPicker({ currentAvatarUrl, currentPreset, onSave, 
               </div>
             )}
           </div>
-        </>
+        </div>
       )}
     </div>
   );
