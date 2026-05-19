@@ -3,8 +3,12 @@
 -- Execute este script no SQL Editor do Supabase
 -- ============================================================
 
+-- Remover tabelas antigas para garantir schema limpo (ignora dados antigos de configuração)
+DROP TABLE IF EXISTS school_grade_periods CASCADE;
+DROP TABLE IF EXISTS school_grade_settings CASCADE;
+
 -- 1. Tabela de configuração geral do modelo de avaliação por aluno
-CREATE TABLE IF NOT EXISTS school_grade_settings (
+CREATE TABLE school_grade_settings (
   id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   family_id           uuid NOT NULL REFERENCES families(id) ON DELETE CASCADE,
   child_id            uuid NOT NULL REFERENCES children(id) ON DELETE CASCADE,
@@ -17,6 +21,7 @@ CREATE TABLE IF NOT EXISTS school_grade_settings (
   updated_at          timestamptz NOT NULL DEFAULT now(),
   UNIQUE (family_id, child_id)
 );
+
 
 -- 2. Tabela de configuração por período (bimestre/trimestre)
 --    Permite definir pontos e % de aprovação diferentes por período
@@ -115,3 +120,6 @@ CREATE INDEX IF NOT EXISTS idx_sgp_child      ON school_grade_periods (family_id
 -- ============================================================
 -- FIM DO SCRIPT
 -- ============================================================
+
+-- Recarrega o cache de schema da API do Supabase (PostgREST)
+NOTIFY pgrst, 'reload schema';

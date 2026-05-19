@@ -155,8 +155,8 @@ export default function GradeTracker() {
         const pPayload = {
           family_id: family.id,
           child_id: filterChild,
-          period_number: p.period_number,
-          period_label: p.period_label || `Período ${p.period_number}`,
+          period_number: p.number, // FIX: p.number instead of p.period_number
+          period_label: p.label || `Período ${p.number}`,
           total_points: Number(p.total_points),
           approval_pct: Number(p.approval_pct),
           weight: Number(p.weight),

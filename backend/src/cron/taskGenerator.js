@@ -128,31 +128,69 @@ async function generateTaskOccurrences(db) {
 
 async function markExpiredOccurrences(db) {
   try {
-  const now = new Date().toISOString();
-  const today = getCalendarDateYMD(new Date());
+    const now = new Date().toISOString();
+    const today = getCalendarDateYMD(new Date());
 
-  const delayedResult = await db.prepare(`
-    UPDATE task_occurrences 
-    SET status = 'delayed', updated_at = CURRENT_TIMESTAMP
-    WHERE status = 'pending'
-    AND due_datetime IS NOT NULL
-    AND due_datetime < ?
-    AND occurrence_date = ?
-  `).run(now, today);
+    const delayedResult = await db.prepare(`
+      UPDATE task_occurrences 
+      SET status = 'delayed', updated_at = CURRENT_TIMESTAMP
+      WHERE status = 'pending'
+      AND due_datetime IS NOT NULL
+      AND due_datetime < ?
+      AND occurrence_date = ?
+    `).run(now, today);
 
-  const yest = new Date();
-  yest.setDate(yest.getDate() - 1);
-  const yesterdayStr = getCalendarDateYMD(yest);
+    const yest = new Date();
+    yest.setDate(yest.getDate() - 1);
+    const yesterdayStr = getCalendarDateYMD(yest);
 
-  const expiredResult = await db.prepare(`
-    UPDATE task_occurrences 
-    SET status = 'expired', updated_at = CURRENT_TIMESTAMP
-    WHERE status IN ('pending', 'delayed', 'in_progress')
-    AND occurrence_date = ?
-  `).run(yesterdayStr);
+    // 1. Fetch occurrences that are about to expire to process allowance deductions
+    const expiringOccs = await db.prepare(`
+      SELECT o.id as occ_id, o.task_id, o.child_id, o.family_id, t.title,
+             r.affects_allowance, r.discount_amount
+      FROM task_occurrences o
+      JOIN tasks t ON o.task_id = t.id
+      LEFT JOIN task_allowance_rules r ON t.id = r.task_id
+      WHERE o.status IN ('pending', 'delayed', 'in_progress')
+      AND o.occurrence_date = ?
+    `).all(yesterdayStr);
 
-    if (delayedResult.changes > 0 || expiredResult.changes > 0) {
-      console.log(`⏰ Marked ${delayedResult.changes} delayed, ${expiredResult.changes} expired`);
+    let deductionsApplied = 0;
+
+    for (const occ of expiringOccs) {
+      if (occ.affects_allowance && occ.discount_amount > 0) {
+        // Check idempotency: ensure no existing deduction for this occurrence
+        const existingTx = await db.prepare(`SELECT id FROM allowance_transactions WHERE task_occurrence_id=? AND origin='task' LIMIT 1`).get(occ.occ_id);
+        if (!existingTx) {
+          const { month, year } = require('../lib/calendarDate').getCalendarMonthYearFromYmd(today);
+          const cycle = await db.prepare("SELECT id FROM allowance_cycles WHERE child_id=? AND month=? AND year=? AND status='open'").get(occ.child_id, month, year);
+          
+          if (cycle) {
+            await db.prepare(`
+              INSERT INTO allowance_transactions (id, child_id, family_id, cycle_id, task_id, task_occurrence_id, type, origin, description, amount, status, approved_by) 
+              VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+            `).run(
+              require('uuid').v4(), occ.child_id, occ.family_id, cycle.id, occ.task_id, occ.occ_id, 
+              'debit', 'task', `Desconto: "${occ.title}" não realizada`, occ.discount_amount, 'approved', null
+            );
+            
+            await db.prepare("UPDATE allowance_cycles SET total_discount = total_discount + ? WHERE id=?").run(occ.discount_amount, cycle.id);
+            deductionsApplied++;
+          }
+        }
+      }
+    }
+
+    // 2. Mark them as expired
+    const expiredResult = await db.prepare(`
+      UPDATE task_occurrences 
+      SET status = 'expired', updated_at = CURRENT_TIMESTAMP
+      WHERE status IN ('pending', 'delayed', 'in_progress')
+      AND occurrence_date = ?
+    `).run(yesterdayStr);
+
+    if (delayedResult.changes > 0 || expiredResult.changes > 0 || deductionsApplied > 0) {
+      console.log(`⏰ Marked ${delayedResult.changes} delayed, ${expiredResult.changes} expired. Applied ${deductionsApplied} allowance deductions.`);
     }
   } catch (err) {
     logCronDbError('markExpiredOccurrences', err);
