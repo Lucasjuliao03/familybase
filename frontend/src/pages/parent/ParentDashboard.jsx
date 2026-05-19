@@ -263,6 +263,7 @@ export default function ParentDashboard() {
           <QuickAction to="/parent/allowance"           icon="💰" label="Mesada"           color="#10B981" />
           {moduleAllowed(modules, 'health') && <QuickAction to="/parent/health" icon="❤️" label="Saúde"   color="#EC4899" />}
           {moduleAllowed(modules, 'shopping') && <QuickAction to="/parent/shopping" icon="🛒" label="Compras" color="#14B8A6" />}
+          {moduleAllowed(modules, 'location') && <QuickAction to="/parent/location" icon="📍" label="Localização" color="#EF4444" />}
           {moduleAllowed(modules, 'mural') && <QuickAction to="/parent/mural" icon="📌" label="Mural"     color="#8B5CF6" />}
           <QuickAction to="/parent/reports"             icon="📊" label="Relatórios"       color="#6366F1" />
         </div>

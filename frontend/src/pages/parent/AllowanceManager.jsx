@@ -15,6 +15,7 @@ export default function AllowanceManager() {
   const [settings, setSettings] = useState([]);
   const [cycles, setCycles] = useState([]);
   const [children, setChildren] = useState([]);
+  const [transactions, setTransactions] = useState([]);
 
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [settingsForm, setSettingsForm] = useState({});
@@ -23,14 +24,16 @@ export default function AllowanceManager() {
 
   const fetchData = useCallback(async () => {
     try {
-      const [rSets, rCycles, rCh] = await Promise.all([
+      const [rSets, rCycles, rCh, rTrans] = await Promise.all([
         api.get('/allowance/settings').catch(() => ({ data: [] })),
         api.get('/allowance/cycles').catch(() => ({ data: [] })),
         api.get('/families/children').catch(() => ({ data: [] })),
+        api.get('/allowance/transactions').catch(() => ({ data: [] })),
       ]);
       setSettings(rSets.data);
       setCycles(rCycles.data);
       setChildren(rCh.data);
+      setTransactions(rTrans.data);
     } catch (e) {
       console.error(e);
     }
@@ -175,6 +178,35 @@ export default function AllowanceManager() {
                   <div className="flex-between" style={{ fontSize: '0.85rem' }}>
                     <span style={{ color: 'var(--success)' }}>+ {fmtMoney(set.currency, cycle.total_bonus + (cycle.manual_adjustments > 0 ? cycle.manual_adjustments : 0))} bônus</span>
                     <span style={{ color: 'var(--danger)' }}>- {fmtMoney(set.currency, cycle.total_discount + (cycle.manual_adjustments < 0 ? Math.abs(cycle.manual_adjustments) : 0))} descontos</span>
+                  </div>
+
+                  <div className="mt-24 mb-8" style={{ borderTop: '1px solid var(--border)', paddingTop: 16 }}>
+                    <h4 style={{ margin: '0 0 12px 0', fontSize: '0.9rem' }}>Extrato Recente</h4>
+                    <div style={{ overflowX: 'auto' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
+                        <tbody>
+                          {transactions.filter(t => t.child_id === child.id).slice(0, 5).map((tx) => {
+                            const isCredit = tx.type === 'credit';
+                            return (
+                              <tr key={tx.id} style={{ borderBottom: '1px solid var(--border-light)' }}>
+                                <td style={{ padding: '8px 0', color: 'var(--text-light)', whiteSpace: 'nowrap', paddingRight: 12 }}>
+                                  {new Date(tx.created_at).toLocaleDateString('pt-BR', { month: 'short', day: 'numeric' })}
+                                </td>
+                                <td style={{ padding: '8px 0', fontWeight: 500 }}>
+                                  {tx.description || (isCredit ? 'Entrada' : 'Saída')}
+                                </td>
+                                <td style={{ padding: '8px 0', fontWeight: 700, textAlign: 'right', color: isCredit ? 'var(--success)' : 'var(--danger)', whiteSpace: 'nowrap' }}>
+                                  {isCredit ? '+' : '-'} {fmtMoney(set.currency, tx.amount)}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                          {transactions.filter(t => t.child_id === child.id).length === 0 && (
+                            <tr><td colSpan="3" style={{ padding: '8px 0', color: 'var(--text-light)' }}>Nenhuma movimentação</td></tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
 
                   <div className="flex gap-8 mt-16">

@@ -8,6 +8,7 @@ import MemberListCard from '../components/location/MemberListCard';
 import LocationAlertToast from '../components/location/LocationAlertToast';
 import DeviceManagerModal from '../components/location/DeviceManagerModal';
 import { getDeviceId } from '../lib/device';
+import { useToast } from '../contexts/ToastContext';
 
 const ZONE_TYPE_ICONS = { home: '🏠', school: '🏫', work: '💼', other: '📍' };
 const ZONE_TYPE_COLORS = { home: '#10B981', school: '#3B82F6', work: '#F97316', other: '#8B5CF6' };
@@ -41,6 +42,7 @@ export default function FamilyLocationPage() {
   const familyId = family?.id || user?.family_id;
   const userId = user?.id;
   const userRole = user?.role;
+  const toast = useToast();
 
   // Geolocalização própria
   const { position, error: geoError, permissionDenied } = useGeolocation({
@@ -296,6 +298,32 @@ export default function FamilyLocationPage() {
     setTogglingVisibility(false);
   };
 
+  const handleSelectMember = useCallback((targetUserId) => {
+    setSelectedMemberId(targetUserId);
+    if (!familyId || !targetUserId) return;
+    
+    // Obter o nome do alvo
+    const loc = Array.from(locMap.values()).find(l => l.user_id === targetUserId);
+    const targetName = loc?.users?.name?.split(' ')[0] || 'membro';
+
+    const channelName = `location_updates:${familyId}`;
+    const channel = supabase.channel(channelName);
+    
+    channel.subscribe((status) => {
+      if (status === 'SUBSCRIBED') {
+        channel.send({
+          type: 'broadcast',
+          event: 'force_update',
+          payload: { user_id: targetUserId },
+        });
+        toast.info(`📍 Solicitando atualização GPS de ${targetName}...`);
+        setTimeout(() => {
+          supabase.removeChannel(channel);
+        }, 1500);
+      }
+    });
+  }, [familyId, locMap, toast]);
+
   return (
     <div className="location-page">
       {/* Loading overlay */}
@@ -333,7 +361,7 @@ export default function FamilyLocationPage() {
         locations={locArray}
         zones={zones}
         selectedMemberId={selectedMemberId}
-        onSelectMember={setSelectedMemberId}
+        onSelectMember={handleSelectMember}
         currentUserId={userId}
         zoneDraft={showZoneModal && zoneForm.latitude ? zoneForm : (isDrawingMode ? { latitude: position?.lat || 0, longitude: position?.lng || 0, radius_meters: 0 } : null)}
         onMapClick={handleMapClick}
@@ -402,7 +430,7 @@ export default function FamilyLocationPage() {
       <MemberListCard
         locations={locArray}
         selectedMemberId={selectedMemberId}
-        onSelectMember={setSelectedMemberId}
+        onSelectMember={handleSelectMember}
         currentPosition={position}
         currentUserId={userId}
       />

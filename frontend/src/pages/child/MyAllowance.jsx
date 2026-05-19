@@ -110,24 +110,53 @@ export default function MyAllowance() {
             <p style={{ opacity: 0.9 }}>Continue completando tarefas para aumentar esse valor!</p>
           </div>
 
-          <div className="card">
-            <h3 className="mb-16">Extrato Recente</h3>
+          <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+            <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)', background: 'var(--bg)' }}>
+              <h3 style={{ margin: 0 }}>Extrato de Entradas e Saídas</h3>
+            </div>
             {transactions.length === 0 ? (
-              <div className="empty-state"><div className="empty-icon">🧾</div><h3>Nenhuma movimentação</h3></div>
+              <div className="empty-state" style={{ padding: 40 }}><div className="empty-icon">🧾</div><h3>Nenhuma movimentação</h3></div>
             ) : (
-              transactions.slice(0, 6).map((tx) => (
-                <div key={tx.id} className="flex-between" style={{ padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
-                  <div>
-                    <div style={{ fontWeight: 600 }}>{tx.description}</div>
-                    <div style={{ fontSize: '0.8rem', color: 'var(--text-light)' }}>{new Date(tx.created_at).toLocaleDateString('pt-BR')}</div>
-                  </div>
-                  <div style={{ fontWeight: 700, color: tx.type === 'credit' ? 'var(--success)' : 'var(--danger)' }}>
-                    {tx.type === 'credit' ? '+' : '-'}
-                    {' '}
-                    {fmtMoney(settings?.currency, tx.amount)}
-                  </div>
-                </div>
-              ))
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+                  <thead>
+                    <tr style={{ background: 'var(--bg-alt)', fontSize: '0.85rem', color: 'var(--text-light)', borderBottom: '1px solid var(--border)' }}>
+                      <th style={{ padding: '12px 24px', fontWeight: 600 }}>Data</th>
+                      <th style={{ padding: '12px 24px', fontWeight: 600 }}>Descrição</th>
+                      <th style={{ padding: '12px 24px', fontWeight: 600, textAlign: 'right' }}>Valor</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {transactions.slice(0, 15).map((tx) => {
+                      const isCredit = tx.type === 'credit';
+                      return (
+                        <tr key={tx.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                          <td style={{ padding: '14px 24px', fontSize: '0.9rem', color: 'var(--text-light)', whiteSpace: 'nowrap' }}>
+                            {new Date(tx.created_at).toLocaleDateString('pt-BR')}
+                          </td>
+                          <td style={{ padding: '14px 24px', fontWeight: 500 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                              <span style={{ 
+                                display: 'inline-flex', alignItems: 'center', justifyContent: 'center', 
+                                width: 24, height: 24, borderRadius: '50%', 
+                                background: isCredit ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+                                color: isCredit ? 'var(--success)' : 'var(--danger)',
+                                fontSize: '0.8rem'
+                              }}>
+                                {isCredit ? '↓' : '↑'}
+                              </span>
+                              {tx.description || (isCredit ? 'Entrada' : 'Saída')}
+                            </div>
+                          </td>
+                          <td style={{ padding: '14px 24px', fontWeight: 700, textAlign: 'right', color: isCredit ? 'var(--success)' : 'var(--danger)', whiteSpace: 'nowrap' }}>
+                            {isCredit ? '+' : '-'} {fmtMoney(settings?.currency, tx.amount)}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
         </div>

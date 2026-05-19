@@ -2658,6 +2658,44 @@ const api = {
         .select()
         .maybeSingle();
       if (error) throw new Error(error.message);
+      
+      if (inserted) {
+        const transRows = [];
+        if (opening > 0) {
+          transRows.push({
+            id: uuidv4(),
+            family_id: familyId,
+            child_id,
+            cycle_id: inserted.id,
+            type: 'credit',
+            origin: 'base',
+            description: 'Saldo do mês anterior',
+            amount: opening,
+            status: 'approved',
+            approved_by: userId || null,
+            balance_after: 0
+          });
+        }
+        if (base > 0) {
+          transRows.push({
+            id: uuidv4(),
+            family_id: familyId,
+            child_id,
+            cycle_id: inserted.id,
+            type: 'credit',
+            origin: 'base',
+            description: 'Mesada Base',
+            amount: base,
+            status: 'approved',
+            approved_by: userId || null,
+            balance_after: 0
+          });
+        }
+        if (transRows.length > 0) {
+          await supabase.from('allowance_transactions').insert(transRows);
+        }
+      }
+
       return { data: inserted || {} };
     }
 
@@ -2729,12 +2767,29 @@ const api = {
       const cycleId = path.split('/')[3];
       const { data: cyc } = await supabase
         .from('allowance_cycles')
-        .select('child_id')
+        .select('child_id, final_amount')
         .eq('id', cycleId)
         .eq('family_id', familyId)
         .maybeSingle();
+      
       await supabase.from('allowance_cycles').update({ status: 'paid' }).eq('id', cycleId).eq('family_id', familyId);
+      
       if (cyc?.child_id) {
+        // Record the payment as a transaction in the statement
+        await supabase.from('allowance_transactions').insert({
+          id: uuidv4(),
+          family_id: familyId,
+          child_id: cyc.child_id,
+          cycle_id: cycleId,
+          type: 'debit',
+          origin: 'payment',
+          description: 'Pagamento de mesada',
+          amount: cyc.final_amount || 0,
+          status: 'paid',
+          approved_by: userId,
+          balance_after: 0,
+        });
+
         const { data: chAfter } = await supabase
           .from('children')
           .select('streak_current')

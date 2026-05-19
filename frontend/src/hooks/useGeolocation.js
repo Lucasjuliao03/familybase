@@ -127,5 +127,33 @@ export function useGeolocation({ familyId, userId, enabled = true }) {
     };
   }, [enabled, familyId, userId, sendToSupabase]);
 
+  // Listen for force update requests via Supabase Realtime Broadcast
+  useEffect(() => {
+    if (!enabled || !familyId || !userId) return undefined;
+    
+    const channel = supabase.channel(`location_updates:${familyId}`);
+    channel.on('broadcast', { event: 'force_update' }, (payload) => {
+      if (payload.payload?.user_id === userId) {
+        if (navigator.geolocation) {
+          navigator.geolocation.getCurrentPosition(
+            (pos) => {
+              const { latitude, longitude, accuracy, speed, heading } = pos.coords;
+              setPosition({ lat: latitude, lng: longitude, accuracy, speed, heading, ts: Date.now() });
+              // Force send by resetting the throttle ref
+              lastSentRef.current = { lat: 0, lng: 0, ts: 0 };
+              sendToSupabase(latitude, longitude, accuracy, speed, heading);
+            },
+            () => {},
+            { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+          );
+        }
+      }
+    }).subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [enabled, familyId, userId, sendToSupabase]);
+
   return { position, error, permissionDenied, sending };
 }
