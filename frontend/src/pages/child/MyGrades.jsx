@@ -6,26 +6,13 @@ import { useToast } from '../../contexts/ToastContext';
 import api from '../../services/api';
 import { supabase } from '../../lib/supabase';
 import useAutoRefresh from '../../hooks/useAutoRefresh';
+import { buildPeriodConfig, buildBoletim, scoreColor } from '../../lib/gradesHelpers';
 
 const PREDEFINED_SUBJECTS = [
   'Matemática','Português','Ciências','História','Geografia',
   'Educação Física','Artes','Inglês','Espanhol','Física',
   'Química','Biologia','Filosofia','Sociologia','Música',
 ];
-
-const PERIOD_LABELS = {
-  bimonthly: ['1º Bimestre','2º Bimestre','3º Bimestre','4º Bimestre'],
-  trimester:  ['1º Trimestre','2º Trimestre','3º Trimestre'],
-};
-
-function MiniBar({ value, max, color }) {
-  const pct = Math.min(100, (value / max) * 100);
-  return (
-    <div style={{ height: 5, background: 'var(--border)', borderRadius: 4, overflow: 'hidden', marginTop: 4 }}>
-      <div style={{ height: '100%', width: `${pct}%`, background: color, borderRadius: 4, transition: 'width 0.4s' }} />
-    </div>
-  );
-}
 
 export default function MyGrades() {
   const { childProfile, ensureChildProfile, family } = useAuth();
@@ -36,11 +23,11 @@ export default function MyGrades() {
   const [grades, setGrades] = useState([]);
   const [subjectOptions, setSubjectOptions] = useState([]);
   const [showModal, setShowModal] = useState(false);
-  const [filterPeriod, setFilterPeriod] = useState(0);
-  const [settings, setSettings] = useState({
-    evaluation_model: 'bimonthly', minimum_average: 6,
-    annual_total_points: 100, period_total_points: 25, periods_count: 4,
-  });
+  const [filterPeriod, setFilterPeriod] = useState(0); // 0 = geral, senão número do período
+  
+  const [settings, setSettings] = useState({ evaluation_model: 'bimonthly', approval_pct: 60 });
+  const [periods, setPeriods] = useState([]);
+  
   const [form, setForm] = useState({
     subject: '', type: 'test', score: '', max_score: '10',
     concept: '', observation: '', date: '', period_number: 1,
@@ -69,39 +56,26 @@ export default function MyGrades() {
         .eq('child_id', cid)
         .maybeSingle();
       if (cfg) setSettings(cfg);
+
+      const { data: sgpRows } = await supabase
+        .from('school_grade_periods')
+        .select('*')
+        .eq('family_id', family.id)
+        .eq('child_id', cid)
+        .order('period_number', { ascending: true });
+      if (sgpRows) setPeriods(sgpRows);
     }
   }, [childProfile?.id, family?.id]);
 
   useEffect(() => { loadBundle(); }, [loadBundle, location.pathname]);
   useAutoRefresh(loadBundle, 2600);
 
-  const periodLabels = PERIOD_LABELS[settings.evaluation_model] || PERIOD_LABELS.bimonthly;
+  const pConfig = buildPeriodConfig(settings, periods);
+  const boletim = buildBoletim(grades, pConfig);
 
-  // Filtrar por período
-  const filteredGrades = filterPeriod ? grades.filter((g) => g.period_number === filterPeriod) : grades;
-
-  // Agrupar por matéria
-  const bySubject = {};
-  filteredGrades.forEach((g) => { if (!bySubject[g.subject]) bySubject[g.subject] = []; bySubject[g.subject].push(g); });
-
-  // Métricas gerais
-  const scored = filteredGrades.filter((g) => g.score != null);
-  const totalScore = scored.reduce((s, g) => s + g.score, 0);
-  const overallAvg = settings.annual_total_points > 0
-    ? (totalScore / (filterPeriod ? settings.period_total_points || 25 : settings.annual_total_points)) * 10
-    : null;
-  const missing = overallAvg !== null ? Math.max(0, settings.minimum_average - overallAvg) : 0;
-  const atRisk = Object.entries(bySubject).filter(([, gs]) => {
-    const sc = gs.filter((g) => g.score != null);
-    if (!sc.length) return false;
-    return sc.reduce((a, g) => a + g.score, 0) / sc.length < settings.minimum_average;
-  }).map(([s]) => s);
-
-  const scoreColor = (avg) => {
-    if (avg >= settings.minimum_average) return 'var(--success)';
-    if (avg >= settings.minimum_average * 0.75) return '#F97316';
-    return 'var(--danger)';
-  };
+  const filteredPeriods = filterPeriod === 0 
+    ? boletim.periods 
+    : boletim.periods.filter(p => p.number === filterPeriod);
 
   const handleCreate = async (e) => {
     e.preventDefault();
@@ -136,93 +110,95 @@ export default function MyGrades() {
 
       {/* Filtro de período */}
       <div className="flex gap-8 mb-16" style={{ flexWrap: 'wrap' }}>
-        <button className={`btn btn-sm ${filterPeriod === 0 ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setFilterPeriod(0)}>Todos</button>
-        {periodLabels.map((l, i) => (
-          <button key={i + 1} className={`btn btn-sm ${filterPeriod === i + 1 ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setFilterPeriod(i + 1)}>{l}</button>
+        <button className={`btn btn-sm ${filterPeriod === 0 ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setFilterPeriod(0)}>Geral (Ano)</button>
+        {pConfig.map((p) => (
+          <button key={p.number} className={`btn btn-sm ${filterPeriod === p.number ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setFilterPeriod(p.number)}>
+            {p.label}
+          </button>
         ))}
       </div>
 
-      {/* Dashboard compacto */}
-      {grades.length > 0 && (
+      {/* Dashboard Geral (só aparece se filtro for 0) */}
+      {filterPeriod === 0 && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: 10, marginBottom: 20 }}>
           <div className="stat-card" style={{ padding: '12px 14px' }}>
-            <div style={{ fontSize: '0.7rem', color: 'var(--text-light)', marginBottom: 2 }}>Média Geral</div>
-            <div style={{ fontWeight: 800, fontSize: '1.5rem', color: overallAvg != null ? scoreColor(overallAvg) : 'var(--text)' }}>
-              {overallAvg != null ? overallAvg.toFixed(1) : '-'}
+            <div style={{ fontSize: '0.7rem', color: 'var(--text-light)', marginBottom: 2 }}>Média Final</div>
+            <div style={{ fontWeight: 800, fontSize: '1.5rem', color: boletim.overall.passed ? 'var(--success)' : 'var(--text)' }}>
+              {boletim.overall.weightedAvg.toFixed(1)}
             </div>
-            <MiniBar value={overallAvg ?? 0} max={10} color={overallAvg != null && overallAvg >= settings.minimum_average ? 'var(--success)' : 'var(--danger)'} />
           </div>
           <div className="stat-card" style={{ padding: '12px 14px' }}>
-            <div style={{ fontSize: '0.7rem', color: 'var(--text-light)', marginBottom: 2 }}>Pontos</div>
-            <div style={{ fontWeight: 800, fontSize: '1.4rem' }}>{totalScore.toFixed(1)}</div>
-            <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>de {filterPeriod ? (settings.period_total_points ?? 25) : settings.annual_total_points}</div>
+            <div style={{ fontSize: '0.7rem', color: 'var(--text-light)', marginBottom: 2 }}>Pontos Acumulados</div>
+            <div style={{ fontWeight: 800, fontSize: '1.4rem' }}>{boletim.overall.totalObtained.toFixed(1)}</div>
+            <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>de {boletim.overall.totalMax}</div>
           </div>
-          {missing > 0 && (
+          {boletim.overall.missing > 0 && (
             <div className="stat-card" style={{ padding: '12px 14px', borderColor: '#F97316', background: 'rgba(249,115,22,0.05)' }}>
-              <div style={{ fontSize: '0.7rem', color: '#F97316', marginBottom: 2 }}>Faltam</div>
-              <div style={{ fontWeight: 800, fontSize: '1.4rem', color: '#F97316' }}>{missing.toFixed(1)}</div>
-              <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>p/ média {settings.minimum_average}</div>
+              <div style={{ fontSize: '0.7rem', color: '#F97316', marginBottom: 2 }}>Faltam na Média</div>
+              <div style={{ fontWeight: 800, fontSize: '1.4rem', color: '#F97316' }}>{boletim.overall.missing.toFixed(1)}</div>
             </div>
           )}
-          {atRisk.length > 0 && (
-            <div className="stat-card" style={{ padding: '12px 14px', borderColor: 'var(--danger)', background: 'rgba(239,68,68,0.05)' }}>
-              <div style={{ fontSize: '0.7rem', color: 'var(--danger)', marginBottom: 2 }}>⚠️ Em Risco</div>
-              <div style={{ fontWeight: 800, fontSize: '1.4rem', color: 'var(--danger)' }}>{atRisk.length}</div>
-              <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>matéria{atRisk.length > 1 ? 's' : ''}</div>
+          {boletim.overall.passed && (
+            <div className="stat-card" style={{ padding: '12px 14px', borderColor: 'var(--success)', background: 'rgba(34,197,94,0.05)' }}>
+              <div style={{ fontSize: '0.7rem', color: 'var(--success)', marginBottom: 2 }}>Situação</div>
+              <div style={{ fontWeight: 800, fontSize: '1.2rem', color: 'var(--success)', marginTop: 4 }}>Aprovado 🎉</div>
             </div>
           )}
         </div>
       )}
 
-      {/* Alerta de risco */}
-      {atRisk.length > 0 && (
-        <div style={{ background: 'rgba(239,68,68,0.07)', border: '1px solid var(--danger)', borderRadius: 10, padding: '10px 14px', marginBottom: 16, fontSize: '0.85rem' }}>
-          <strong style={{ color: 'var(--danger)' }}>⚠️ Matérias abaixo da média:</strong>{' '}
-          <span style={{ color: 'var(--text-light)' }}>{atRisk.join(' • ')}</span>
-        </div>
-      )}
-
-      {/* Cards por matéria (compactos) */}
-      {Object.keys(bySubject).length === 0 ? (
-        <div className="card empty-state">
-          <div className="empty-icon">📚</div>
-          <h3>{t('no_grades')}</h3>
-          <p style={{ color: 'var(--text-light)' }}>Cadastre sua primeira nota!</p>
-        </div>
-      ) : Object.entries(bySubject).map(([subj, gs]) => {
-        const sc = gs.filter((g) => g.score != null);
-        const avg = sc.length ? sc.reduce((a, g) => a + g.score, 0) / sc.length : null;
-        const isRisk = atRisk.includes(subj);
-        return (
-          <div key={subj} className="card mb-12" style={{ border: `1px solid ${isRisk ? 'var(--danger)' : 'var(--border)'}`, padding: '14px 16px' }}>
-            <div className="flex-between mb-10" style={{ flexWrap: 'wrap', gap: 8 }}>
-              <h3 style={{ fontWeight: 700, fontSize: '0.95rem', minWidth: 0 }}>
-                {isRisk ? '⚠️ ' : '📖 '}{subj}
-              </h3>
-              {avg != null && (
-                <span style={{ fontWeight: 800, fontSize: '1.1rem', color: scoreColor(avg) }}>
-                  {avg.toFixed(1)}/10
-                </span>
-              )}
+      {/* Boletim por Período */}
+      {filteredPeriods.map((p) => (
+        <div key={p.number} className="card mb-16" style={{ padding: '16px' }}>
+          <div className="flex-between mb-12" style={{ borderBottom: '1px solid var(--border)', paddingBottom: 10 }}>
+            <div>
+              <h3 style={{ fontWeight: 700, fontSize: '1.05rem' }}>{p.label}</h3>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-light)', marginTop: 2 }}>
+                Meta de aprovação: {p.min_score}pts ({p.approval_pct}%)
+              </div>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 110px), 1fr))', gap: 8 }}>
-              {gs.map((g) => (
-                <div key={g.id} style={{ padding: '8px 10px', background: 'var(--bg)', borderRadius: 8, textAlign: 'center', border: '1px solid var(--border)' }}>
-                  <div style={{ fontSize: '0.68rem', color: 'var(--text-light)', marginBottom: 2 }}>{typeLabels[g.type] || g.type}</div>
-                  {g.score != null ? (
-                    <div style={{ fontWeight: 800, fontSize: '1rem', color: scoreColor(g.score * 10 / g.max_score) }}>
-                      {g.score}<span style={{ fontSize: '0.7rem', fontWeight: 400 }}>/{g.max_score}</span>
-                    </div>
-                  ) : (
-                    <div style={{ fontWeight: 800, fontSize: '1rem', color: 'var(--primary)' }}>{g.concept || '-'}</div>
-                  )}
-                  {g.date && <div style={{ fontSize: '0.62rem', color: 'var(--text-muted)', marginTop: 2 }}>{new Date(g.date + 'T12:00:00').toLocaleDateString('pt-BR')}</div>}
+            <div style={{ textAlign: 'right' }}>
+              <div style={{ fontWeight: 800, fontSize: '1.2rem', color: scoreColor(p.obtained, p.total_points, p.approval_pct) }}>
+                {p.obtained.toFixed(1)} <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>/ {p.total_points}</span>
+              </div>
+              <div style={{ fontSize: '0.75rem', color: p.passed ? 'var(--success)' : 'var(--danger)', fontWeight: 600 }}>
+                {p.passed ? 'Na meta' : 'Abaixo da meta'}
+              </div>
+            </div>
+          </div>
+
+          {Object.keys(p.subjects).length === 0 ? (
+            <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', textAlign: 'center', padding: '10px 0' }}>Sem notas neste período.</div>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 10 }}>
+              {Object.entries(p.subjects).map(([subj, data]) => (
+                <div key={subj} style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 8, padding: '12px' }}>
+                  <div className="flex-between mb-8">
+                    <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>{subj}</span>
+                    <span style={{ fontWeight: 800, fontSize: '0.95rem', color: 'var(--primary)' }}>
+                      {data.total.toFixed(1)} <span style={{ fontSize: '0.75rem', fontWeight: 400, color: 'var(--text-muted)' }}>/{data.max}</span>
+                    </span>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(70px, 1fr))', gap: 6 }}>
+                    {data.grades.map(g => (
+                      <div key={g.id} style={{ background: 'var(--bg-card)', padding: '6px', borderRadius: 4, textAlign: 'center', border: '1px solid var(--border)' }}>
+                        <div style={{ fontSize: '0.6rem', color: 'var(--text-light)', marginBottom: 2 }}>{typeLabels[g.type] || g.type}</div>
+                        {g.score != null ? (
+                          <div style={{ fontWeight: 700, fontSize: '0.85rem', color: scoreColor(g.score, g.max_score, 60) }}>
+                            {g.score}<span style={{ fontSize: '0.65rem', fontWeight: 400, color: 'var(--text-muted)' }}>/{g.max_score}</span>
+                          </div>
+                        ) : (
+                          <div style={{ fontWeight: 700, fontSize: '0.85rem' }}>{g.concept || '-'}</div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
                 </div>
               ))}
             </div>
-          </div>
-        );
-      })}
+          )}
+        </div>
+      ))}
 
       {/* Modal */}
       {showModal && (
@@ -242,7 +218,7 @@ export default function MyGrades() {
                 <div className="form-group">
                   <label className="form-label">Período</label>
                   <select className="form-select" value={form.period_number} onChange={(e) => setForm((p) => ({ ...p, period_number: e.target.value }))}>
-                    {periodLabels.map((l, i) => <option key={i + 1} value={i + 1}>{l}</option>)}
+                    {pConfig.map((p) => <option key={p.number} value={p.number}>{p.label}</option>)}
                   </select>
                 </div>
                 <div className="form-group">

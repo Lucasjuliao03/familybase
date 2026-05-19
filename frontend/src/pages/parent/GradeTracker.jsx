@@ -29,6 +29,8 @@ function ScoreBar({ value, max, minAvg }) {
   );
 }
 
+import { buildPeriodConfig, buildBoletim, scoreColor, scorePct } from '../../lib/gradesHelpers';
+
 export default function GradeTracker() {
   const { t } = useLanguage();
   const toast = useToast();
@@ -42,8 +44,9 @@ export default function GradeTracker() {
   const [filterPeriod, setFilterPeriod] = useState(0); // 0 = todos
   const [activeTab, setActiveTab] = useState('dashboard'); // 'dashboard' | 'grades' | 'settings'
   const [showModal, setShowModal] = useState(false);
-  const [settings, setSettings] = useState({}); // { [child_id]: { evaluation_model, minimum_average, ... } }
-  const [settingsForm, setSettingsForm] = useState({ evaluation_model: 'bimonthly', minimum_average: 6, annual_total_points: 100 });
+  const [settings, setSettings] = useState({}); // { [child_id]: { evaluation_model, ... } }
+  const [periods, setPeriods] = useState({}); // { [child_id]: [ { period_number: 1, total_points: 25, approval_pct: 60, weight: 1 }, ... ] }
+  const [settingsForm, setSettingsForm] = useState({ evaluation_model: 'bimonthly', periods: [] });
   const [savingSettings, setSavingSettings] = useState(false);
 
   const [form, setForm] = useState({
@@ -77,20 +80,28 @@ export default function GradeTracker() {
         sgsRows.forEach((r) => { map[r.child_id] = r; });
         setSettings(map);
       }
+
+      const { data: sgpRows } = await supabase
+        .from('school_grade_periods')
+        .select('*')
+        .eq('family_id', family.id)
+        .order('period_number', { ascending: true });
+      if (sgpRows) {
+        const pMap = {};
+        sgpRows.forEach((r) => {
+          if (!pMap[r.child_id]) pMap[r.child_id] = [];
+          pMap[r.child_id].push(r);
+        });
+        setPeriods(pMap);
+      }
     }
   }, [filterChild, family?.id]);
 
   useEffect(() => { loadBundle(); }, [loadBundle, location.pathname]);
   useAutoRefresh(loadBundle, 2600);
 
-  // Configuração ativa para o filho selecionado
-  const activeSettings = (filterChild && settings[filterChild]) || {
-    evaluation_model: 'bimonthly',
-    minimum_average: 6,
-    annual_total_points: 100,
-    period_total_points: 25,
-    periods_count: 4,
-  };
+  // Configuração ativa (apenas para fallback no modal se precisar)
+  const activeSettings = (filterChild && settings[filterChild]) || { evaluation_model: 'bimonthly' };
   const periodLabels = PERIOD_LABELS[activeSettings.evaluation_model] || PERIOD_LABELS.bimonthly;
 
   // Filtrar notas por período
@@ -99,26 +110,7 @@ export default function GradeTracker() {
     return true;
   });
 
-  // Calcular métricas por filho
-  function calcChildMetrics(childGrades, cfg) {
-    const minAvg = cfg.minimum_average ?? 6;
-    const annualMax = cfg.annual_total_points ?? 100;
-    const bySubject = {};
-    childGrades.forEach((g) => {
-      if (!bySubject[g.subject]) bySubject[g.subject] = [];
-      bySubject[g.subject].push(g);
-    });
-    const totalScore = childGrades.reduce((s, g) => s + (g.score ?? 0), 0);
-    const overallAvg = annualMax > 0 ? (totalScore / annualMax) * 10 : null;
-    const atRisk = Object.entries(bySubject).filter(([, gs]) => {
-      const sc = gs.filter((g) => g.score != null);
-      if (!sc.length) return false;
-      const avg = sc.reduce((a, g) => a + g.score, 0) / sc.length;
-      return avg < minAvg;
-    }).map(([subj]) => subj);
-    const missing = overallAvg !== null ? Math.max(0, minAvg - overallAvg) : null;
-    return { bySubject, totalScore, overallAvg, atRisk, missing, minAvg };
-  }
+  // (calcChildMetrics removed)
 
   const handleCreate = async (e) => {
     e.preventDefault();
@@ -141,43 +133,72 @@ export default function GradeTracker() {
     if (!filterChild) { toast.error('Selecione um aluno primeiro.'); return; }
     setSavingSettings(true);
     try {
+      const { evaluation_model, periods: formPeriods, approval_pct } = settingsForm;
+      const count = evaluation_model === 'trimester' ? 3 : 4;
+      const validPeriods = formPeriods.slice(0, count);
+      
+      const totalPoints = validPeriods.reduce((sum, p) => sum + (Number(p.total_points) || 0), 0);
+
       const payload = {
         family_id: family.id,
         child_id: filterChild,
-        evaluation_model: settingsForm.evaluation_model,
-        minimum_average: Number(settingsForm.minimum_average),
-        annual_total_points: Number(settingsForm.annual_total_points),
-        periods_count: settingsForm.evaluation_model === 'trimester' ? 3 : 4,
-        period_total_points: Number(settingsForm.annual_total_points) / (settingsForm.evaluation_model === 'trimester' ? 3 : 4),
+        evaluation_model,
+        periods_count: count,
+        annual_total_points: totalPoints,
+        approval_pct: Number(approval_pct),
       };
-      const { error } = await supabase.from('school_grade_settings').upsert(payload, { onConflict: 'family_id,child_id' });
-      if (error) throw error;
+      const { error: err1 } = await supabase.from('school_grade_settings').upsert(payload, { onConflict: 'family_id,child_id' });
+      if (err1) throw err1;
+
+      // Upsert periods
+      for (const p of validPeriods) {
+        const pPayload = {
+          family_id: family.id,
+          child_id: filterChild,
+          period_number: p.period_number,
+          period_label: p.period_label || `Período ${p.period_number}`,
+          total_points: Number(p.total_points),
+          approval_pct: Number(p.approval_pct),
+          weight: Number(p.weight),
+        };
+        const { error: err2 } = await supabase.from('school_grade_periods').upsert(pPayload, { onConflict: 'family_id,child_id,period_number' });
+        if (err2) throw err2;
+      }
+
       toast.success('Configuração salva!');
       loadBundle();
     } catch (e) { toast.error(e.message || t('error_occurred')); }
     setSavingSettings(false);
   };
 
-  // Quando troca filho, preenche o form de settings com os dados existentes
+  // Quando troca filho ou modelo, atualiza o form
   useEffect(() => {
-    if (filterChild && settings[filterChild]) {
-      const s = settings[filterChild];
-      setSettingsForm({ evaluation_model: s.evaluation_model, minimum_average: s.minimum_average, annual_total_points: s.annual_total_points });
-    } else {
-      setSettingsForm({ evaluation_model: 'bimonthly', minimum_average: 6, annual_total_points: 100 });
-    }
-  }, [filterChild, settings]);
+    if (!filterChild) return;
+    const s = settings[filterChild] || { evaluation_model: 'bimonthly', approval_pct: 60 };
+    const pCfg = buildPeriodConfig(s, periods[filterChild] || []);
+    setSettingsForm({ 
+      evaluation_model: s.evaluation_model, 
+      approval_pct: s.approval_pct || 60,
+      periods: pCfg 
+    });
+  }, [filterChild, settings, periods]);
 
-  const scoreColor = (score, max) => {
-    const p = score / max;
-    if (p >= 0.7) return 'var(--success)';
-    if (p >= 0.5) return '#F97316';
-    return 'var(--danger)';
+  const handlePeriodChange = (idx, field, val) => {
+    setSettingsForm(prev => {
+      const newP = [...prev.periods];
+      newP[idx] = { ...newP[idx], [field]: val };
+      return { ...prev, periods: newP };
+    });
   };
 
-  // Métricas do filho selecionado (para dashboard)
-  const selectedChildGrades = filterChild ? grades.filter((g) => g.child_id === filterChild || g.student_id === filterChild) : grades;
-  const metrics = calcChildMetrics(selectedChildGrades, activeSettings);
+  const handleModelChange = (model) => {
+    setSettingsForm(prev => {
+      const pCfg = buildPeriodConfig({ evaluation_model: model, approval_pct: prev.approval_pct }, periods[filterChild] || []);
+      return { ...prev, evaluation_model: model, periods: pCfg };
+    });
+  };
+
+  const selectedChildGrades = filterChild ? grades.filter((g) => g.child_id === filterChild) : grades;
 
   return (
     <div className="animate-fade-in">
@@ -209,85 +230,97 @@ export default function GradeTracker() {
         ))}
       </div>
 
-      {/* ── DASHBOARD ── */}
+      {/* ── DASHBOARD (BOLETIM) ── */}
       {activeTab === 'dashboard' && (
         <div>
-          {/* Cards compactos por aluno */}
-          {Object.keys(metrics.bySubject).length === 0 ? (
-            <div className="card empty-state"><div className="empty-icon">📊</div><h3>Sem notas ainda</h3><p>Cadastre notas para ver o dashboard.</p></div>
-          ) : (
-            <>
-              {/* Resumo geral */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12, marginBottom: 20 }}>
-                <div className="stat-card" style={{ padding: '14px 16px' }}>
-                  <div style={{ fontSize: '0.72rem', color: 'var(--text-light)', marginBottom: 4 }}>Média Geral</div>
-                  <div style={{ fontWeight: 800, fontSize: '1.6rem', color: metrics.overallAvg != null && metrics.overallAvg >= activeSettings.minimum_average ? 'var(--success)' : 'var(--danger)' }}>
-                    {metrics.overallAvg != null ? metrics.overallAvg.toFixed(1) : '-'}
-                  </div>
-                  <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>mín. {activeSettings.minimum_average}</div>
-                </div>
-                <div className="stat-card" style={{ padding: '14px 16px' }}>
-                  <div style={{ fontSize: '0.72rem', color: 'var(--text-light)', marginBottom: 4 }}>Total de Notas</div>
-                  <div style={{ fontWeight: 800, fontSize: '1.6rem' }}>{selectedChildGrades.length}</div>
-                </div>
-                <div className="stat-card" style={{ padding: '14px 16px' }}>
-                  <div style={{ fontSize: '0.72rem', color: 'var(--text-light)', marginBottom: 4 }}>Pontos Total</div>
-                  <div style={{ fontWeight: 800, fontSize: '1.4rem' }}>{metrics.totalScore.toFixed(1)}</div>
-                  <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>de {activeSettings.annual_total_points}</div>
-                </div>
-                {metrics.atRisk.length > 0 && (
-                  <div className="stat-card" style={{ padding: '14px 16px', borderColor: 'var(--danger)', background: 'rgba(239,68,68,0.05)' }}>
-                    <div style={{ fontSize: '0.72rem', color: 'var(--danger)', marginBottom: 4 }}>⚠️ Em Risco</div>
-                    <div style={{ fontWeight: 800, fontSize: '1.4rem', color: 'var(--danger)' }}>{metrics.atRisk.length}</div>
-                    <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>matéria{metrics.atRisk.length > 1 ? 's' : ''}</div>
-                  </div>
-                )}
-              </div>
+          {!filterChild ? (
+            <div className="card empty-state">
+              <div className="empty-icon">📊</div>
+              <h3>Selecione um Aluno</h3>
+              <p>Escolha um aluno no filtro acima para ver o boletim.</p>
+            </div>
+          ) : (() => {
+            const childSettings = settings[filterChild] || { evaluation_model: 'bimonthly', approval_pct: 60 };
+            const childPeriods = periods[filterChild] || [];
+            const pConfig = buildPeriodConfig(childSettings, childPeriods);
+            const boletim = buildBoletim(selectedChildGrades, pConfig);
 
-              {/* Alerta de risco */}
-              {metrics.atRisk.length > 0 && (
-                <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid var(--danger)', borderRadius: 10, padding: '12px 16px', marginBottom: 16, display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-                  <span style={{ fontSize: '1.3rem' }}>⚠️</span>
-                  <div>
-                    <strong style={{ color: 'var(--danger)' }}>Atenção: matérias abaixo da média</strong>
-                    <p style={{ fontSize: '0.85rem', color: 'var(--text-light)', marginTop: 4 }}>{metrics.atRisk.join(' • ')}</p>
-                  </div>
-                </div>
-              )}
-
-              {/* Por matéria */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                {Object.entries(metrics.bySubject).map(([subj, gs]) => {
-                  const scored = gs.filter((g) => g.score != null);
-                  const avg = scored.length ? scored.reduce((a, g) => a + g.score, 0) / scored.length : null;
-                  const isRisk = metrics.atRisk.includes(subj);
-                  return (
-                    <div key={subj} style={{ background: 'var(--bg-card)', border: `1px solid ${isRisk ? 'var(--danger)' : 'var(--border)'}`, borderRadius: 10, padding: '12px 16px' }}>
-                      <div className="flex-between" style={{ gap: 12, flexWrap: 'wrap' }}>
-                        <div style={{ flex: 1, minWidth: 120 }}>
-                          <div style={{ fontWeight: 700, fontSize: '0.9rem' }}>{isRisk ? '⚠️ ' : ''}{subj}</div>
-                          <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 2 }}>{scored.length} nota{scored.length !== 1 ? 's' : ''}</div>
-                        </div>
-                        {avg != null && (
-                          <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                            <span style={{ fontWeight: 800, fontSize: '1.15rem', color: scoreColor(avg, activeSettings.minimum_average > 0 ? activeSettings.minimum_average * 1.67 : 10) }}>
-                              {avg.toFixed(1)}
-                            </span>
-                            <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}> /10</span>
-                          </div>
-                        )}
-                      </div>
-                      {avg != null && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
-                          <ScoreBar value={avg} max={10} minAvg={activeSettings.minimum_average} />
-                        </div>
-                      )}
+            return (
+              <>
+                {/* Resumo Geral */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: 12, marginBottom: 20 }}>
+                  <div className="stat-card" style={{ padding: '14px 16px' }}>
+                    <div style={{ fontSize: '0.72rem', color: 'var(--text-light)', marginBottom: 4 }}>Média Final</div>
+                    <div style={{ fontWeight: 800, fontSize: '1.6rem', color: boletim.overall.passed ? 'var(--success)' : 'var(--text)' }}>
+                      {boletim.overall.weightedAvg.toFixed(1)}
                     </div>
-                  );
-                })}
-              </div>
-            </>
-          )}
+                  </div>
+                  <div className="stat-card" style={{ padding: '14px 16px' }}>
+                    <div style={{ fontSize: '0.72rem', color: 'var(--text-light)', marginBottom: 4 }}>Pontos Acumulados</div>
+                    <div style={{ fontWeight: 800, fontSize: '1.6rem' }}>
+                      {boletim.overall.totalObtained.toFixed(1)}
+                    </div>
+                    <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>de {boletim.overall.totalMax}</div>
+                  </div>
+                  {boletim.overall.missing > 0 && (
+                    <div className="stat-card" style={{ padding: '14px 16px', borderColor: '#F97316', background: 'rgba(249,115,22,0.05)' }}>
+                      <div style={{ fontSize: '0.72rem', color: '#F97316', marginBottom: 4 }}>Faltam na Média</div>
+                      <div style={{ fontWeight: 800, fontSize: '1.4rem', color: '#F97316' }}>{boletim.overall.missing.toFixed(1)}</div>
+                    </div>
+                  )}
+                  {boletim.overall.passed && (
+                    <div className="stat-card" style={{ padding: '14px 16px', borderColor: 'var(--success)', background: 'rgba(34,197,94,0.05)' }}>
+                      <div style={{ fontSize: '0.72rem', color: 'var(--success)', marginBottom: 4 }}>Situação</div>
+                      <div style={{ fontWeight: 800, fontSize: '1.2rem', color: 'var(--success)', marginTop: 4 }}>Aprovado 🎉</div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Boletim Detalhado por Período */}
+                {boletim.periods.map((p) => (
+                  <div key={p.number} className="card mb-16" style={{ padding: '16px' }}>
+                    <div className="flex-between mb-12" style={{ borderBottom: '1px solid var(--border)', paddingBottom: 10 }}>
+                      <div>
+                        <h3 style={{ fontWeight: 700, fontSize: '1.1rem' }}>{p.label}</h3>
+                        <div style={{ fontSize: '0.8rem', color: 'var(--text-light)', marginTop: 2 }}>
+                          Meta: {p.min_score}pts ({p.approval_pct}%) • Peso: {p.weight}
+                        </div>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={{ fontWeight: 800, fontSize: '1.2rem', color: scoreColor(p.obtained, p.total_points, p.approval_pct) }}>
+                          {p.obtained.toFixed(1)} <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>/ {p.total_points}pts</span>
+                        </div>
+                        <div style={{ fontSize: '0.8rem', color: p.passed ? 'var(--success)' : 'var(--danger)', fontWeight: 600 }}>
+                          {p.passed ? 'Atingiu a meta' : 'Abaixo da meta'}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Matérias neste período */}
+                    {Object.keys(p.subjects).length === 0 ? (
+                      <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', textAlign: 'center', padding: '10px 0' }}>Nenhuma nota registrada neste período.</div>
+                    ) : (
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 10 }}>
+                        {Object.entries(p.subjects).map(([subj, data]) => (
+                          <div key={subj} style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 12px' }}>
+                            <div className="flex-between mb-6">
+                              <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>{subj}</span>
+                              <span style={{ fontWeight: 800, fontSize: '0.95rem', color: 'var(--primary)' }}>
+                                {data.total.toFixed(1)} <span style={{ fontSize: '0.75rem', fontWeight: 400, color: 'var(--text-muted)' }}>/{data.max}</span>
+                              </span>
+                            </div>
+                            <div style={{ fontSize: '0.75rem', color: 'var(--text-light)' }}>
+                              Média: {data.avg !== null ? data.avg.toFixed(1) : '-'} • {data.grades.length} nota(s)
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </>
+            );
+          })()}
         </div>
       )}
 
@@ -338,46 +371,81 @@ export default function GradeTracker() {
 
       {/* ── CONFIGURAÇÃO ── */}
       {activeTab === 'settings' && (
-        <div style={{ maxWidth: 480 }}>
+        <div style={{ maxWidth: 600 }}>
           <div className="card">
-            <h3 style={{ fontWeight: 700, marginBottom: 16 }}>⚙️ Modelo de Avaliação</h3>
-            {!filterChild && (
+            <h3 style={{ fontWeight: 700, marginBottom: 16 }}>⚙️ Configuração de Boletim</h3>
+            {!filterChild ? (
               <p style={{ color: 'var(--text-light)', fontSize: '0.88rem', marginBottom: 12 }}>
-                Selecione um aluno no filtro acima para salvar a configuração.
+                Selecione um aluno no filtro acima para configurar o boletim.
               </p>
+            ) : (
+              <>
+                <div className="form-group mb-20">
+                  <label className="form-label">Modelo de avaliação</label>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                    {[['bimonthly', '📅 4 Bimestres'], ['trimester', '📆 3 Trimestres']].map(([val, label]) => (
+                      <button
+                        key={val} type="button"
+                        onClick={() => handleModelChange(val)}
+                        style={{
+                          padding: '14px 10px', borderRadius: 10, fontWeight: 600, cursor: 'pointer', fontSize: '0.9rem',
+                          border: `2px solid ${settingsForm.evaluation_model === val ? 'var(--primary)' : 'var(--border)'}`,
+                          background: settingsForm.evaluation_model === val ? 'rgba(99,102,241,0.08)' : 'var(--bg)',
+                          color: settingsForm.evaluation_model === val ? 'var(--primary)' : 'var(--text)',
+                        }}
+                      >{label}</button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="form-group mb-24">
+                  <label className="form-label">Porcentagem Padrão para Aprovação Geral (%)</label>
+                  <input type="number" min="0" max="100" className="form-input" value={settingsForm.approval_pct || ''}
+                    onChange={(e) => setSettingsForm((p) => ({ ...p, approval_pct: e.target.value }))} />
+                  <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 4 }}>
+                    Essa porcentagem será aplicada a todos os períodos (ex: 60%).
+                  </p>
+                </div>
+
+                <h4 style={{ fontWeight: 600, marginBottom: 12, borderBottom: '1px solid var(--border)', paddingBottom: 8 }}>
+                  Configuração por Período
+                </h4>
+                
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginBottom: 24 }}>
+                  {settingsForm.periods.slice(0, settingsForm.evaluation_model === 'trimester' ? 3 : 4).map((p, idx) => (
+                    <div key={p.number} style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 8, padding: '12px' }}>
+                      <div style={{ fontWeight: 600, marginBottom: 10 }}>{p.label}</div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 10 }}>
+                        <div className="form-group" style={{ marginBottom: 0 }}>
+                          <label className="form-label" style={{ fontSize: '0.75rem' }}>Pontos Totais</label>
+                          <input type="number" step="0.1" className="form-input" value={p.total_points}
+                            onChange={(e) => handlePeriodChange(idx, 'total_points', e.target.value)} />
+                        </div>
+                        <div className="form-group" style={{ marginBottom: 0 }}>
+                          <label className="form-label" style={{ fontSize: '0.75rem' }}>Aprovação (%)</label>
+                          <input type="number" step="1" className="form-input" value={p.approval_pct}
+                            onChange={(e) => handlePeriodChange(idx, 'approval_pct', e.target.value)} />
+                        </div>
+                        <div className="form-group" style={{ marginBottom: 0 }}>
+                          <label className="form-label" style={{ fontSize: '0.75rem' }}>Peso na Média</label>
+                          <input type="number" step="0.1" className="form-input" value={p.weight}
+                            onChange={(e) => handlePeriodChange(idx, 'weight', e.target.value)} />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="flex-between" style={{ alignItems: 'center' }}>
+                  <div style={{ fontSize: '0.85rem' }}>
+                    <strong>Total no Ano:</strong> {settingsForm.periods.slice(0, settingsForm.evaluation_model === 'trimester' ? 3 : 4).reduce((s, p) => s + (Number(p.total_points) || 0), 0)} pts
+                  </div>
+                  <button className="btn btn-primary" disabled={savingSettings} onClick={handleSaveSettings}>
+                    {savingSettings ? 'Salvando...' : '💾 Salvar Configuração'}
+                  </button>
+                </div>
+              </>
             )}
-            <div className="form-group">
-              <label className="form-label">Modelo de avaliação</label>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                {[['bimonthly', '📅 4 Bimestres'], ['trimester', '📆 3 Trimestres']].map(([val, label]) => (
-                  <button
-                    key={val} type="button"
-                    onClick={() => setSettingsForm((p) => ({ ...p, evaluation_model: val }))}
-                    style={{
-                      padding: '14px 10px', borderRadius: 10, fontWeight: 600, cursor: 'pointer', fontSize: '0.9rem',
-                      border: `2px solid ${settingsForm.evaluation_model === val ? 'var(--primary)' : 'var(--border)'}`,
-                      background: settingsForm.evaluation_model === val ? 'rgba(99,102,241,0.08)' : 'var(--bg)',
-                      color: settingsForm.evaluation_model === val ? 'var(--primary)' : 'var(--text)',
-                    }}
-                  >{label}</button>
-                ))}
-              </div>
-            </div>
-            <div className="grid grid-2">
-              <div className="form-group">
-                <label className="form-label">Nota mínima para aprovação</label>
-                <input type="number" step="0.1" min="0" max="10" className="form-input" value={settingsForm.minimum_average}
-                  onChange={(e) => setSettingsForm((p) => ({ ...p, minimum_average: e.target.value }))} />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Total de pontos no ano</label>
-                <input type="number" min="1" className="form-input" value={settingsForm.annual_total_points}
-                  onChange={(e) => setSettingsForm((p) => ({ ...p, annual_total_points: e.target.value }))} />
-              </div>
-            </div>
-            <button className="btn btn-primary" disabled={savingSettings || !filterChild} onClick={handleSaveSettings}>
-              {savingSettings ? 'Salvando...' : '💾 Salvar Configuração'}
-            </button>
           </div>
         </div>
       )}
