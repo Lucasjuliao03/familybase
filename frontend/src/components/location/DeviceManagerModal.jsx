@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
 import { getDeviceId } from '../../lib/device';
-import './LocationModals.css';
 
 export default function DeviceManagerModal({ familyId, onClose }) {
   const [devices, setDevices] = useState([]);
