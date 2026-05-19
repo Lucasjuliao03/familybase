@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useToast } from '../../contexts/ToastContext';
 import api from '../../services/api';
 import useDailyCalendarRefresh from '../../hooks/useDailyCalendarRefresh';
+import { enrichOccurrencesStatus } from '../../lib/taskStatus';
 import {
   familyChildrenQueryKey,
   taskListQueryKey,
@@ -56,6 +57,12 @@ export default function TaskManager() {
   const [showModal, setShowModal] = useState(false);
   const [editTask, setEditTask] = useState(null);
   const [form, setForm] = useState(initialForm);
+  // Ticker para recalcular atraso sem re-fetch (a cada 60s)
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const tid = setInterval(() => setNow(new Date()), 60_000);
+    return () => clearInterval(tid);
+  }, []);
 
   const tasksQueryOptions = {
     queryKey: taskListQueryKey(filter),
@@ -92,7 +99,9 @@ export default function TaskManager() {
   const childrenQ = useQuery(childrenQueryOptions);
 
   const tasks = tasksQ.data ?? [];
-  const occurrences = occQ.data ?? [];
+  const rawOccurrences = occQ.data ?? [];
+  // Calcular status real (atraso) no cliente
+  const occurrences = enrichOccurrencesStatus(rawOccurrences, now);
   const children = childrenQ.data ?? [];
 
   const occInitialSkeleton = occQ.isPending && occurrences.length === 0 && !occQ.error;
@@ -255,12 +264,16 @@ export default function TaskManager() {
   };
 
   const statusColor = {
-    pending: 'warning', in_progress: 'info', waiting_approval: 'warning', completed: 'success',
-    approved: 'success', rejected: 'danger', delayed: 'danger', expired: 'danger', cancelled: 'danger',
+    pending: 'warning', in_progress: 'info', waiting_approval: 'warning',
+    completed: 'success', approved: 'success', rejected: 'danger',
+    delayed: 'danger', expired: 'danger', cancelled: 'danger',
+    completed_late: 'warning',
   };
   const statusLabel = {
-    pending: 'Pendente', in_progress: 'Em andamento', waiting_approval: '⏳ Aguardando', completed: 'Concluída',
-    approved: '✅ Aprovada', rejected: '❌ Reprovada', delayed: '⚠️ Atrasada', expired: 'Expirada', cancelled: 'Cancelada',
+    pending: 'Pendente', in_progress: 'Em andamento', waiting_approval: '⏳ Aguardando',
+    completed: 'Concluída', approved: '✅ Aprovada', rejected: '❌ Reprovada',
+    delayed: '⚠️ Atrasada', expired: 'Expirada', cancelled: 'Cancelada',
+    completed_late: '⚠️ Concluída c/ Atraso',
   };
 
   const isRecurring = form.frequency !== 'once';
@@ -339,10 +352,12 @@ export default function TaskManager() {
                     </td>
                   </tr>
                 ) : occurrences.map((occ) => (
-                  <tr key={occ.id}>
+                  <tr key={occ.id} style={occ.isDelayed ? { background: 'rgba(239,68,68,0.05)', borderLeft: '3px solid var(--danger)' } : undefined}>
                     <td data-label="Tarefa">
                       <strong>{occ.title}</strong>
                       {occ.is_recurring && <span className="badge badge-info ml-8" style={{ marginLeft: 6, fontSize: '0.7rem' }}>🔄 {occ.frequency}</span>}
+                      {occ.isDelayed && <span className="badge badge-danger" style={{ marginLeft: 6, fontSize: '0.7rem' }}>⚠️ Atrasada</span>}
+                      {occ.wasLate && <span className="badge badge-warning" style={{ marginLeft: 6, fontSize: '0.7rem' }}>⚠️ C/ Atraso</span>}
                       {occ.description && <div style={{ fontSize: '0.78rem', color: 'var(--text-light)' }}>{occ.description}</div>}
                     </td>
                     <td data-label="Filho"><div className="flex gap-8" style={{ alignItems: 'center' }}><div style={{ width: 8, height: 8, borderRadius: '50%', background: occ.child_color || 'var(--border)' }} />{occ.assignee_name || occ.child_name}</div></td>
