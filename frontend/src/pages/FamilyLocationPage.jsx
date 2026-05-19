@@ -513,6 +513,8 @@ export default function FamilyLocationPage() {
             )}
           </div>
         </div>
+      )}
+      
       {showDeviceManager && (
         <DeviceManagerModal 
           familyId={familyId} 
