@@ -1,4 +1,4 @@
-﻿@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800;900&family=Inter:wght@300;400;500;600;700;800;900&family=Fredoka:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800;900&family=Inter:wght@300;400;500;600;700;800;900&family=Fredoka:wght@400;500;600;700&display=swap');
 
 :root {
   /* Brand palette */
@@ -2126,7 +2126,7 @@ tr:hover td { background: rgba(108,92,231,0.03); }
 /* ---- MEMBER LIST CARD ---- */
 .location-member-card {
   position: absolute;
-  bottom: 24px;
+  bottom: 40px; /* Margem de segurança para desktop */
   right: 24px;
   width: 320px;
   background: rgba(255,255,255,0.96);
@@ -2376,11 +2376,12 @@ tr:hover td { background: rgba(108,92,231,0.03); }
   .location-member-card {
     right: 0;
     left: 0;
-    bottom: 0;
+    bottom: 60px; /* Fica acima da bottom nav (60px) */
     width: 100%;
     max-height: 48vh;
     border-radius: 20px 20px 0 0;
     border-bottom: none;
+    box-shadow: 0 -4px 15px rgba(0,0,0,0.1);
   }
   .location-member-card.collapsed { transform: translateY(calc(100% - 50px)); }
   .location-alert-container { top: 58px; }
