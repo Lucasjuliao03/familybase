@@ -1,35 +1,18 @@
 /**
- * gradesHelpers.js — Lógica de cálculo de boletim escolar
+ * gradesHelpers.js — Lógica de cálculo de boletim escolar (Por Matéria)
  * Funções puras — sem chamadas à API, sem side-effects.
  */
 
-/** Rótulos padrão por modelo */
 export const DEFAULT_PERIOD_LABELS = {
   bimonthly: ['1º Bimestre', '2º Bimestre', '3º Bimestre', '4º Bimestre'],
   trimester:  ['1º Trimestre', '2º Trimestre', '3º Trimestre'],
 };
 
-/** Pontos padrão por período quando não há configuração salva */
 export const DEFAULT_PERIOD_POINTS = {
   bimonthly: 25,
   trimester:  33.33,
 };
 
-/**
- * Constrói a lista de períodos mesclando a configuração salva
- * com os valores padrão do modelo.
- *
- * @param {object} settings  – linha de school_grade_settings (pode ser null)
- * @param {object[]} periods – linhas de school_grade_periods para este aluno
- * @returns {Array<{
- *   number: number,
- *   label: string,
- *   total_points: number,
- *   approval_pct: number,
- *   weight: number,
- *   min_score: number  // pontos mínimos para aprovação neste período
- * }>}
- */
 export function buildPeriodConfig(settings, periods = []) {
   const model = settings?.evaluation_model ?? 'bimonthly';
   const count = model === 'trimester' ? 3 : 4;
@@ -54,87 +37,161 @@ export function buildPeriodConfig(settings, periods = []) {
 }
 
 /**
- * Agrupa notas por período e matéria, calculando totais e situação.
- *
- * @param {object[]} grades      – lista de notas do aluno
- * @param {object[]} periodCfg  – resultado de buildPeriodConfig()
- * @returns {object} boletim no formato:
- * {
- *   periods: [{
- *     ...cfg,
- *     obtained: number,     // pontos obtidos no período
- *     passed: boolean,      // atingiu min_score?
- *     subjects: {
- *       [subject]: { grades: [], total: number, avg: number }
- *     }
- *   }],
- *   overall: {
- *     totalObtained: number,
- *     totalMax: number,
- *     weightedAvg: number,  // 0-10
- *     passed: boolean,
- *     missing: number       // pontos faltantes para aprovação geral (0 se já passou)
- *   }
- * }
+ * Agrupa notas por matéria e depois por período.
  */
-export function buildBoletim(grades, periodCfg) {
-  const periods = periodCfg.map((cfg) => {
-    const periodGrades = grades.filter((g) => g.period_number === cfg.number);
+export function buildSubjectBoletim(grades, periodCfg, settings) {
+  const annualTotal = settings?.annual_total_points ?? 100;
+  const approvalPct = settings?.approval_pct ?? 60;
+  const minRequiredAnnual = (annualTotal * approvalPct) / 100;
 
-    // Agrupar por matéria
-    const subjects = {};
-    periodGrades.forEach((g) => {
-      if (!subjects[g.subject]) subjects[g.subject] = { grades: [], total: 0, max: 0 };
-      subjects[g.subject].grades.push(g);
-      subjects[g.subject].total += g.score ?? 0;
-      subjects[g.subject].max   += g.max_score ?? 10;
+  // Agrupar todas as notas por matéria
+  const bySubject = {};
+  grades.forEach(g => {
+    if (!bySubject[g.subject]) {
+      bySubject[g.subject] = { grades: [], teacher: g.teacher_name || '' };
+    }
+    bySubject[g.subject].grades.push(g);
+    if (g.teacher_name && !bySubject[g.subject].teacher) {
+      bySubject[g.subject].teacher = g.teacher_name;
+    }
+  });
+
+  const subjects = Object.entries(bySubject).map(([name, data]) => {
+    const subjectGrades = data.grades;
+    let obtainedAnnual = 0;
+    let maxEvaluatedAnnual = 0;
+
+    // Construir os períodos para esta matéria
+    const periods = periodCfg.map(cfg => {
+      const pGrades = subjectGrades.filter(g => g.period_number === cfg.number);
+      const scoredGrades = pGrades.filter(g => g.score != null);
+      
+      const obtained = scoredGrades.reduce((s, g) => s + g.score, 0);
+      const maxEvaluated = scoredGrades.reduce((s, g) => s + (g.max_score || 0), 0);
+      
+      obtainedAnnual += obtained;
+      maxEvaluatedAnnual += maxEvaluated;
+
+      return {
+        number: cfg.number,
+        label: cfg.label,
+        totalPoints: cfg.total_points,
+        minScore: cfg.min_score,
+        obtained,
+        maxEvaluated,
+        pct: maxEvaluated > 0 ? (obtained / maxEvaluated) * 100 : 0,
+        passed: obtained >= cfg.min_score,
+        hasData: scoredGrades.length > 0,
+        grades: pGrades
+      };
     });
 
-    // Calcular avg por matéria (0-10 proporcional)
-    Object.values(subjects).forEach((s) => {
-      s.avg = s.max > 0 ? (s.total / s.max) * 10 : null;
-    });
+    const missing = Math.max(0, minRequiredAnnual - obtainedAnnual);
+    // Pontos restantes que o aluno ainda pode disputar no ano
+    // Calculado como: Total Anual - (Soma dos pontos máximos de todas as avaliações já lançadas)
+    // Usamos maxEvaluatedAnnual como aproximação de "pontos já dados"
+    const remainingAnnualPoints = Math.max(0, annualTotal - maxEvaluatedAnnual);
+    
+    let requiredRate = 0;
+    if (missing > 0) {
+      requiredRate = remainingAnnualPoints > 0 ? (missing / remainingAnnualPoints) * 100 : Infinity;
+    }
 
-    const obtained = periodGrades.reduce((sum, g) => sum + (g.score ?? 0), 0);
+    let status = 'nodata';
+    let statusLabel = 'Sem Notas';
+    
+    if (maxEvaluatedAnnual > 0) {
+      if (obtainedAnnual >= minRequiredAnnual) {
+        status = 'approved';
+        statusLabel = 'Aprovado 🎉';
+      } else if (requiredRate > 100 || (missing > remainingAnnualPoints)) {
+        status = 'failed';
+        statusLabel = 'Reprovado ❌';
+      } else if (requiredRate > 75) {
+        status = 'risk';
+        statusLabel = 'Em Risco ⚠️';
+      } else if (requiredRate >= 50) {
+        status = 'attention';
+        statusLabel = 'Atenção 🟡';
+      } else {
+        status = 'comfortable';
+        statusLabel = 'Confortável 🟢';
+      }
+    }
+
+    const currentAvg = maxEvaluatedAnnual > 0 ? (obtainedAnnual / maxEvaluatedAnnual) * 10 : null;
+
     return {
-      ...cfg,
-      obtained,
-      passed: obtained >= cfg.min_score,
-      subjects,
+      name,
+      teacher: data.teacher,
+      obtained: obtainedAnnual,
+      maxEvaluated: maxEvaluatedAnnual,
+      annualTotal,
+      minRequiredAnnual,
+      missing,
+      remainingAnnualPoints,
+      requiredRate,
+      status,
+      statusLabel,
+      currentAvg,
+      periods
     };
   });
 
-  // Média ponderada geral (0-10)
-  const totalWeight   = periodCfg.reduce((s, c) => s + c.weight, 0);
-  const weightedSum   = periods.reduce((s, p) => {
-    const pct = p.total_points > 0 ? (p.obtained / p.total_points) * 10 : 0;
-    return s + pct * p.weight;
-  }, 0);
-  const weightedAvg   = totalWeight > 0 ? weightedSum / totalWeight : 0;
+  // Calcular métricas gerais
+  let sumAvg = 0;
+  let countAvg = 0;
+  let subjectsApproved = 0;
+  let subjectsAttention = 0;
+  let subjectsRisk = 0;
+  let subjectsFailed = 0;
 
-  const totalObtained = periods.reduce((s, p) => s + p.obtained, 0);
-  const totalMax      = periodCfg.reduce((s, c) => s + c.total_points, 0);
+  subjects.forEach(s => {
+    if (s.currentAvg !== null) {
+      sumAvg += s.currentAvg;
+      countAvg++;
+    }
+    if (s.status === 'approved' || s.status === 'comfortable') subjectsApproved++;
+    else if (s.status === 'attention') subjectsAttention++;
+    else if (s.status === 'risk') subjectsRisk++;
+    else if (s.status === 'failed') subjectsFailed++;
+  });
 
-  // Aprovação geral: todos os períodos aprovados OU média ponderada ≥ 5 (padrão MEC)
-  const allPassed     = periods.every((p) => p.passed);
-  const minWeightedAvg = 5; // mínimo para aprovação pela média
-  const passed        = allPassed || weightedAvg >= minWeightedAvg;
-  const missing       = passed ? 0 : Math.max(0, minWeightedAvg - weightedAvg);
+  const overallAvg = countAvg > 0 ? sumAvg / countAvg : null;
 
-  return { periods, overall: { totalObtained, totalMax, weightedAvg, passed, missing } };
+  return {
+    subjects,
+    overall: {
+      avg: overallAvg,
+      approved: subjectsApproved,
+      attention: subjectsAttention,
+      risk: subjectsRisk,
+      failed: subjectsFailed,
+      totalSubjects: subjects.length
+    }
+  };
 }
 
-/** Cor semântica baseada em percentual de aprovação */
-export function scoreColor(obtained, total_points, approval_pct = 60) {
-  if (total_points <= 0) return 'var(--text-muted)';
-  const pct = (obtained / total_points) * 100;
-  if (pct >= approval_pct) return 'var(--success)';
-  if (pct >= approval_pct * 0.8) return '#F97316';
-  return 'var(--danger)';
+export function scoreColorByStatus(status) {
+  switch (status) {
+    case 'approved':
+    case 'comfortable': return 'var(--success)';
+    case 'attention': return '#F59E0B'; // amber-500
+    case 'risk':
+    case 'failed': return 'var(--danger)';
+    default: return 'var(--text-muted)';
+  }
 }
 
-/** Percentual visual (0-100) para barra de progresso */
-export function scorePct(obtained, total_points) {
-  if (!total_points) return 0;
-  return Math.min(100, (obtained / total_points) * 100);
+export function statusBadgeStyle(status) {
+  const base = { padding: '4px 8px', borderRadius: '6px', fontSize: '0.75rem', fontWeight: 700, display: 'inline-block' };
+  switch (status) {
+    case 'approved':
+    case 'comfortable': return { ...base, background: 'rgba(34,197,94,0.1)', color: 'var(--success)', border: '1px solid rgba(34,197,94,0.2)' };
+    case 'attention': return { ...base, background: 'rgba(245,158,11,0.1)', color: '#D97706', border: '1px solid rgba(245,158,11,0.2)' };
+    case 'risk':
+    case 'failed': return { ...base, background: 'rgba(239,68,68,0.1)', color: 'var(--danger)', border: '1px solid rgba(239,68,68,0.2)' };
+    default: return { ...base, background: 'var(--bg-hover)', color: 'var(--text-muted)', border: '1px solid var(--border)' };
+  }
 }
+

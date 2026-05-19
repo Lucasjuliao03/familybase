@@ -29,7 +29,7 @@ function ScoreBar({ value, max, minAvg }) {
   );
 }
 
-import { buildPeriodConfig, buildBoletim, scoreColor, scorePct } from '../../lib/gradesHelpers';
+import { buildPeriodConfig, buildSubjectBoletim, scoreColorByStatus, statusBadgeStyle } from '../../lib/gradesHelpers';
 
 export default function GradeTracker() {
   const { t } = useLanguage();
@@ -243,81 +243,125 @@ export default function GradeTracker() {
             const childSettings = settings[filterChild] || { evaluation_model: 'bimonthly', approval_pct: 60 };
             const childPeriods = periods[filterChild] || [];
             const pConfig = buildPeriodConfig(childSettings, childPeriods);
-            const boletim = buildBoletim(selectedChildGrades, pConfig);
+            const boletim = buildSubjectBoletim(selectedChildGrades, pConfig, childSettings);
 
             return (
               <>
-                {/* Resumo Geral */}
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: 12, marginBottom: 20 }}>
-                  <div className="stat-card" style={{ padding: '14px 16px' }}>
-                    <div style={{ fontSize: '0.72rem', color: 'var(--text-light)', marginBottom: 4 }}>Média Final</div>
-                    <div style={{ fontWeight: 800, fontSize: '1.6rem', color: boletim.overall.passed ? 'var(--success)' : 'var(--text)' }}>
-                      {boletim.overall.weightedAvg.toFixed(1)}
+                {/* Resumo Geral Premium */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12, marginBottom: 24 }}>
+                  <div className="stat-card" style={{ padding: '16px' }}>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-light)', marginBottom: 4 }}>Média Geral</div>
+                    <div style={{ fontWeight: 800, fontSize: '1.8rem', color: 'var(--primary)' }}>
+                      {boletim.overall.avg !== null ? boletim.overall.avg.toFixed(1) : '-'}
                     </div>
                   </div>
-                  <div className="stat-card" style={{ padding: '14px 16px' }}>
-                    <div style={{ fontSize: '0.72rem', color: 'var(--text-light)', marginBottom: 4 }}>Pontos Acumulados</div>
-                    <div style={{ fontWeight: 800, fontSize: '1.6rem' }}>
-                      {boletim.overall.totalObtained.toFixed(1)}
+                  <div className="stat-card" style={{ padding: '16px', borderColor: 'var(--success)', background: 'rgba(34,197,94,0.03)' }}>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--success)', marginBottom: 4 }}>Aprovado/Confortável</div>
+                    <div style={{ fontWeight: 800, fontSize: '1.5rem', color: 'var(--success)' }}>
+                      {boletim.overall.approved} <span style={{ fontSize: '0.8rem', fontWeight: 500 }}>matéria(s)</span>
                     </div>
-                    <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>de {boletim.overall.totalMax}</div>
                   </div>
-                  {boletim.overall.missing > 0 && (
-                    <div className="stat-card" style={{ padding: '14px 16px', borderColor: '#F97316', background: 'rgba(249,115,22,0.05)' }}>
-                      <div style={{ fontSize: '0.72rem', color: '#F97316', marginBottom: 4 }}>Faltam na Média</div>
-                      <div style={{ fontWeight: 800, fontSize: '1.4rem', color: '#F97316' }}>{boletim.overall.missing.toFixed(1)}</div>
+                  {boletim.overall.attention > 0 && (
+                    <div className="stat-card" style={{ padding: '16px', borderColor: '#F59E0B', background: 'rgba(245,158,11,0.03)' }}>
+                      <div style={{ fontSize: '0.75rem', color: '#D97706', marginBottom: 4 }}>Em Atenção</div>
+                      <div style={{ fontWeight: 800, fontSize: '1.5rem', color: '#D97706' }}>
+                        {boletim.overall.attention} <span style={{ fontSize: '0.8rem', fontWeight: 500 }}>matéria(s)</span>
+                      </div>
                     </div>
                   )}
-                  {boletim.overall.passed && (
-                    <div className="stat-card" style={{ padding: '14px 16px', borderColor: 'var(--success)', background: 'rgba(34,197,94,0.05)' }}>
-                      <div style={{ fontSize: '0.72rem', color: 'var(--success)', marginBottom: 4 }}>Situação</div>
-                      <div style={{ fontWeight: 800, fontSize: '1.2rem', color: 'var(--success)', marginTop: 4 }}>Aprovado 🎉</div>
+                  {(boletim.overall.risk > 0 || boletim.overall.failed > 0) && (
+                    <div className="stat-card" style={{ padding: '16px', borderColor: 'var(--danger)', background: 'rgba(239,68,68,0.03)' }}>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--danger)', marginBottom: 4 }}>Em Risco/Reprovado</div>
+                      <div style={{ fontWeight: 800, fontSize: '1.5rem', color: 'var(--danger)' }}>
+                        {boletim.overall.risk + boletim.overall.failed} <span style={{ fontSize: '0.8rem', fontWeight: 500 }}>matéria(s)</span>
+                      </div>
                     </div>
                   )}
                 </div>
 
-                {/* Boletim Detalhado por Período */}
-                {boletim.periods.map((p) => (
-                  <div key={p.number} className="card mb-16" style={{ padding: '16px' }}>
-                    <div className="flex-between mb-12" style={{ borderBottom: '1px solid var(--border)', paddingBottom: 10 }}>
-                      <div>
-                        <h3 style={{ fontWeight: 700, fontSize: '1.1rem' }}>{p.label}</h3>
-                        <div style={{ fontSize: '0.8rem', color: 'var(--text-light)', marginTop: 2 }}>
-                          Meta: {p.min_score}pts ({p.approval_pct}%) • Peso: {p.weight}
-                        </div>
-                      </div>
-                      <div style={{ textAlign: 'right' }}>
-                        <div style={{ fontWeight: 800, fontSize: '1.2rem', color: scoreColor(p.obtained, p.total_points, p.approval_pct) }}>
-                          {p.obtained.toFixed(1)} <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>/ {p.total_points}pts</span>
-                        </div>
-                        <div style={{ fontSize: '0.8rem', color: p.passed ? 'var(--success)' : 'var(--danger)', fontWeight: 600 }}>
-                          {p.passed ? 'Atingiu a meta' : 'Abaixo da meta'}
-                        </div>
-                      </div>
-                    </div>
+                {/* Resumo para os Pais */}
+                <div className="card mb-20" style={{ padding: 16, background: 'var(--bg-hover)' }}>
+                  <h3 style={{ fontSize: '1rem', fontWeight: 700, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    💡 Resumo para os Pais
+                  </h3>
+                  <p style={{ fontSize: '0.9rem', color: 'var(--text-light)', lineHeight: 1.5 }}>
+                    Seu filho(a) tem <strong>{boletim.overall.totalSubjects} matérias</strong> registradas. 
+                    {' '}Está tranquilo(a) em <strong>{boletim.overall.approved}</strong>, 
+                    {' '}precisa de atenção em <strong>{boletim.overall.attention}</strong> 
+                    {' '}e está em risco em <strong>{boletim.overall.risk + boletim.overall.failed}</strong>.
+                    {boletim.overall.risk > 0 ? ' Acompanhe as matérias em vermelho mais de perto nesta semana!' : ''}
+                  </p>
+                </div>
 
-                    {/* Matérias neste período */}
-                    {Object.keys(p.subjects).length === 0 ? (
-                      <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', textAlign: 'center', padding: '10px 0' }}>Nenhuma nota registrada neste período.</div>
-                    ) : (
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 10 }}>
-                        {Object.entries(p.subjects).map(([subj, data]) => (
-                          <div key={subj} style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 12px' }}>
-                            <div className="flex-between mb-6">
-                              <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>{subj}</span>
-                              <span style={{ fontWeight: 800, fontSize: '0.95rem', color: 'var(--primary)' }}>
-                                {data.total.toFixed(1)} <span style={{ fontSize: '0.75rem', fontWeight: 400, color: 'var(--text-muted)' }}>/{data.max}</span>
+                {/* Grid de Matérias */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 16 }}>
+                  {boletim.subjects.map((subj) => (
+                    <div key={subj.name} className="card" style={{ padding: 0, overflow: 'hidden', borderLeft: `4px solid ${scoreColorByStatus(subj.status)}` }}>
+                      
+                      {/* Header da Matéria */}
+                      <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', background: 'var(--bg)' }}>
+                        <div className="flex-between mb-8">
+                          <div>
+                            <h3 style={{ fontWeight: 800, fontSize: '1.2rem', marginBottom: 2 }}>{subj.name}</h3>
+                            {subj.teacher && <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Prof. {subj.teacher}</div>}
+                          </div>
+                          <div style={statusBadgeStyle(subj.status)}>{subj.statusLabel}</div>
+                        </div>
+
+                        {/* Progresso Anual */}
+                        {subj.maxEvaluated > 0 && (
+                          <div style={{ marginTop: 12 }}>
+                            <div className="flex-between" style={{ fontSize: '0.8rem', marginBottom: 4 }}>
+                              <span style={{ color: 'var(--text-light)' }}>
+                                Acumulado: <strong>{subj.obtained.toFixed(1)}</strong> <span style={{fontSize:'0.7rem'}}>/ {subj.maxEvaluated.toFixed(1)} avaliados</span>
                               </span>
+                              <span style={{ fontWeight: 600, color: 'var(--text)' }}>Média: {subj.currentAvg?.toFixed(1)}</span>
                             </div>
-                            <div style={{ fontSize: '0.75rem', color: 'var(--text-light)' }}>
-                              Média: {data.avg !== null ? data.avg.toFixed(1) : '-'} • {data.grades.length} nota(s)
+                            
+                            {subj.status !== 'approved' && subj.missing > 0 && subj.remainingAnnualPoints > 0 && (
+                              <div style={{ fontSize: '0.75rem', marginTop: 8, padding: '8px 10px', background: 'var(--bg-hover)', borderRadius: 6 }}>
+                                <span style={{ color: 'var(--text-light)' }}>Para aprovação anual, precisa de </span>
+                                <strong style={{ color: scoreColorByStatus(subj.status) }}>{subj.missing.toFixed(1)}pts</strong>
+                                <span style={{ color: 'var(--text-light)' }}> nos {subj.remainingAnnualPoints.toFixed(1)}pts restantes ({subj.requiredRate.toFixed(0)}% de aproveitamento).</span>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Lista de Períodos */}
+                      <div style={{ padding: '12px 20px' }}>
+                        {subj.periods.map(p => (
+                          <div key={p.number} className="flex-between" style={{ padding: '8px 0', borderBottom: '1px dashed var(--border)' }}>
+                            <div>
+                              <div style={{ fontSize: '0.85rem', fontWeight: 600 }}>{p.label}</div>
+                              <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                                {p.hasData ? `${p.grades.length} nota(s)` : 'Sem notas'}
+                              </div>
                             </div>
+                            {p.hasData ? (
+                              <div style={{ textAlign: 'right' }}>
+                                <div style={{ fontWeight: 700, fontSize: '1rem', color: p.passed ? 'var(--success)' : 'var(--danger)' }}>
+                                  {p.obtained.toFixed(1)} <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 400 }}>/ {p.maxEvaluated}</span>
+                                </div>
+                                <div style={{ fontSize: '0.7rem', color: 'var(--text-light)' }}>{p.pct.toFixed(0)}%</div>
+                              </div>
+                            ) : (
+                              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>-</div>
+                            )}
                           </div>
                         ))}
                       </div>
-                    )}
-                  </div>
-                ))}
+
+                    </div>
+                  ))}
+                  
+                  {boletim.subjects.length === 0 && (
+                    <div style={{ gridColumn: '1 / -1', textAlign: 'center', padding: 40, color: 'var(--text-light)' }}>
+                      Nenhuma matéria registrada. Adicione notas para começar!
+                    </div>
+                  )}
+                </div>
               </>
             );
           })()}
