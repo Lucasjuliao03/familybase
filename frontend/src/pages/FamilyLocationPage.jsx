@@ -355,8 +355,8 @@ export default function FamilyLocationPage() {
       <div className="location-top-bar" style={{ flexWrap: 'wrap', gap: '10px' }}>
         <h1 className="location-top-title">📍 Localização</h1>
         
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', pointerEvents: 'auto' }}>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', pointerEvents: 'auto' }}>
             <select 
               className="form-input" 
               style={{ padding: '6px 12px', width: 'auto', minWidth: 120, fontSize: '0.8rem', pointerEvents: 'auto' }}
