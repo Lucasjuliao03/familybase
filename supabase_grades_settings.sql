@@ -17,6 +17,11 @@ CREATE TABLE school_grade_settings (
   annual_total_points numeric NOT NULL DEFAULT 100,
   -- Porcentagem de aprovação global (ex: 60 = 60%)
   approval_pct        numeric NOT NULL DEFAULT 60,
+  -- Meta do pai (ex: 80 = 80%) para eventuais recompensas
+  goal_pct            numeric NOT NULL DEFAULT 80,
+  -- Limiares para cálculo de risco (em % de aproveitamento necessário)
+  attention_pct       numeric NOT NULL DEFAULT 50,
+  risk_pct            numeric NOT NULL DEFAULT 75,
   created_at          timestamptz NOT NULL DEFAULT now(),
   updated_at          timestamptz NOT NULL DEFAULT now(),
   UNIQUE (family_id, child_id)

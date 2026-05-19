@@ -42,7 +42,12 @@ export function buildPeriodConfig(settings, periods = []) {
 export function buildSubjectBoletim(grades, periodCfg, settings) {
   const annualTotal = settings?.annual_total_points ?? 100;
   const approvalPct = settings?.approval_pct ?? 60;
+  const goalPct = settings?.goal_pct ?? 80;
+  const attentionPct = settings?.attention_pct ?? 50;
+  const riskPct = settings?.risk_pct ?? 75;
+
   const minRequiredAnnual = (annualTotal * approvalPct) / 100;
+  const goalRequiredAnnual = (annualTotal * goalPct) / 100;
 
   // Agrupar todas as notas por matéria
   const bySubject = {};
@@ -87,9 +92,7 @@ export function buildSubjectBoletim(grades, periodCfg, settings) {
     });
 
     const missing = Math.max(0, minRequiredAnnual - obtainedAnnual);
-    // Pontos restantes que o aluno ainda pode disputar no ano
-    // Calculado como: Total Anual - (Soma dos pontos máximos de todas as avaliações já lançadas)
-    // Usamos maxEvaluatedAnnual como aproximação de "pontos já dados"
+    const missingGoal = Math.max(0, goalRequiredAnnual - obtainedAnnual);
     const remainingAnnualPoints = Math.max(0, annualTotal - maxEvaluatedAnnual);
     
     let requiredRate = 0;
@@ -107,10 +110,10 @@ export function buildSubjectBoletim(grades, periodCfg, settings) {
       } else if (requiredRate > 100 || (missing > remainingAnnualPoints)) {
         status = 'failed';
         statusLabel = 'Reprovado ❌';
-      } else if (requiredRate > 75) {
+      } else if (requiredRate > riskPct) {
         status = 'risk';
         statusLabel = 'Em Risco ⚠️';
-      } else if (requiredRate >= 50) {
+      } else if (requiredRate >= attentionPct) {
         status = 'attention';
         statusLabel = 'Atenção 🟡';
       } else {
@@ -120,6 +123,7 @@ export function buildSubjectBoletim(grades, periodCfg, settings) {
     }
 
     const currentAvg = maxEvaluatedAnnual > 0 ? (obtainedAnnual / maxEvaluatedAnnual) * 10 : null;
+    const goalReached = obtainedAnnual >= goalRequiredAnnual;
 
     return {
       name,
@@ -128,12 +132,15 @@ export function buildSubjectBoletim(grades, periodCfg, settings) {
       maxEvaluated: maxEvaluatedAnnual,
       annualTotal,
       minRequiredAnnual,
+      goalRequiredAnnual,
       missing,
+      missingGoal,
       remainingAnnualPoints,
       requiredRate,
       status,
       statusLabel,
       currentAvg,
+      goalReached,
       periods
     };
   });
@@ -145,6 +152,7 @@ export function buildSubjectBoletim(grades, periodCfg, settings) {
   let subjectsAttention = 0;
   let subjectsRisk = 0;
   let subjectsFailed = 0;
+  let subjectsGoalReached = 0;
 
   subjects.forEach(s => {
     if (s.currentAvg !== null) {
@@ -155,6 +163,8 @@ export function buildSubjectBoletim(grades, periodCfg, settings) {
     else if (s.status === 'attention') subjectsAttention++;
     else if (s.status === 'risk') subjectsRisk++;
     else if (s.status === 'failed') subjectsFailed++;
+    
+    if (s.goalReached) subjectsGoalReached++;
   });
 
   const overallAvg = countAvg > 0 ? sumAvg / countAvg : null;
@@ -167,6 +177,7 @@ export function buildSubjectBoletim(grades, periodCfg, settings) {
       attention: subjectsAttention,
       risk: subjectsRisk,
       failed: subjectsFailed,
+      goalReached: subjectsGoalReached,
       totalSubjects: subjects.length
     }
   };

@@ -112,20 +112,53 @@ export default function GradeTracker() {
 
   // (calcChildMetrics removed)
 
-  const handleCreate = async (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     try {
-      await api.post('/grades', {
+      const payload = {
         ...form,
-        score: parseFloat(form.score),
+        score: form.score !== '' ? parseFloat(form.score) : null,
         max_score: parseFloat(form.max_score),
         period_number: Number(form.period_number),
         period_type: activeSettings.evaluation_model,
-      });
-      toast.success(t('grade_added'));
+      };
+
+      if (form.id) {
+        await api.put(`/grades/${form.id}`, payload);
+        toast.success(t('grade_updated', 'Nota atualizada!'));
+      } else {
+        await api.post('/grades', payload);
+        toast.success(t('grade_added', 'Nota cadastrada!'));
+      }
+      
       setShowModal(false);
       loadBundle();
-      setForm({ subject: '', type: 'test', score: '', max_score: 10, concept: '', observation: '', date: '', child_id: '', period_number: 1 });
+      setForm({ id: null, subject: '', type: 'test', score: '', max_score: 10, concept: '', observation: '', date: '', child_id: '', period_number: 1 });
+    } catch { toast.error(t('error_occurred')); }
+  };
+
+  const handleEdit = (grade) => {
+    setForm({
+      id: grade.id,
+      subject: grade.subject || '',
+      type: grade.type || 'test',
+      score: grade.score != null ? grade.score : '',
+      max_score: grade.max_score || 10,
+      concept: grade.concept || '',
+      observation: grade.observation || '',
+      date: grade.date ? grade.date.split('T')[0] : '',
+      child_id: grade.child_id || '',
+      period_number: grade.period_number || 1
+    });
+    setShowModal(true);
+  };
+
+  const handleDelete = async (id) => {
+    if (!window.confirm(t('confirm_delete', 'Tem certeza que deseja excluir esta nota?'))) return;
+    try {
+      await api.delete(`/grades/${id}`);
+      toast.success(t('grade_deleted', 'Nota excluída!'));
+      loadBundle();
     } catch { toast.error(t('error_occurred')); }
   };
 
@@ -133,7 +166,7 @@ export default function GradeTracker() {
     if (!filterChild) { toast.error('Selecione um aluno primeiro.'); return; }
     setSavingSettings(true);
     try {
-      const { evaluation_model, periods: formPeriods, approval_pct } = settingsForm;
+      const { evaluation_model, periods: formPeriods, approval_pct, goal_pct, attention_pct, risk_pct } = settingsForm;
       const count = evaluation_model === 'trimester' ? 3 : 4;
       const validPeriods = formPeriods.slice(0, count);
       
@@ -146,6 +179,9 @@ export default function GradeTracker() {
         periods_count: count,
         annual_total_points: totalPoints,
         approval_pct: Number(approval_pct),
+        goal_pct: Number(goal_pct),
+        attention_pct: Number(attention_pct),
+        risk_pct: Number(risk_pct),
       };
       const { error: err1 } = await supabase.from('school_grade_settings').upsert(payload, { onConflict: 'family_id,child_id' });
       if (err1) throw err1;
@@ -165,7 +201,7 @@ export default function GradeTracker() {
         if (err2) throw err2;
       }
 
-      toast.success('Configuração salva!');
+      toast.success(t('settings_saved', 'Configuração salva!'));
       loadBundle();
     } catch (e) { toast.error(e.message || t('error_occurred')); }
     setSavingSettings(false);
@@ -174,11 +210,14 @@ export default function GradeTracker() {
   // Quando troca filho ou modelo, atualiza o form
   useEffect(() => {
     if (!filterChild) return;
-    const s = settings[filterChild] || { evaluation_model: 'bimonthly', approval_pct: 60 };
+    const s = settings[filterChild] || { evaluation_model: 'bimonthly', approval_pct: 60, goal_pct: 80, attention_pct: 50, risk_pct: 75 };
     const pCfg = buildPeriodConfig(s, periods[filterChild] || []);
     setSettingsForm({ 
       evaluation_model: s.evaluation_model, 
       approval_pct: s.approval_pct || 60,
+      goal_pct: s.goal_pct || 80,
+      attention_pct: s.attention_pct || 50,
+      risk_pct: s.risk_pct || 75,
       periods: pCfg 
     });
   }, [filterChild, settings, periods]);
@@ -376,11 +415,12 @@ export default function GradeTracker() {
               <tr>
                 <th>{t('subject')}</th><th>{t('select_child')}</th><th>Período</th>
                 <th>{t('grade_type')}</th><th>{t('score')}</th><th>{t('date')}</th><th>{t('observation')}</th>
+                <th style={{ width: 80, textAlign: 'center' }}>{t('actions', 'Ações')}</th>
               </tr>
             </thead>
             <tbody>
               {filteredGrades.length === 0 ? (
-                <tr><td colSpan={7} style={{ textAlign: 'center', padding: 40, color: 'var(--text-light)' }}>{t('no_grades')}</td></tr>
+                <tr><td colSpan={8} style={{ textAlign: 'center', padding: 40, color: 'var(--text-light)' }}>{t('no_grades')}</td></tr>
               ) : filteredGrades.map((g) => (
                 <tr key={g.id}>
                   <td data-label={t('subject')}><strong>{g.subject}</strong></td>
@@ -406,6 +446,16 @@ export default function GradeTracker() {
                   </td>
                   <td data-label={t('date')}>{g.date ? new Date(g.date + 'T12:00:00').toLocaleDateString('pt-BR') : '-'}</td>
                   <td data-label={t('observation')} style={{ fontSize: '0.8rem', color: 'var(--text-light)' }}>{g.observation || '-'}</td>
+                  <td data-label={t('actions', 'Ações')} style={{ textAlign: 'center' }}>
+                    <div className="flex gap-4" style={{ justifyContent: 'center' }}>
+                      <button onClick={() => handleEdit(g)} className="btn btn-ghost btn-icon" title={t('edit', 'Editar')} style={{ width: 28, height: 28, padding: 0 }}>
+                        ✏️
+                      </button>
+                      <button onClick={() => handleDelete(g.id)} className="btn btn-ghost btn-icon" title={t('delete', 'Excluir')} style={{ width: 28, height: 28, padding: 0, color: 'var(--danger)' }}>
+                        🗑️
+                      </button>
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -442,13 +492,42 @@ export default function GradeTracker() {
                   </div>
                 </div>
 
-                <div className="form-group mb-24">
-                  <label className="form-label">Porcentagem Padrão para Aprovação Geral (%)</label>
-                  <input type="number" min="0" max="100" className="form-input" value={settingsForm.approval_pct || ''}
-                    onChange={(e) => setSettingsForm((p) => ({ ...p, approval_pct: e.target.value }))} />
-                  <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 4 }}>
-                    Essa porcentagem será aplicada a todos os períodos (ex: 60%).
-                  </p>
+                <div className="grid grid-2 mb-24">
+                  <div className="form-group">
+                    <label className="form-label">{t('school_approval_pct', 'Média da Escola (%)')}</label>
+                    <input type="number" min="0" max="100" className="form-input" value={settingsForm.approval_pct || ''}
+                      onChange={(e) => setSettingsForm((p) => ({ ...p, approval_pct: e.target.value }))} />
+                    <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 4 }}>
+                      Define se o aluno foi "Aprovado" no ano letivo.
+                    </p>
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">{t('parent_goal_pct', 'Meta do Gestor (%)')}</label>
+                    <input type="number" min="0" max="100" className="form-input" value={settingsForm.goal_pct || ''}
+                      onChange={(e) => setSettingsForm((p) => ({ ...p, goal_pct: e.target.value }))} />
+                    <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 4 }}>
+                      Meta de recompensa (independente da aprovação da escola).
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-2 mb-24">
+                  <div className="form-group">
+                    <label className="form-label">{t('attention_threshold', 'Alerta de Atenção (%)')}</label>
+                    <input type="number" min="0" max="100" className="form-input" value={settingsForm.attention_pct || ''}
+                      onChange={(e) => setSettingsForm((p) => ({ ...p, attention_pct: e.target.value }))} />
+                    <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 4 }}>
+                      Se faltarem notas que exijam mais que esse %, ficará em Atenção 🟡.
+                    </p>
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">{t('risk_threshold', 'Alerta de Risco (%)')}</label>
+                    <input type="number" min="0" max="100" className="form-input" value={settingsForm.risk_pct || ''}
+                      onChange={(e) => setSettingsForm((p) => ({ ...p, risk_pct: e.target.value }))} />
+                    <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 4 }}>
+                      Se faltarem notas que exijam mais que esse %, ficará em Risco ⚠️.
+                    </p>
+                  </div>
                 </div>
 
                 <h4 style={{ fontWeight: 600, marginBottom: 12, borderBottom: '1px solid var(--border)', paddingBottom: 8 }}>
@@ -502,7 +581,7 @@ export default function GradeTracker() {
               <h2 className="modal-title">{t('add_grade')}</h2>
               <button className="modal-close" onClick={() => setShowModal(false)}>✕</button>
             </div>
-            <form onSubmit={handleCreate}>
+            <form onSubmit={handleSubmit}>
               <div className="grid grid-2">
                 <div className="form-group">
                   <label className="form-label">{t('select_child')} *</label>

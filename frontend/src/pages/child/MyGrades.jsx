@@ -178,17 +178,29 @@ export default function MyGrades() {
                     </span>
                     <span style={{ fontWeight: 600, color: 'var(--text)' }}>Média Atual: {subj.currentAvg?.toFixed(1)}</span>
                   </div>
-                  
                   {subj.status === 'approved' && (
                     <div style={{ fontSize: '0.8rem', color: 'var(--success)', padding: '8px 10px', background: 'rgba(34,197,94,0.1)', borderRadius: 6, fontWeight: 500 }}>
-                      🎉 Parabéns! Você já garantiu sua aprovação no ano.
+                      🎉 {t('approved_school', 'Você garantiu a média da escola!')}
                     </div>
                   )}
                   {subj.status !== 'approved' && subj.missing > 0 && subj.remainingAnnualPoints > 0 && (
                     <div style={{ fontSize: '0.8rem', marginTop: 8, padding: '10px', background: 'var(--bg-hover)', borderRadius: 6, lineHeight: 1.4 }}>
-                      🎯 <strong>Sua Meta:</strong> Você precisa de <strong>{subj.missing.toFixed(1)}pts</strong> nos {subj.remainingAnnualPoints.toFixed(1)}pts restantes para fechar o ano acima da média. 
-                      {subj.requiredRate > 75 ? ' Foco total!' : ' Você consegue!'}
+                      🎯 <strong>{t('school_goal', 'Média da Escola')}:</strong> {t('need_points', 'Faltam')} <strong>{subj.missing.toFixed(1)}pts</strong> {t('in_remaining', 'nos')} {subj.remainingAnnualPoints.toFixed(1)}pts {t('remaining_points', 'restantes')}. 
+                      {subj.requiredRate > 75 ? ' ' + t('focus_hard', 'Foco total!') : ' ' + t('you_can_do_it', 'Você consegue!')}
                     </div>
+                  )}
+
+                  {/* Meta do Gestor/Pai */}
+                  {subj.goalReached ? (
+                    <div style={{ fontSize: '0.8rem', color: 'var(--primary)', padding: '8px 10px', background: 'rgba(99,102,241,0.1)', borderRadius: 6, fontWeight: 500, marginTop: 8 }}>
+                      ⭐ {t('goal_reached', 'Você atingiu a Meta do seu responsável! Parabéns!')}
+                    </div>
+                  ) : (
+                    subj.missingGoal > 0 && subj.remainingAnnualPoints > 0 && (
+                      <div style={{ fontSize: '0.8rem', marginTop: 8, padding: '10px', background: 'var(--bg-hover)', borderRadius: 6, lineHeight: 1.4, borderLeft: '3px solid var(--primary)' }}>
+                        ⭐ <strong>{t('parent_goal', 'Meta de Casa')}:</strong> {t('need_points', 'Faltam')} <strong>{subj.missingGoal.toFixed(1)}pts</strong> {t('to_reach_goal', 'para alcançar a meta do seu responsável!')}
+                      </div>
+                    )
                   )}
                 </div>
               ) : (
