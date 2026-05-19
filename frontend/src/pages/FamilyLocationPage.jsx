@@ -351,49 +351,47 @@ export default function FamilyLocationPage() {
         </div>
       )}
 
-      {/* Top bar overlay */}
-      <div className="location-top-bar" style={{ flexWrap: 'wrap', gap: '10px' }}>
-        <h1 className="location-top-title">📍 Localização</h1>
-        
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', pointerEvents: 'auto' }}>
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', pointerEvents: 'auto' }}>
-            <select 
-              className="form-input" 
-              style={{ padding: '6px 12px', width: 'auto', minWidth: 120, fontSize: '0.8rem', pointerEvents: 'auto' }}
+      {/* Top bar overlay — compact mobile-first */}
+      <div className="location-top-bar">
+        {/* Row 1: Title + action buttons */}
+        <div className="location-top-row">
+          <h1 className="location-top-title">📍 Localização</h1>
+          <div className="location-top-actions">
+            <select
+              className="location-filter-select"
               value={deviceFilter}
               onChange={(e) => setDeviceFilter(e.target.value)}
             >
-              <option value="all">Todos Dispositivos</option>
-              <option value="mobile">Apenas Celulares</option>
-              <option value="current">Meu Dispositivo</option>
+              <option value="all">Todos</option>
+              <option value="mobile">Celulares</option>
+              <option value="current">Este aparelho</option>
             </select>
-          </div>
-
-          <div className="location-top-actions" style={{ display: 'flex', gap: 8 }}>
             {canManageZones && (
               <button
-                className="location-btn-zone"
+                className="location-btn-icon"
+                onClick={toggleShareWithChildren}
+                disabled={togglingVisibility}
+                title={isSharingWithChildren ? 'Visível para filhos' : 'Oculto para filhos'}
+              >
+                {isSharingWithChildren ? '👁️' : '🙈'}
+              </button>
+            )}
+            {canManageZones && (
+              <button
+                className="location-btn-icon"
                 onClick={() => setShowDeviceManager(true)}
-                title="Gerir Dispositivos da Família"
-                style={{ padding: '8px 12px' }}
+                title="Gerir Dispositivos"
               >
                 ⚙️
               </button>
             )}
             {canManageZones && (
               <button
-                className="location-btn-zone"
-                onClick={toggleShareWithChildren}
-                disabled={togglingVisibility}
-                title="Alternar visibilidade para os filhos"
-                style={{ padding: '8px 12px' }}
+                className="location-btn-icon location-btn-add"
+                onClick={() => setIsDrawingMode(true)}
+                title="Adicionar Zona Segura"
               >
-                {isSharingWithChildren ? '👁️' : '🙈'}
-              </button>
-            )}
-            {canManageZones && (
-              <button className="location-btn-zone" onClick={() => setIsDrawingMode(true)}>
-                <span style={{ marginRight: 6 }}>+</span> Zona
+                + Zona
               </button>
             )}
           </div>
