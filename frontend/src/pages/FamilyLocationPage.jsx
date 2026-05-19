@@ -11,6 +11,16 @@ import { getDeviceId } from '../lib/device';
 const ZONE_TYPE_ICONS = { home: '🏠', school: '🏫', work: '💼', other: '📍' };
 const ZONE_TYPE_COLORS = { home: '#10B981', school: '#3B82F6', work: '#F97316', other: '#8B5CF6' };
 
+function haversineMeters(lat1, lon1, lat2, lon2) {
+  if (!lat1 || !lat2) return Infinity;
+  const R = 6371000;
+  const toRad = (d) => (d * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
 /**
  * Calcula se um ponto está dentro de uma zona (Haversine < raio).
  */
@@ -212,6 +222,26 @@ export default function FamilyLocationPage() {
       return loc.device_id === devId;
     }
     return true; // 'all'
+  }).map((loc) => {
+    // Computar status dinâmico com base nas zonas e velocidade
+    let computed_status = 'stopped';
+    let computed_zone_name = null;
+    
+    if (loc.speed > 1.5) {
+      computed_status = 'moving';
+    } else {
+      // Procurar se está dentro de alguma zona
+      for (const zone of zones) {
+        const dist = haversineMeters(loc.latitude, loc.longitude, zone.latitude, zone.longitude);
+        if (dist <= (zone.radius_meters || 200)) {
+          computed_status = zone.type;
+          computed_zone_name = zone.name;
+          break;
+        }
+      }
+    }
+    
+    return { ...loc, computed_status, computed_zone_name };
   });
 
   const isLoading = locsLoading && zonesLoading;
@@ -292,43 +322,41 @@ export default function FamilyLocationPage() {
       )}
 
       {/* Top bar overlay */}
-      <div className="location-top-bar">
+      <div className="location-top-bar" style={{ flexWrap: 'wrap', gap: '10px' }}>
         <h1 className="location-top-title">📍 Localização</h1>
         
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
-          <select 
-            className="form-input" 
-            style={{ padding: '6px 12px', width: 'auto', minWidth: 120, fontSize: '0.8rem' }}
-            value={deviceFilter}
-            onChange={(e) => setDeviceFilter(e.target.value)}
-          >
-            <option value="all">Todos Dispositivos</option>
-            <option value="mobile">Apenas Celulares</option>
-            <option value="current">Meu Dispositivo</option>
-          </select>
-        </div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            <select 
+              className="form-input" 
+              style={{ padding: '6px 12px', width: 'auto', minWidth: 120, fontSize: '0.8rem', pointerEvents: 'auto' }}
+              value={deviceFilter}
+              onChange={(e) => setDeviceFilter(e.target.value)}
+            >
+              <option value="all">Todos Dispositivos</option>
+              <option value="mobile">Apenas Celulares</option>
+              <option value="current">Meu Dispositivo</option>
+            </select>
+          </div>
 
-        <div className="location-top-actions" style={{ display: 'flex', gap: 8 }}>
-          {canManageZones && (
-            <button
-              className="location-btn-zone"
-              onClick={toggleShareWithChildren}
-              disabled={togglingVisibility}
-              title="Alternar visibilidade para os filhos"
-              style={{ padding: '8px 12px' }}
-            >
-              {isSharingWithChildren ? '👁️ Visível' : '🙈 Oculto'}
-            </button>
-          )}
-          {canManageZones && (
-            <button
-              className="location-btn-zone"
-              onClick={() => setIsDrawingMode(true)}
-              title="Adicionar zona segura no mapa"
-            >
-              ＋ Zona
-            </button>
-          )}
+          <div className="location-top-actions" style={{ display: 'flex', gap: 8 }}>
+            {canManageZones && (
+              <button
+                className="location-btn-zone"
+                onClick={toggleShareWithChildren}
+                disabled={togglingVisibility}
+                title="Alternar visibilidade para os filhos"
+                style={{ padding: '8px 12px' }}
+              >
+                {isSharingWithChildren ? '👁️ Visível' : '🙈 Oculto'}
+              </button>
+            )}
+            {canManageZones && (
+              <button className="location-btn-zone" onClick={() => setIsDrawingMode(true)}>
+                <span style={{ marginRight: 6 }}>+</span> Zona Segura
+              </button>
+            )}
+          </div>
         </div>
       </div>
 

@@ -27,7 +27,9 @@ function formatDistance(lat1, lon1, lat2, lon2) {
 function MemberRow({ loc, isSelected, currentPosition, onClick }) {
   const user = loc.users || {};
   const name = user.name || 'Membro';
-  const status = STATUS_MAP[loc.status] || STATUS_MAP.moving;
+  
+  const currentStatusId = loc.computed_status || loc.status;
+  const status = STATUS_MAP[currentStatusId] || STATUS_MAP.stopped;
   const color = user.display_color || status.color;
   const avatarUrl = user.avatar_url || null;
   const emoji = avatarUrl ? null : (PRESET_EMOJIS[user.avatar_preset] || name[0]?.toUpperCase() || '👤');
@@ -63,7 +65,7 @@ function MemberRow({ loc, isSelected, currentPosition, onClick }) {
         </div>
         <div className="location-member-row-status">
           <span>{status.emoji}</span>
-          <span>{status.label}</span>
+          <span>{loc.computed_zone_name || status.label}</span>
           {dist && <span className="location-member-row-dist">· {dist}</span>}
         </div>
       </div>

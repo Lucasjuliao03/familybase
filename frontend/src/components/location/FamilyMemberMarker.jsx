@@ -15,7 +15,9 @@ const STATUS_MAP = {
   school: { label: 'Na escola', emoji: '🏫', color: '#3B82F6' },
   work: { label: 'No trabalho', emoji: '💼', color: '#F97316' },
   moving: { label: 'Em movimento', emoji: '🚶', color: '#8B5CF6' },
+  stopped: { label: 'Parado', emoji: '🧍', color: '#6366F1' },
   offline: { label: 'Offline', emoji: '⚫', color: '#94A3B8' },
+  other: { label: 'Na zona', emoji: '📍', color: '#8B5CF6' },
 };
 
 function formatTimeAgo(dateStr) {
@@ -35,9 +37,12 @@ function formatTimeAgo(dateStr) {
 export default function FamilyMemberMarker({ location, isSelected, isCurrentUser, onClick }) {
   const user = location.users || {};
   const name = user.name || 'Membro';
-  const status = STATUS_MAP[location.status] || STATUS_MAP.moving;
+  
+  // Usar status computado que considera zonas
+  const currentStatusId = location.computed_status || location.status;
+  const status = STATUS_MAP[currentStatusId] || STATUS_MAP.stopped;
   const color = user.display_color || status.color || '#6366F1';
-  const isMoving = location.status === 'moving';
+  const isMoving = currentStatusId === 'moving';
 
   const emoji = (() => {
     if (user.avatar_url) return null;
@@ -93,7 +98,7 @@ export default function FamilyMemberMarker({ location, isSelected, isCurrentUser
           </div>
           <div style={{ fontSize: '0.72rem', color: '#64748B', display: 'flex', alignItems: 'center', gap: 4, justifyContent: 'center', marginTop: 4 }}>
             <span>{status.emoji}</span>
-            <span>{status.label}</span>
+            <span>{location.computed_zone_name || status.label}</span>
           </div>
           <div style={{ fontSize: '0.65rem', color: '#94A3B8', marginTop: 2 }}>
             {formatTimeAgo(location.updated_at)}
