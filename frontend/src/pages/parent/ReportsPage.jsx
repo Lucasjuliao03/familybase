@@ -135,14 +135,17 @@ export default function ReportsPage() {
           <button key={c.id} className={`btn ${selectedChild === c.id ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setSelectedChild(c.id)}
             style={selectedChild === c.id ? {} : {borderLeft:`3px solid ${c.color}`}}>{c.name}</button>
         ))}
+        {children.length === 0 && <p style={{color:'var(--text-light)'}}>Nenhuma criança cadastrada.</p>}
       </div>
 
-      <div className="grid grid-4 mb-24">
-        <div className="stat-card"><div className="stat-icon" style={{background:'rgba(0,184,148,0.1)'}}>✅</div><div className="stat-info"><h3>{report.taskStats.approved}</h3><p>{t('approved')}</p></div></div>
-        <div className="stat-card"><div className="stat-icon" style={{background:'rgba(253,203,110,0.15)'}}>⏳</div><div className="stat-info"><h3>{report.taskStats.pending}</h3><p>{t('pending')}</p></div></div>
-        <div className="stat-card"><div className="stat-icon" style={{background:'rgba(108,92,231,0.1)'}}>⭐</div><div className="stat-info"><h3>{report.child.points}</h3><p>{t('total_points')}</p></div></div>
-        <div className="stat-card"><div className="stat-icon" style={{background:'rgba(232,67,147,0.1)'}}>🏅</div><div className="stat-info"><h3>{report.medals.length}</h3><p>{t('medals')}</p></div></div>
-      </div>
+      {report ? (
+        <>
+          <div className="grid grid-4 mb-24">
+            <div className="stat-card"><div className="stat-icon" style={{background:'rgba(0,184,148,0.1)'}}>✅</div><div className="stat-info"><h3>{report.taskStats?.approved || 0}</h3><p>{t('approved')}</p></div></div>
+            <div className="stat-card"><div className="stat-icon" style={{background:'rgba(253,203,110,0.15)'}}>⏳</div><div className="stat-info"><h3>{report.taskStats?.pending || 0}</h3><p>{t('pending')}</p></div></div>
+            <div className="stat-card"><div className="stat-icon" style={{background:'rgba(108,92,231,0.1)'}}>⭐</div><div className="stat-info"><h3>{report.child?.points || 0}</h3><p>{t('total_points')}</p></div></div>
+            <div className="stat-card"><div className="stat-icon" style={{background:'rgba(232,67,147,0.1)'}}>🏅</div><div className="stat-info"><h3>{report.medals?.length || 0}</h3><p>{t('medals')}</p></div></div>
+          </div>
 
       <div className="grid grid-2 mb-24">
         <div className="card">
@@ -179,8 +182,12 @@ export default function ReportsPage() {
               <span style={{fontSize:'0.75rem',color:'var(--text-light)'}}>{new Date(h.created_at).toLocaleDateString('pt-BR')}</span></div>
           </div>
           ))
-          : <p style={{color:'var(--text-light)'}}>{t('no_activity') || 'Sem actividade registada.'}</p>}
-      </div>
+        </>
+      ) : (
+        <div className="card">
+          <p style={{color:'var(--text-light)', textAlign:'center', padding: 40}}>Selecione uma criança ou aguarde o carregamento do relatório.</p>
+        </div>
+      )}
     </div>
   );
 }

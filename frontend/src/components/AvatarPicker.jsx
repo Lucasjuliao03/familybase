@@ -127,11 +127,11 @@ export default function AvatarPicker({ currentAvatarUrl, currentPreset, onSave, 
       {/* Picker Modal */}
       {open && (
         <>
-          <div style={{ position: 'fixed', inset: 0, zIndex: 999 }} onClick={() => setOpen(false)} />
+          <div style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(0,0,0,0.4)' }} onClick={() => setOpen(false)} />
           <div style={{
-            position: 'absolute', top: avatarSize + 8, left: '50%', transform: 'translateX(-50%)',
+            position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
             width: 320, background: 'var(--bg-card)', border: '1px solid var(--border)',
-            borderRadius: 'var(--radius)', boxShadow: 'var(--shadow-lg)', zIndex: 1000,
+            borderRadius: 'var(--radius)', boxShadow: 'var(--shadow-lg)', zIndex: 10000,
           }}>
             <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
               <strong style={{ fontSize: '0.9rem' }}>Escolher Avatar</strong>
