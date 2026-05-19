@@ -182,6 +182,8 @@ export default function ReportsPage() {
               <span style={{fontSize:'0.75rem',color:'var(--text-light)'}}>{new Date(h.created_at).toLocaleDateString('pt-BR')}</span></div>
           </div>
           ))
+          : <p style={{color:'var(--text-light)'}}>{t('no_activity') || 'Sem actividade registada.'}</p>}
+      </div>
         </>
       ) : (
         <div className="card">
