@@ -6,6 +6,7 @@ import { useFamilyLocations } from '../hooks/useFamilyLocations';
 import FamilyMap from '../components/location/FamilyMap';
 import MemberListCard from '../components/location/MemberListCard';
 import LocationAlertToast from '../components/location/LocationAlertToast';
+import DeviceManagerModal from '../components/location/DeviceManagerModal';
 import { getDeviceId } from '../lib/device';
 
 const ZONE_TYPE_ICONS = { home: '🏠', school: '🏫', work: '💼', other: '📍' };
@@ -64,6 +65,7 @@ export default function FamilyLocationPage() {
   const [savingZone, setSavingZone] = useState(false);
   const [togglingVisibility, setTogglingVisibility] = useState(false);
   const [deviceFilter, setDeviceFilter] = useState('all'); // 'all', 'mobile', 'current'
+  const [showDeviceManager, setShowDeviceManager] = useState(false);
 
   // Track zone occupancy para detectar enter/exit
   const zoneOccupancyRef = useRef(new Map());
@@ -85,13 +87,45 @@ export default function FamilyLocationPage() {
       } catch (_) {}
       setZonesLoading(false);
     })();
+    
+    // Pedir permissão de notificação nativa
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
   }, [familyId]);
+
+  // Função helper para disparar push notification
+  const firePushNotification = (title, body, icon) => {
+    if ('Notification' in window && Notification.permission === 'granted') {
+      try {
+        new Notification(title, { body, icon: '/vite.svg' });
+      } catch (e) {
+        console.error('Push notification falhou', e);
+      }
+    }
+  };
 
   // Detectar entrada/saída de zonas
   useEffect(() => {
     if (!zones.length || locMap.size === 0) return;
 
+    // Agrupar localizações por usuário para pegar apenas o dispositivo principal (evita conflitos)
+    const primaryLocations = new Map();
     locMap.forEach((loc) => {
+      const existing = primaryLocations.get(loc.user_id);
+      if (!existing) {
+        primaryLocations.set(loc.user_id, loc);
+      } else {
+        // Se o atual for o principal, ou se for mobile e o existente não for
+        if (loc.device?.is_primary_location_device) {
+          primaryLocations.set(loc.user_id, loc);
+        } else if (loc.device?.device_type === 'mobile' && !existing.device?.is_primary_location_device && existing.device?.device_type !== 'mobile') {
+          primaryLocations.set(loc.user_id, loc);
+        }
+      }
+    });
+
+    primaryLocations.forEach((loc) => {
       const uid = loc.user_id;
       const userName = loc.users?.name?.split(' ')[0] || 'Membro';
 
@@ -117,6 +151,8 @@ export default function FamilyLocationPage() {
             zoneName: zone.name,
             zoneIcon: zone.icon || ZONE_TYPE_ICONS[zone.type],
           }]);
+          
+          firePushNotification(`📍 ${userName} chegou`, `${userName} chegou em ${zone.name}`);
 
           // Log event
           supabase.from('location_events').insert({
@@ -128,14 +164,6 @@ export default function FamilyLocationPage() {
             longitude: loc.longitude,
           }).then(() => {});
 
-          // Auto-update status
-          if (zone.type === 'home' || zone.type === 'school' || zone.type === 'work') {
-            supabase.from('family_locations')
-              .update({ status: zone.type })
-              .eq('family_id', familyId)
-              .eq('user_id', uid)
-              .then(() => {});
-          }
         } else if (!inside && wasInside) {
           // EXITED zone
           zoneOccupancyRef.current.set(key, false);
@@ -147,6 +175,8 @@ export default function FamilyLocationPage() {
             zoneName: zone.name,
             zoneIcon: zone.icon || ZONE_TYPE_ICONS[zone.type],
           }]);
+          
+          firePushNotification(`👋 ${userName} saiu`, `${userName} saiu de ${zone.name}`);
 
           supabase.from('location_events').insert({
             family_id: familyId,
@@ -343,17 +373,27 @@ export default function FamilyLocationPage() {
             {canManageZones && (
               <button
                 className="location-btn-zone"
+                onClick={() => setShowDeviceManager(true)}
+                title="Gerir Dispositivos da Família"
+                style={{ padding: '8px 12px' }}
+              >
+                ⚙️
+              </button>
+            )}
+            {canManageZones && (
+              <button
+                className="location-btn-zone"
                 onClick={toggleShareWithChildren}
                 disabled={togglingVisibility}
                 title="Alternar visibilidade para os filhos"
                 style={{ padding: '8px 12px' }}
               >
-                {isSharingWithChildren ? '👁️ Visível' : '🙈 Oculto'}
+                {isSharingWithChildren ? '👁️' : '🙈'}
               </button>
             )}
             {canManageZones && (
               <button className="location-btn-zone" onClick={() => setIsDrawingMode(true)}>
-                <span style={{ marginRight: 6 }}>+</span> Zona Segura
+                <span style={{ marginRight: 6 }}>+</span> Zona
               </button>
             )}
           </div>
@@ -473,6 +513,11 @@ export default function FamilyLocationPage() {
             )}
           </div>
         </div>
+      {showDeviceManager && (
+        <DeviceManagerModal 
+          familyId={familyId} 
+          onClose={() => setShowDeviceManager(false)} 
+        />
       )}
     </div>
   );

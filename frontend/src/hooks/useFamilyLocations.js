@@ -40,7 +40,9 @@ export function useFamilyLocations({ familyId, enabled = true }) {
       (data || []).forEach((row) => {
         // Vincula a info do device se existir
         const devInfo = devMap.get(row.device_id);
-        locMap.set(row.device_id, { ...row, device: devInfo });
+        if (!devInfo || devInfo.is_location_enabled !== false) {
+          locMap.set(row.device_id, { ...row, device: devInfo });
+        }
       });
       setLocations(locMap);
       setError(null);
@@ -86,7 +88,12 @@ export function useFamilyLocations({ familyId, enabled = true }) {
             let deviceData = existing?.device;
 
             const nextRow = { ...row, users: usersData, device: deviceData };
-            next.set(row.device_id, nextRow);
+
+            if (deviceData && deviceData.is_location_enabled === false) {
+              next.delete(row.device_id);
+            } else {
+              next.set(row.device_id, nextRow);
+            }
 
             // Fetch fallback se faltar user info (como no fix anterior)
             if (!usersData) {
