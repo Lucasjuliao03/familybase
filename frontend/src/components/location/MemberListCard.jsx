@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { STATUS_MAP, formatTimeAgo } from './FamilyMemberMarker';
+import { publicAssetUrl } from '../../services/api';
 
 const PRESET_EMOJIS = {
   astronaut: '🚀', explorer: '🗺️', artist: '🎨', scientist: '🔬',
@@ -35,6 +36,9 @@ function MemberRow({ loc, isSelected, currentPosition, onClick }) {
     ? formatDistance(currentPosition.lat, currentPosition.lng, loc.latitude, loc.longitude)
     : '';
 
+  const deviceType = loc.device?.device_type || 'desktop';
+  const deviceIcon = deviceType === 'mobile' ? '📱' : deviceType === 'tablet' ? '💊' : '💻';
+
   return (
     <button
       className={`location-member-row ${isSelected ? 'active' : ''}`}
@@ -43,7 +47,7 @@ function MemberRow({ loc, isSelected, currentPosition, onClick }) {
     >
       <div className="location-member-row-avatar" style={{ borderColor: color, background: avatarUrl ? '#fff' : `${color}15` }}>
         {avatarUrl ? (
-          <img src={avatarUrl} alt="" />
+          <img src={avatarUrl.startsWith('http') ? avatarUrl : publicAssetUrl(avatarUrl)} alt="" />
         ) : (
           <span>{emoji}</span>
         )}
@@ -52,6 +56,11 @@ function MemberRow({ loc, isSelected, currentPosition, onClick }) {
 
       <div className="location-member-row-info">
         <div className="location-member-row-name">{name}</div>
+        <div className="location-member-row-status" style={{ fontSize: '0.7rem', color: '#64748B', display: 'flex', gap: 4, alignItems: 'center', marginBottom: 2 }}>
+          <span>{deviceIcon}</span>
+          <span>{loc.device?.device_name || 'Dispositivo'}</span>
+          {loc.source === 'approximate' && <span title="Localização imprecisa" style={{ color: '#F59E0B' }}>⚠️</span>}
+        </div>
         <div className="location-member-row-status">
           <span>{status.emoji}</span>
           <span>{status.label}</span>
@@ -110,7 +119,7 @@ export default function MemberListCard({
           )}
           {sorted.map((loc) => (
             <MemberRow
-              key={loc.user_id}
+              key={loc.device_id || loc.user_id + Math.random()}
               loc={loc}
               isSelected={selectedMemberId === loc.user_id}
               currentPosition={currentPosition}

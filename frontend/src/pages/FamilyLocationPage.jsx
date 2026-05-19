@@ -6,6 +6,7 @@ import { useFamilyLocations } from '../hooks/useFamilyLocations';
 import FamilyMap from '../components/location/FamilyMap';
 import MemberListCard from '../components/location/MemberListCard';
 import LocationAlertToast from '../components/location/LocationAlertToast';
+import { getDeviceId } from '../lib/device';
 
 const ZONE_TYPE_ICONS = { home: '🏠', school: '🏫', work: '💼', other: '📍' };
 const ZONE_TYPE_COLORS = { home: '#10B981', school: '#3B82F6', work: '#F97316', other: '#8B5CF6' };
@@ -52,6 +53,7 @@ export default function FamilyLocationPage() {
   const [zoneForm, setZoneForm] = useState({ name: '', type: 'home', radius_meters: 200, latitude: null, longitude: null });
   const [savingZone, setSavingZone] = useState(false);
   const [togglingVisibility, setTogglingVisibility] = useState(false);
+  const [deviceFilter, setDeviceFilter] = useState('all'); // 'all', 'mobile', 'current'
 
   // Track zone occupancy para detectar enter/exit
   const zoneOccupancyRef = useRef(new Map());
@@ -192,22 +194,31 @@ export default function FamilyLocationPage() {
     setZones((prev) => prev.filter((z) => z.id !== zoneId));
   };
 
-  // Convert Map to array and apply visibility rules
+  // Convert Map to array and apply visibility and device rules
   const locArray = Array.from(locMap.values()).filter((loc) => {
     // Gestores and Master can see everyone
-    if (userRole === 'parent' || userRole === 'master') return true;
-    
-    // Children and relatives can always see their own location
-    if (loc.user_id === userId) return true;
-    
-    // Other users are only visible if they share their location with children
-    return loc.share_with_children !== false;
+    let isVisible = false;
+    if (userRole === 'parent' || userRole === 'master') isVisible = true;
+    else if (loc.user_id === userId) isVisible = true;
+    else isVisible = loc.share_with_children !== false;
+
+    if (!isVisible) return false;
+
+    const devId = getDeviceId();
+    if (deviceFilter === 'mobile') {
+      return loc.device?.device_type === 'mobile';
+    }
+    if (deviceFilter === 'current') {
+      return loc.device_id === devId;
+    }
+    return true; // 'all'
   });
 
   const isLoading = locsLoading && zonesLoading;
   const canManageZones = userRole === 'parent' || userRole === 'master';
+  const currentDeviceId = getDeviceId();
 
-  const myLocation = locMap.get(userId);
+  const myLocation = locMap.get(currentDeviceId) || Array.from(locMap.values()).find(l => l.user_id === userId);
   const isSharingWithChildren = myLocation?.share_with_children ?? true;
 
   const toggleShareWithChildren = async () => {
@@ -283,6 +294,20 @@ export default function FamilyLocationPage() {
       {/* Top bar overlay */}
       <div className="location-top-bar">
         <h1 className="location-top-title">📍 Localização</h1>
+        
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
+          <select 
+            className="form-input" 
+            style={{ padding: '6px 12px', width: 'auto', minWidth: 120, fontSize: '0.8rem' }}
+            value={deviceFilter}
+            onChange={(e) => setDeviceFilter(e.target.value)}
+          >
+            <option value="all">Todos Dispositivos</option>
+            <option value="mobile">Apenas Celulares</option>
+            <option value="current">Meu Dispositivo</option>
+          </select>
+        </div>
+
         <div className="location-top-actions" style={{ display: 'flex', gap: 8 }}>
           {canManageZones && (
             <button

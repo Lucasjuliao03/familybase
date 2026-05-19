@@ -47,6 +47,9 @@ export default function FamilyMemberMarker({ location, isSelected, isCurrentUser
 
   const avatarUrl = user.avatar_url || null;
 
+  const deviceType = location.device?.device_type || 'desktop';
+  const deviceIcon = deviceType === 'mobile' ? '📱' : deviceType === 'tablet' ? '💊' : '💻';
+
   const icon = useMemo(() => {
     const pulse = isMoving || isSelected ? 'location-marker-pulse' : '';
     const selected = isSelected ? 'location-marker-selected' : '';
@@ -60,6 +63,7 @@ export default function FamilyMemberMarker({ location, isSelected, isCurrentUser
       <div class="location-marker-wrapper ${pulse} ${selected} ${current}">
         <div class="location-marker-avatar" style="border-color:${color};background:${avatarUrl ? '#fff' : color}20;">
           ${imgContent}
+          <div style="position:absolute; bottom:-4px; right:-4px; font-size:12px; background:#fff; border-radius:50%; border:1px solid #ccc; width:16px; height:16px; display:flex; align-items:center; justify-content:center;">${deviceIcon}</div>
         </div>
         <div class="location-marker-name">${name.split(' ')[0]}</div>
       </div>
@@ -72,7 +76,7 @@ export default function FamilyMemberMarker({ location, isSelected, isCurrentUser
       iconAnchor: [28, 68],
       popupAnchor: [0, -68],
     });
-  }, [emoji, avatarUrl, name, color, isMoving, isSelected, isCurrentUser]);
+  }, [emoji, avatarUrl, name, color, isMoving, isSelected, isCurrentUser, deviceIcon]);
 
   return (
     <Marker
@@ -83,7 +87,11 @@ export default function FamilyMemberMarker({ location, isSelected, isCurrentUser
       <Tooltip direction="top" offset={[0, -72]} opacity={0.95}>
         <div style={{ textAlign: 'center', padding: '2px 4px' }}>
           <div style={{ fontWeight: 700, fontSize: '0.82rem' }}>{name}</div>
-          <div style={{ fontSize: '0.72rem', color: '#64748B', display: 'flex', alignItems: 'center', gap: 4, justifyContent: 'center' }}>
+          <div style={{ fontSize: '0.72rem', color: '#64748B', display: 'flex', alignItems: 'center', gap: 4, justifyItems: 'center', marginTop: 2 }}>
+            <span>{deviceIcon}</span>
+            <span>{location.device?.device_name || 'Dispositivo'}</span>
+          </div>
+          <div style={{ fontSize: '0.72rem', color: '#64748B', display: 'flex', alignItems: 'center', gap: 4, justifyContent: 'center', marginTop: 4 }}>
             <span>{status.emoji}</span>
             <span>{status.label}</span>
           </div>

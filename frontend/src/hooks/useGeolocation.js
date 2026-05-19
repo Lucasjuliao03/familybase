@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
+import { getDeviceId, getDeviceType, getDeviceName } from '../lib/device';
 
 /**
  * Distância Haversine em metros entre dois pontos (lat/lng em graus).
@@ -47,20 +48,36 @@ export function useGeolocation({ familyId, userId, enabled = true }) {
       sendingRef.current = true;
       setSending(true);
       try {
+        const deviceId = getDeviceId();
+        const deviceType = getDeviceType();
+        
+        // Registrar/atualizar dispositivo (fire and forget ou await)
+        await supabase.from('family_member_devices').upsert({
+          family_id: familyId,
+          user_id: userId,
+          device_id: deviceId,
+          device_name: getDeviceName(),
+          device_type: deviceType,
+          last_seen_at: new Date().toISOString(),
+          is_primary_location_device: deviceType === 'mobile', // Celular tem prioridade
+        }, { onConflict: 'family_id,user_id,device_id' });
+
         const row = {
           family_id: familyId,
           user_id: userId,
+          device_id: deviceId,
           latitude: lat,
           longitude: lng,
           accuracy: accuracy ?? null,
           speed: speed ?? null,
           heading: heading ?? null,
+          source: (deviceType !== 'mobile' && accuracy > 1000) ? 'approximate' : 'gps',
           status: speed != null && speed > 1.5 ? 'moving' : 'home',
           updated_at: new Date().toISOString(),
         };
         const { error: upErr } = await supabase
           .from('family_locations')
-          .upsert(row, { onConflict: 'family_id,user_id' });
+          .upsert(row, { onConflict: 'family_id,user_id,device_id' });
         if (upErr) console.warn('[geo] upsert:', upErr.message);
         else lastSentRef.current = { lat, lng, ts: now };
       } catch (e) {

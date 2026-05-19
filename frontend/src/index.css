@@ -2351,3 +2351,19 @@ tr:hover td { background: rgba(108,92,231,0.03); }
     max-width: none;
   }
 }
+
+/* Location Layout Fixes for Header Overlap */
+.location-top-bar {
+  top: 80px !important;
+}
+
+@media (max-width: 768px) {
+  .location-page {
+    position: fixed !important;
+    top: 65px !important;
+    height: calc(100dvh - 65px) !important;
+    width: 100vw !important;
+    margin-left: -16px !important;
+    padding-bottom: 60px !important;
+  }
+}
