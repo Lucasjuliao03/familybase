@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 
-/** Entre 500–1000 ms: um único lote controlado ao voltar ao app. */
-const DEBOUNCE_MS = 720;
+/** 1200 ms — debounce único ao voltar ao app (evitar disparos duplos de visibilitychange + focus). */
+const DEBOUNCE_MS = 1200;
 
 /**
  * Retomada global da PWA: debounce para visibility → visible, focus e online — mais
@@ -18,6 +18,7 @@ export function useAppResume({ onResume, enabled = true }) {
   /** Evita dois `onResume` em paralelo mesmo com vários timers. */
   const resumeInFlightRef = useRef(false);
   const debounceTimerRef = useRef(null);
+  const lastResumeAt = useRef(0);
 
   useEffect(() => {
     onResumeRef.current = onResume;
@@ -33,6 +34,12 @@ export function useAppResume({ onResume, enabled = true }) {
       debounceTimerRef.current = null;
       if (document.visibilityState !== 'visible') return;
       if (resumeInFlightRef.current) return;
+
+      // Evitar chamadas duplicadas em menos de 2s
+      const now = Date.now();
+      if (now - lastResumeAt.current < 2000) return;
+      lastResumeAt.current = now;
+
       resumeInFlightRef.current = true;
       try {
         const fn = onResumeRef.current;

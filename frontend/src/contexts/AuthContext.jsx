@@ -5,6 +5,31 @@ import { famDiag } from '../lib/famDiag';
 
 const AuthContext = createContext(null);
 
+// ─── Cache local no localStorage ─────────────────────────────────────────────
+const CACHE_KEY = 'familia_profile_cache';
+const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutos
+
+function saveProfileCache(payload) {
+  try {
+    localStorage.setItem(CACHE_KEY, JSON.stringify({ ...payload, _at: Date.now() }));
+  } catch { /* storage cheio */ }
+}
+
+function loadProfileCache() {
+  try {
+    const raw = localStorage.getItem(CACHE_KEY);
+    if (!raw) return null;
+    const obj = JSON.parse(raw);
+    if (!obj?._at || Date.now() - obj._at > CACHE_TTL_MS) return null;
+    return obj;
+  } catch { return null; }
+}
+
+function clearProfileCache() {
+  try { localStorage.removeItem(CACHE_KEY); } catch { /* noop */ }
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 const DEFAULT_MODULES = {
   tasks: true,
   calendar: true,
@@ -141,7 +166,10 @@ export function AuthProvider({ children }) {
   const [effectiveSubscription, setEffectiveSubscription] = useState(null);
   const profileInflightRef = useRef(null);
   const profileLoadGenerationRef = useRef(0);
-  /** Evita re-fetch completo logo após recuperação de sessão (same tab / visibility). */
+  /**
+   * TTL de 5 minutos — evita re-fetch completo logo após recuperação de sessão.
+   * Apenas operações de escrita ou logout invalidam o cache.
+   */
   const profileFreshRef = useRef({ uid: null, at: 0 });
   /** Invalida hides antigos (StrictMode unmount antes de terminar hydrate). */
   const authHydrateSeqRef = useRef(0);
@@ -150,6 +178,11 @@ export function AuthProvider({ children }) {
   const tabHiddenAtRef = useRef(0);
   /** Partilha a mesma Promessa se `performControlledResume` é chamado em paralelo. */
   const controlledResumeInflightRef = useRef(null);
+
+  // TTL do perfil "fresco": 5 minutos
+  const PROFILE_FRESH_TTL_MS = 5 * 60 * 1000;
+  // Timeout total de carregamento de perfil
+  const PROFILE_LOAD_TIMEOUT_MS = 30_000;
 
   useEffect(() => {
     userRef.current = user;
@@ -160,6 +193,8 @@ export function AuthProvider({ children }) {
   }, [loading]);
 
   const clearState = useCallback(() => {
+    clearProfileCache();
+    profileFreshRef.current = { uid: null, at: 0 };
     setUser(null);
     setFamily(null);
     setChildProfile(null);
@@ -167,7 +202,20 @@ export function AuthProvider({ children }) {
     setEffectiveSubscription(null);
   }, []);
 
-  const PROFILE_LOAD_TIMEOUT_MS = 70_000;
+  /**
+   * Aplica snapshot de cache no estado React — UI aparece instantaneamente.
+   * Não muda `loading` — isso é feito pelo chamador.
+   */
+  const applyProfileCache = useCallback((cached) => {
+    if (!cached?.user) return false;
+    setUser(cached.user);
+    setFamily(cached.family ?? null);
+    setModules(cached.modules ?? { ...DEFAULT_MODULES });
+    setEffectiveSubscription(cached.effectiveSubscription ?? null);
+    setChildProfile(cached.childProfile ?? null);
+    setMustChangePassword(!!cached.user.must_change_password);
+    return true;
+  }, []);
 
   function rejectAfter(ms, message) {
     return new Promise((_, rej) => {
@@ -253,26 +301,14 @@ export function AuthProvider({ children }) {
 
             const emailResolved = emailHint || profileRow.email || '';
 
-            setUser({ ...profileRow, email: emailResolved });
-            setMustChangePassword(!!profileRow.must_change_password);
-
             const fid = profileRow.family_id;
             const wantsChildRow = profileRow.role === 'child';
 
-            const familyQ = fid
-              ? supabase.from('families').select('*').eq('id', fid).maybeSingle()
-              : Promise.resolve({ data: null });
-            const modsQ = fid
-              ? supabase.from('family_modules').select('module_key, is_enabled').eq('family_id', fid)
-              : Promise.resolve({ data: [] });
-            const childQ = wantsChildRow
-              ? supabase.from('children').select('*').eq('user_id', userId).maybeSingle()
-              : Promise.resolve({ data: null });
-
+            // Carregar family, módulos e child em paralelo
             const [{ data: familyData }, { data: fmRows }, { data: cData }] = await Promise.all([
-              familyQ,
-              modsQ,
-              childQ,
+              fid ? supabase.from('families').select('*').eq('id', fid).maybeSingle() : Promise.resolve({ data: null }),
+              fid ? supabase.from('family_modules').select('module_key, is_enabled').eq('family_id', fid) : Promise.resolve({ data: [] }),
+              wantsChildRow ? supabase.from('children').select('*').eq('user_id', userId).maybeSingle() : Promise.resolve({ data: null }),
             ]);
 
             if (generation !== profileLoadGenerationRef.current) return;
@@ -284,15 +320,10 @@ export function AuthProvider({ children }) {
 
             let resolvedFamily = familyData;
 
+            // RPC de subscription com timeout reduzido (8s → 5s)
             try {
-              const rpcDeadlineMs = 12_000;
-              const rpcRes = await Promise.race([
-                supabase.rpc('get_effective_subscription'),
-                new Promise((_, rej) =>
-                  setTimeout(() => rej(Object.assign(new Error('subscription_rpc_deadline'), { code: 'DEADLINE' })), rpcDeadlineMs),
-                ),
-              ]);
-              const { data: effData, error: effErr } = rpcRes;
+              const rpcRes = await raceMs(supabase.rpc('get_effective_subscription'), 5000);
+              const { data: effData, error: effErr } = rpcRes ?? {};
               if (!effErr && effData != null && typeof effData === 'object') {
                 if (generation !== profileLoadGenerationRef.current) return;
                 setEffectiveSubscription(effData);
@@ -314,20 +345,29 @@ export function AuthProvider({ children }) {
 
             if (generation !== profileLoadGenerationRef.current) return;
 
+            const mergedMods = { ...DEFAULT_MODULES };
+            (fmRows || []).forEach((r) => {
+              if (r.module_key != null) mergedMods[r.module_key] = !!r.is_enabled;
+            });
+
+            const userObj = { ...profileRow, email: emailResolved };
+
+            // Aplicar estado
+            setUser(userObj);
+            setMustChangePassword(!!profileRow.must_change_password);
             setFamily(resolvedFamily ?? null);
-
-            if (!fid || !fmRows?.length) {
-              setModules({ ...DEFAULT_MODULES });
-            } else {
-              const mergedMods = { ...DEFAULT_MODULES };
-              fmRows.forEach((r) => {
-                if (r.module_key != null) mergedMods[r.module_key] = !!r.is_enabled;
-              });
-              setModules(mergedMods);
-            }
-
+            setModules(mergedMods);
             setChildProfile(wantsChildRow ? (effectiveChildRow ?? null) : null);
+
+            // Marcar como fresco e salvar cache
             profileFreshRef.current = { uid: userId, at: Date.now() };
+            saveProfileCache({
+              user: userObj,
+              family: resolvedFamily ?? null,
+              modules: mergedMods,
+              effectiveSubscription: null, // será preenchido pelo setEffectiveSubscription
+              childProfile: wantsChildRow ? (effectiveChildRow ?? null) : null,
+            });
           })(),
           rejectAfter(PROFILE_LOAD_TIMEOUT_MS, 'profile_load_timeout'),
         ]);
@@ -337,10 +377,8 @@ export function AuthProvider({ children }) {
           profileInflightRef.current = null;
           profileLoadGenerationRef.current += 1;
           console.warn(
-            '[auth] Carregamento do perfil excedeu o tempo seguro. Mantém-se a sessão — se a UI falhar, actualize a página. ' +
-              '(Rede lenta, RPC get_effective_subscription ou RLS no projeto.)',
+            '[auth] Carregamento do perfil excedeu o tempo seguro. Mantém-se a sessão — se a UI falhar, actualize a página.',
           );
-          // IMPORTANT: após incrementar a geração, o finally abaixo não desliga loading — fazemo-lo aqui
           if (typeof window !== 'undefined') {
             dispatchFamiliaControlledResume();
           }
@@ -368,12 +406,22 @@ export function AuthProvider({ children }) {
     async function hydrateFromStorage() {
       try {
         setLoading(true);
+
+        // ── Passo 1: Aplicar cache local imediatamente (UI instantânea) ──────
+        const cached = loadProfileCache();
+        if (cached?.user) {
+          applyProfileCache(cached);
+          // Não desligar loading ainda — vai validar com Supabase em seguida
+        }
+
+        // ── Passo 2: Verificar sessão com Supabase ────────────────────────────
         const {
           data: { session },
           error,
         } = await supabase.auth.getSession();
         if (hydrateId !== authHydrateSeqRef.current) return;
         if (error) throw error;
+
         if (session?.user) {
           famDiag('auth/hydrate', 'session_ok');
           const em =
@@ -381,7 +429,17 @@ export function AuthProvider({ children }) {
             session.user.user_metadata?.email ||
             session.user.new_email ||
             '';
-          await loadUserProfile(session.user.id, em);
+
+          // Se temos cache válido do mesmo utilizador, desligar loading imediatamente
+          // e fazer o refresh do perfil em background sem bloquear a UI
+          if (cached?.user?.id === session.user.id) {
+            setLoading(false);
+            // Refresh silencioso em background
+            loadUserProfile(session.user.id, em).catch(console.warn);
+          } else {
+            // Utilizador diferente ou sem cache → carregar normalmente
+            await loadUserProfile(session.user.id, em);
+          }
         } else {
           famDiag('auth/hydrate', 'session_empty');
           clearState();
@@ -414,10 +472,11 @@ export function AuthProvider({ children }) {
         }
         const uid = session.user.id;
         const fresh = profileFreshRef.current;
+        // TTL de 5 minutos — evita re-fetch desnecessário
         if (
           (event === 'SIGNED_IN' || event === 'USER_UPDATED')
           && fresh.uid === uid
-          && Date.now() - fresh.at < 15000
+          && Date.now() - fresh.at < PROFILE_FRESH_TTL_MS
         ) {
           return;
         }
@@ -440,9 +499,9 @@ export function AuthProvider({ children }) {
       authHydrateSeqRef.current += 1;
       subscription?.unsubscribe();
     };
-  }, [loadUserProfile, clearState]);
+  }, [loadUserProfile, clearState, applyProfileCache]);
 
-  /** Marca instante em que a aba passou a oculta (invalidação de cargas “zombie”). */
+  /** Marca instante em que a aba passou a oculta (invalidação de cargas "zombie"). */
   useEffect(() => {
     if (typeof document === 'undefined') return undefined;
     const markHidden = () => {
@@ -453,8 +512,10 @@ export function AuthProvider({ children }) {
   }, []);
 
   /**
-   * Uma só rotina ao voltar à aba: getSession → refreshSession → realtime (se preciso) → loadUserProfile.
-   * Partilha a mesma Promessa quando chamadas em paralelo; dispara UM evento para o ecrã atual (useAutoRefresh).
+   * Uma só rotina ao voltar à aba — OTIMIZADA:
+   * 1. Se perfil ainda fresco (< 5min) → só reconecta Realtime, sem re-fetch de perfil
+   * 2. Se perfil expirou → refresh em background (não bloqueia a UI)
+   * 3. Token só é refrescado se necessário (< 10min para expirar)
    */
   const performControlledResume = useCallback(async () => {
     if (controlledResumeInflightRef.current) {
@@ -467,13 +528,10 @@ export function AuthProvider({ children }) {
       const hiddenStarted = tabHiddenAtRef.current;
       const hiddenMs = hiddenStarted ? Date.now() - hiddenStarted : 0;
       tabHiddenAtRef.current = 0;
-      if (hiddenStarted && hiddenMs > 280) {
-        profileInflightRef.current = null;
-        profileLoadGenerationRef.current += 1;
-      }
 
       try {
-        const sessWrap = await raceMs(supabase.auth.getSession(), 6000);
+        // Verificar sessão (timeout curto — 4s)
+        const sessWrap = await raceMs(supabase.auth.getSession(), 4000);
         if (!sessWrap) {
           famDiag('auth/resume', 'getSession_timeout');
           return;
@@ -481,33 +539,45 @@ export function AuthProvider({ children }) {
         const { data: sessData, error: sessErr } = sessWrap;
         if (sessErr || !sessData?.session?.user?.id) return;
 
-        await raceMs(supabase.auth.refreshSession(), 6000).catch(() => {});
-
-        const refreshed = await raceMs(supabase.auth.getSession(), 5000);
-
-        let session = sessData.session;
-        let accessToken = session?.access_token ?? null;
-        if (refreshed?.data?.session) {
-          session = refreshed.data.session;
-          accessToken = session?.access_token ?? null;
-        }
-
+        const session = sessData.session;
         const uid = session?.user?.id;
         if (!uid) return;
 
+        const accessToken = session?.access_token ?? null;
+        const expiresAt = session?.expires_at ? session.expires_at * 1000 : 0;
+        const msToExpiry = expiresAt ? expiresAt - Date.now() : Infinity;
+
+        // Só refrescar token se estiver a < 10min de expirar
+        if (msToExpiry < 10 * 60 * 1000) {
+          raceMs(supabase.auth.refreshSession(), 5000).catch(() => {});
+        }
+
+        // Reconectar Realtime se necessário (não bloqueia a UI)
         const needsRealtimeKick =
           hiddenMs >= 4200 ||
           shouldReconnectSupabaseRealtime(supabase, hiddenMs);
         if (needsRealtimeKick) {
-          await reconnectSupabaseRealtime(supabase, accessToken ?? undefined);
+          reconnectSupabaseRealtime(supabase, accessToken ?? undefined).catch(() => {});
         }
 
-        const em =
-          session.user.email ||
-          session.user.user_metadata?.email ||
-          session.user.new_email ||
-          '';
-        await loadUserProfile(uid, em, { force: true }).catch(console.warn);
+        // Verificar se o perfil ainda está fresco
+        const fresh = profileFreshRef.current;
+        const profileStale = !fresh.uid || fresh.uid !== uid || Date.now() - fresh.at >= PROFILE_FRESH_TTL_MS;
+
+        if (profileStale || hiddenMs > 280) {
+          // Reset inflight para permitir novo carregamento
+          profileInflightRef.current = null;
+          profileLoadGenerationRef.current += 1;
+
+          const em =
+            session.user.email ||
+            session.user.user_metadata?.email ||
+            session.user.new_email ||
+            '';
+
+          // Carregar perfil em background — não bloqueia a UI (React já tem dados do cache)
+          loadUserProfile(uid, em, { force: true }).catch(console.warn);
+        }
       } catch (e) {
         console.warn('[auth] performControlledResume:', e);
       } finally {
@@ -602,6 +672,7 @@ export function AuthProvider({ children }) {
 
   const logout = async () => {
     setLoading(false);
+    clearProfileCache();
     try {
       await supabase.auth.signOut({ scope: 'local' });
     } catch {

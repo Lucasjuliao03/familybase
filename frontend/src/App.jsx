@@ -1,4 +1,4 @@
-import { lazy, Suspense } from 'react';
+import { lazy, Suspense, useRef } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import FamiliaQueryProvider from './providers/FamiliaQueryProvider';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
@@ -322,8 +322,10 @@ function AppRoutes() {
 /** Uma rotina por retorno à app: sessão/perfil primeiro; páginas reagem só ao evento único (`useAutoRefresh`). */
 function AppResumeSync() {
   const { performControlledResume, loading } = useAuth();
-  /** Depois do primeiro hydrate não bloqueamos: sessão existe mas `user` pode ainda actualizar um tick. */
-  useAppResume({ onResume: performControlledResume, enabled: !loading });
+  // Depois do hydrate inicial, manter sempre ativo (loading pode ser true durante refreshes em background)
+  const hasHydratedRef = useRef(false);
+  if (!loading) hasHydratedRef.current = true;
+  useAppResume({ onResume: performControlledResume, enabled: hasHydratedRef.current || !loading });
   return null;
 }
 
