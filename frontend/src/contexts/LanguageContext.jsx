@@ -8,8 +8,8 @@ const LanguageContext = createContext(null);
 export function LanguageProvider({ children }) {
   const [lang, setLang] = useState(() => localStorage.getItem('fb_lang') || 'pt');
 
-  const t = useCallback((key) => {
-    return dictionaries[lang]?.[key] || dictionaries['pt']?.[key] || key;
+  const t = useCallback((key, fallback) => {
+    return dictionaries[lang]?.[key] || dictionaries['pt']?.[key] || fallback || key;
   }, [lang]);
 
   const switchLanguage = (newLang) => {

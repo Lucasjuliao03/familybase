@@ -516,5 +516,19 @@
   "piggy_submit_request": "Send request",
   "piggy_my_requests": "My requests",
   "piggy_no_requests": "You have no requests yet.",
-  "piggy_sent": "Request sent!"
+  "piggy_sent": "Request sent!",
+  "approved_school": "You secured the school passing grade!",
+  "school_goal": "School Goal",
+  "parent_goal": "Parent Goal",
+  "need_points": "Need",
+  "in_remaining": "in",
+  "remaining_points": "remaining",
+  "focus_hard": "Full focus!",
+  "you_can_do_it": "You can do it!",
+  "goal_reached": "You hit your Parent's Goal! Congratulations!",
+  "to_reach_goal": "to reach your parent's goal!",
+  "school_approval_pct": "School Passing (%)",
+  "parent_goal_pct": "Parent Goal (%)",
+  "attention_threshold": "Attention Alert (%)",
+  "risk_threshold": "Risk Alert (%)"
 }

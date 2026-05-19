@@ -516,5 +516,19 @@
   "piggy_submit_request": "Enviar pedido",
   "piggy_my_requests": "Meus pedidos",
   "piggy_no_requests": "Você ainda não fez pedidos.",
-  "piggy_sent": "Pedido enviado!"
+  "piggy_sent": "Pedido enviado!",
+  "approved_school": "Você garantiu a média da escola!",
+  "school_goal": "Média da Escola",
+  "parent_goal": "Meta de Casa",
+  "need_points": "Faltam",
+  "in_remaining": "nos",
+  "remaining_points": "restantes",
+  "focus_hard": "Foco total!",
+  "you_can_do_it": "Você consegue!",
+  "goal_reached": "Você atingiu a Meta do seu responsável! Parabéns!",
+  "to_reach_goal": "para alcançar a meta do seu responsável!",
+  "school_approval_pct": "Média da Escola (%)",
+  "parent_goal_pct": "Meta do Gestor (%)",
+  "attention_threshold": "Alerta de Atenção (%)",
+  "risk_threshold": "Alerta de Risco (%)"
 }

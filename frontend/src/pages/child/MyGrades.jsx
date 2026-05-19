@@ -185,7 +185,7 @@ export default function MyGrades() {
                   )}
                   {subj.status !== 'approved' && subj.missing > 0 && subj.remainingAnnualPoints > 0 && (
                     <div style={{ fontSize: '0.8rem', marginTop: 8, padding: '10px', background: 'var(--bg-hover)', borderRadius: 6, lineHeight: 1.4 }}>
-                      🎯 <strong>{t('school_goal', 'Média da Escola')}:</strong> {t('need_points', 'Faltam')} <strong>{subj.missing.toFixed(1)}pts</strong> {t('in_remaining', 'nos')} {subj.remainingAnnualPoints.toFixed(1)}pts {t('remaining_points', 'restantes')}. 
+                      🎯 <strong>{t('school_goal', 'Média da Escola')} ({subj.minRequiredAnnual.toFixed(1)}pts):</strong> {t('need_points', 'Faltam')} <strong>{subj.missing.toFixed(1)}pts</strong> {t('in_remaining', 'nos')} {subj.remainingAnnualPoints.toFixed(1)}pts {t('remaining_points', 'restantes')}. 
                       {subj.requiredRate > 75 ? ' ' + t('focus_hard', 'Foco total!') : ' ' + t('you_can_do_it', 'Você consegue!')}
                     </div>
                   )}
@@ -198,7 +198,7 @@ export default function MyGrades() {
                   ) : (
                     subj.missingGoal > 0 && subj.remainingAnnualPoints > 0 && (
                       <div style={{ fontSize: '0.8rem', marginTop: 8, padding: '10px', background: 'var(--bg-hover)', borderRadius: 6, lineHeight: 1.4, borderLeft: '3px solid var(--primary)' }}>
-                        ⭐ <strong>{t('parent_goal', 'Meta de Casa')}:</strong> {t('need_points', 'Faltam')} <strong>{subj.missingGoal.toFixed(1)}pts</strong> {t('to_reach_goal', 'para alcançar a meta do seu responsável!')}
+                        ⭐ <strong>{t('parent_goal', 'Meta de Casa')} ({subj.goalRequiredAnnual.toFixed(1)}pts):</strong> {t('need_points', 'Faltam')} <strong>{subj.missingGoal.toFixed(1)}pts</strong> {t('to_reach_goal', 'para alcançar a meta do seu responsável!')}
                       </div>
                     )
                   )}
