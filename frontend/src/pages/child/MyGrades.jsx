@@ -6,7 +6,7 @@ import { useToast } from '../../contexts/ToastContext';
 import api from '../../services/api';
 import { supabase } from '../../lib/supabase';
 import useAutoRefresh from '../../hooks/useAutoRefresh';
-import { buildPeriodConfig, buildBoletim, scoreColor } from '../../lib/gradesHelpers';
+import { buildPeriodConfig, buildSubjectBoletim, scoreColorByStatus, statusBadgeStyle } from '../../lib/gradesHelpers';
 
 const PREDEFINED_SUBJECTS = [
   'Matemática','Português','Ciências','História','Geografia',
