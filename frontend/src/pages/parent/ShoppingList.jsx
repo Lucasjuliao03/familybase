@@ -168,6 +168,14 @@ export default function ShoppingList() {
     const userTotals = {};
     const productTotals = {};
 
+    // Gastos diários do mês de referência
+    const [refYear, refMonth] = currentMonthStr.split('-');
+    const daysInMonth = new Date(Number(refYear), Number(refMonth), 0).getDate();
+    const dailySpending = {};
+    for (let d = 1; d <= daysInMonth; d++) {
+      dailySpending[d] = 0;
+    }
+
     items.history.forEach(item => {
       const price = item.price || 0;
       if (!price) return;
@@ -201,6 +209,9 @@ export default function ShoppingList() {
         if (itemCount[prodName] > mostBoughtItem.count) {
           mostBoughtItem = { name: prodName, count: itemCount[prodName] };
         }
+
+        const day = dateObj.getDate();
+        dailySpending[day] = (dailySpending[day] || 0) + price;
       }
     });
     urgentCount = (items.pending || []).filter(i => i.is_urgent).length;
@@ -218,9 +229,14 @@ export default function ShoppingList() {
       return { month: `${mm}/${yyyy}`, Total: monthlySpending[m] };
     });
 
+    const dailyData = Object.keys(dailySpending).map(day => ({
+      day: `${day}`,
+      Gasto: dailySpending[day]
+    })).sort((a, b) => Number(a.day) - Number(b.day));
+
     return {
       totalSpentMonth, totalSpentYear, pieData, userPieData,
-      topProducts, areaData,
+      topProducts, areaData, dailyData,
       urgentCount, totalItemsMonth, avgTicket, mostBoughtItem,
     };
   }, [items.history, items.pending, viewMode, filterMonth]);
@@ -409,6 +425,30 @@ export default function ShoppingList() {
               <div className="stat-info">
                 <h3 style={{ fontSize: '1rem' }}>{dashboardData.mostBoughtItem.name}</h3>
                 <p>Item mais comprado</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Gráfico de Gastos Diários (Mês Atual) */}
+          <div className="shop-dash__row" style={{ gridTemplateColumns: '1fr' }}>
+            <div className="card shop-dash__chart-card">
+              <div className="card-header">
+                <h3 className="card-title">📅 Gastos Diários (Mês Selecionado)</h3>
+                <span className="badge badge-info">Dia a dia</span>
+              </div>
+              <div className="shop-dash__chart" style={{ height: 280 }}>
+                {dashboardData.dailyData.some(d => d.Gasto > 0) ? (
+                  <ResponsiveContainer width="99%" height="100%" minWidth={0}>
+                    <BarChart data={dashboardData.dailyData} margin={{ top: 10, right: 10, left: -10, bottom: 5 }}>
+                      <XAxis dataKey="day" stroke="var(--text-light)" fontSize={11} tickLine={false} axisLine={false} />
+                      <YAxis stroke="var(--text-light)" fontSize={11} tickFormatter={(v) => `R$${v}`} tickLine={false} axisLine={false} />
+                      <Tooltip cursor={{ fill: 'var(--bg-hover)' }} formatter={(v) => `R$ ${parseFloat(v).toFixed(2)}`} />
+                      <Bar dataKey="Gasto" fill="#6366F1" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="shop-dash__empty">📭 Sem compras realizadas neste mês</div>
+                )}
               </div>
             </div>
           </div>

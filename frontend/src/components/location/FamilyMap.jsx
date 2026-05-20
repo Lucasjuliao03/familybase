@@ -19,53 +19,75 @@ const DEFAULT_ZOOM = 14;
 /**
  * Componente interno que faz auto-fit nos bounds dos markers.
  */
-function AutoFitBounds({ locations, selectedMemberId, zones }) {
+function AutoFitBounds({ locations, selectedMemberId, isFollowingMember, centerTrigger, zones }) {
   const map = useMap();
   const lastFitRef = useRef(0);
+  const lastCenteredRef = useRef({ userId: null, lat: null, lng: null, trigger: -1 });
 
   useEffect(() => {
-    if (selectedMemberId) {
+    if (selectedMemberId && isFollowingMember) {
       const loc = locations.find((l) => l.user_id === selectedMemberId);
       if (loc) {
-        map.flyTo([loc.latitude, loc.longitude], 16, { duration: 0.8 });
-        return;
+        const hasMovedSignificant = 
+          lastCenteredRef.current.userId !== selectedMemberId ||
+          lastCenteredRef.current.trigger !== centerTrigger ||
+          Math.abs((lastCenteredRef.current.lat || 0) - loc.latitude) > 0.0001 ||
+          Math.abs((lastCenteredRef.current.lng || 0) - loc.longitude) > 0.0001;
+
+        if (hasMovedSignificant) {
+          map.flyTo([loc.latitude, loc.longitude], 16, { duration: 0.8 });
+          lastCenteredRef.current = { userId: selectedMemberId, lat: loc.latitude, lng: loc.longitude, trigger: centerTrigger };
+        }
+      }
+      return;
+    }
+
+    // Ajuste inicial ou re-fit solicitado (Ver Todos)
+    const shouldFit = lastFitRef.current === 0 || (!selectedMemberId && lastCenteredRef.current.trigger !== centerTrigger);
+    if (shouldFit && locations.length > 0) {
+      const pts = [];
+      locations.forEach((l) => {
+        if (l.latitude && l.longitude) pts.push([l.latitude, l.longitude]);
+      });
+      (zones || []).forEach((z) => {
+        if (z.latitude && z.longitude) pts.push([z.latitude, z.longitude]);
+      });
+
+      if (pts.length >= 2) {
+        const bounds = L.latLngBounds(pts);
+        map.fitBounds(bounds.pad(0.3), { maxZoom: 16, duration: 0.8 });
+        lastFitRef.current = Date.now();
+        lastCenteredRef.current.trigger = centerTrigger;
+      } else if (pts.length === 1) {
+        map.flyTo(pts[0], 15, { duration: 0.8 });
+        lastFitRef.current = Date.now();
+        lastCenteredRef.current.trigger = centerTrigger;
       }
     }
-
-    const now = Date.now();
-    if (now - lastFitRef.current < 10000) return;
-
-    const pts = [];
-    locations.forEach((l) => {
-      if (l.latitude && l.longitude) pts.push([l.latitude, l.longitude]);
-    });
-    (zones || []).forEach((z) => {
-      if (z.latitude && z.longitude) pts.push([z.latitude, z.longitude]);
-    });
-
-    if (pts.length >= 2) {
-      const bounds = L.latLngBounds(pts);
-      map.fitBounds(bounds.pad(0.3), { maxZoom: 16, duration: 0.8 });
-      lastFitRef.current = now;
-    } else if (pts.length === 1) {
-      map.flyTo(pts[0], 15, { duration: 0.8 });
-      lastFitRef.current = now;
-    }
-  }, [locations, selectedMemberId, zones, map]);
+  }, [locations, selectedMemberId, isFollowingMember, centerTrigger, zones, map]);
 
   return null;
 }
 
-/**
- * Componente interno para escutar cliques (modo desenho).
- */
-function MapClickListener({ onMapClick, isDrawing }) {
+function MapEventsListener({ onMapClick, isDrawing, onUserInteraction }) {
   const map = useMapEvents({
     click(e) {
       if (isDrawing && onMapClick) {
         onMapClick(e.latlng);
       }
     },
+    dragstart() {
+      if (onUserInteraction) onUserInteraction();
+    },
+    zoomstart() {
+      if (onUserInteraction) onUserInteraction();
+    },
+    mousedown() {
+      if (onUserInteraction) onUserInteraction();
+    },
+    touchstart() {
+      if (onUserInteraction) onUserInteraction();
+    }
   });
   
   useEffect(() => {
@@ -86,6 +108,9 @@ export default function FamilyMap({
   locations = [],
   zones = [],
   selectedMemberId,
+  isFollowingMember,
+  centerTrigger,
+  onUserInteraction,
   onSelectMember,
   currentUserId,
   zoneDraft,
@@ -118,6 +143,8 @@ export default function FamilyMap({
         <AutoFitBounds
           locations={locations}
           selectedMemberId={selectedMemberId}
+          isFollowingMember={isFollowingMember}
+          centerTrigger={centerTrigger}
           zones={zones}
         />
 
@@ -133,7 +160,11 @@ export default function FamilyMap({
           />
         )}
 
-        <MapClickListener onMapClick={onMapClick} isDrawing={!!zoneDraft} />
+        <MapEventsListener 
+          onMapClick={onMapClick} 
+          isDrawing={!!zoneDraft} 
+          onUserInteraction={onUserInteraction}
+        />
 
         {/* Member markers */}
         {locations.map((loc) => (

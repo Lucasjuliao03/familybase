@@ -21,7 +21,7 @@ export default function CalendarPage() {
   const [children, setChildren] = useState([]);
   const [tab, setTab] = useState('calendar');
 
-  /** Visão inicial: mensal (“visão geral” de eventos permitidos pelo backend). */
+  /** Visão inicial: mensal (“visão geral” de eventos). */
   const [viewMode, setViewMode] = useState('month');
   const [anchorDate, setAnchorDate] = useState(() => normalizeAnchorMidday(new Date()));
   /** Padrão: todos (sem filtro server-side por dependente). */

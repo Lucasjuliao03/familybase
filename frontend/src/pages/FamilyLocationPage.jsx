@@ -60,6 +60,8 @@ export default function FamilyLocationPage() {
   const [zones, setZones] = useState([]);
   const [zonesLoading, setZonesLoading] = useState(true);
   const [selectedMemberId, setSelectedMemberId] = useState(null);
+  const [isFollowingMember, setIsFollowingMember] = useState(false);
+  const [centerTrigger, setCenterTrigger] = useState(0);
   const [alerts, setAlerts] = useState([]);
   const [showZoneModal, setShowZoneModal] = useState(false);
   const [isDrawingMode, setIsDrawingMode] = useState(false);
@@ -300,6 +302,8 @@ export default function FamilyLocationPage() {
 
   const handleSelectMember = useCallback((targetUserId) => {
     setSelectedMemberId(targetUserId);
+    setIsFollowingMember(true);
+    setCenterTrigger(prev => prev + 1);
     if (!familyId || !targetUserId) return;
     
     // Obter o nome do alvo
@@ -361,11 +365,51 @@ export default function FamilyLocationPage() {
         locations={locArray}
         zones={zones}
         selectedMemberId={selectedMemberId}
+        isFollowingMember={isFollowingMember}
+        centerTrigger={centerTrigger}
+        onUserInteraction={useCallback(() => setIsFollowingMember(false), [])}
         onSelectMember={handleSelectMember}
         currentUserId={userId}
         zoneDraft={showZoneModal && zoneForm.latitude ? zoneForm : (isDrawingMode ? { latitude: position?.lat || 0, longitude: position?.lng || 0, radius_meters: 0 } : null)}
         onMapClick={handleMapClick}
       />
+
+      {/* Floating map controls */}
+      <div style={{
+        position: 'absolute',
+        top: '65px',
+        right: '10px',
+        zIndex: 500,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '8px'
+      }}>
+        {selectedMemberId && !isFollowingMember && (
+          <button
+            className="location-btn-icon"
+            onClick={() => {
+              setIsFollowingMember(true);
+              setCenterTrigger(prev => prev + 1);
+            }}
+            title="Centralizar no Membro"
+            style={{ width: '40px', height: '40px', borderRadius: '50%', padding: 0 }}
+          >
+            🎯
+          </button>
+        )}
+        <button
+          className="location-btn-icon"
+          onClick={() => {
+            setSelectedMemberId(null);
+            setIsFollowingMember(false);
+            setCenterTrigger(prev => prev + 1);
+          }}
+          title="Ver Todos"
+          style={{ width: '40px', height: '40px', borderRadius: '50%', padding: 0 }}
+        >
+          🌐
+        </button>
+      </div>
 
       {/* Drawing Mode Banner */}
       {isDrawingMode && (
@@ -444,6 +488,7 @@ export default function FamilyLocationPage() {
               className="location-zone-chip"
               onClick={() => {
                 setSelectedMemberId(null);
+                setIsFollowingMember(false);
               }}
             >
               {z.icon || ZONE_TYPE_ICONS[z.type]} {z.name}

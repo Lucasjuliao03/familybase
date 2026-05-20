@@ -586,6 +586,13 @@ async function ensureOpenAllowanceCycleRow(supabase, familyId, childId) {
   const month = ym ? Number(ym[2]) : NaN;
   if (!month || !year || Number.isNaN(month) || Number.isNaN(year)) return null;
 
+  const { data: settings } = await supabase
+    .from('allowance_settings')
+    .select('*')
+    .eq('child_id', childId)
+    .maybeSingle();
+  const base = settings?.base_amount ?? 0;
+
   const { data: existing } = await supabase
     .from('allowance_cycles')
     .select('*')
@@ -596,10 +603,83 @@ async function ensureOpenAllowanceCycleRow(supabase, familyId, childId) {
     .eq('status', 'open')
     .maybeSingle();
 
-  if (existing) return existing;
+  if (existing) {
+    if (Number(existing.base_amount) !== Number(base)) {
+      const { data: updated } = await supabase
+        .from('allowance_cycles')
+        .update({ base_amount: base })
+        .eq('id', existing.id)
+        .select()
+        .maybeSingle();
+      
+      const targetBase = updated || existing;
 
-  const { data: settings } = await supabase.from('allowance_settings').select('base_amount, allow_accumulation').eq('child_id', childId).maybeSingle();
-  const base = settings?.base_amount ?? 0;
+      // Sync Mesada Base transaction
+      const { data: baseTx } = await supabase
+        .from('allowance_transactions')
+        .select('*')
+        .eq('cycle_id', targetBase.id)
+        .eq('origin', 'base')
+        .eq('description', 'Mesada Base')
+        .maybeSingle();
+
+      if (baseTx) {
+        if (base > 0) {
+          await supabase.from('allowance_transactions').update({ amount: base }).eq('id', baseTx.id);
+        } else {
+          await supabase.from('allowance_transactions').delete().eq('id', baseTx.id);
+        }
+      } else if (base > 0) {
+        await supabase.from('allowance_transactions').insert({
+          id: uuidv4(),
+          family_id: familyId,
+          child_id: childId,
+          cycle_id: targetBase.id,
+          type: 'credit',
+          origin: 'base',
+          description: 'Mesada Base',
+          amount: base,
+          status: 'approved',
+          approved_by: null,
+          balance_after: 0
+        });
+      }
+      return targetBase;
+    }
+    return existing;
+  }
+
+  // Auto-close any older open cycles (monthly rollover)
+  const { data: openCycles } = await supabase
+    .from('allowance_cycles')
+    .select('*')
+    .eq('child_id', childId)
+    .eq('family_id', familyId)
+    .eq('status', 'open');
+
+  const olderCycles = (openCycles || []).filter(c => c.year < year || (c.year === year && c.month < month));
+  if (olderCycles.length > 0) {
+    for (const oldCyc of olderCycles) {
+      let finalAmt = computePredictedAllowanceBalance(settings, oldCyc);
+      const allowNeg =
+        settings &&
+        (settings.allow_negative_balance === true ||
+          settings.allow_negative_balance === 1 ||
+          String(settings.allow_negative_balance).toLowerCase() === 'true');
+      if (settings && !allowNeg && finalAmt < 0) finalAmt = 0;
+
+      await supabase
+        .from('allowance_cycles')
+        .update({
+          status: 'closed',
+          final_amount: finalAmt,
+          closed_at: new Date().toISOString(),
+        })
+        .eq('id', oldCyc.id);
+    }
+  }
+
+  // Get previous final amount
   const { data: prevRow } = await supabase
     .from('allowance_cycles')
     .select('final_amount')
@@ -630,6 +710,44 @@ async function ensureOpenAllowanceCycleRow(supabase, familyId, childId) {
     console.warn('[allowance] ciclo aberto:', error.message);
     return null;
   }
+
+  if (inserted) {
+    const transRows = [];
+    if (opening !== 0) {
+      transRows.push({
+        id: uuidv4(),
+        family_id: familyId,
+        child_id: childId,
+        cycle_id: inserted.id,
+        type: opening > 0 ? 'credit' : 'debit',
+        origin: 'base',
+        description: 'Saldo do ciclo anterior',
+        amount: Math.abs(opening),
+        status: 'approved',
+        approved_by: null,
+        balance_after: 0
+      });
+    }
+    if (base > 0) {
+      transRows.push({
+        id: uuidv4(),
+        family_id: familyId,
+        child_id: childId,
+        cycle_id: inserted.id,
+        type: 'credit',
+        origin: 'base',
+        description: 'Mesada Base',
+        amount: base,
+        status: 'approved',
+        approved_by: null,
+        balance_after: 0
+      });
+    }
+    if (transRows.length > 0) {
+      await supabase.from('allowance_transactions').insert(transRows);
+    }
+  }
+
   return inserted || null;
 }
 
@@ -2622,95 +2740,35 @@ const api = {
 
     if (path === '/allowance/cycles/current') {
       const { child_id } = body;
-      const month = new Date().getMonth() + 1;
-      const year = new Date().getFullYear();
-      const { data: existing } = await supabase
-        .from('allowance_cycles')
-        .select('*')
-        .eq('child_id', child_id)
-        .eq('month', month)
-        .eq('year', year)
-        .eq('status', 'open')
-        .maybeSingle();
-      if (existing) return { data: existing };
-      const { data: settings } = await supabase.from('allowance_settings').select('base_amount, allow_accumulation').eq('child_id', child_id).maybeSingle();
-      const base = settings?.base_amount ?? 0;
-      const { data: prevRow } = await supabase
-        .from('allowance_cycles')
-        .select('final_amount')
-        .eq('child_id', child_id)
-        .order('year', { ascending: false })
-        .order('month', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      const opening = settings?.allow_accumulation && prevRow?.final_amount != null ? Number(prevRow.final_amount) : 0;
-      const { data: inserted, error } = await supabase
-        .from('allowance_cycles')
-        .insert({
-          family_id: familyId,
-          child_id,
-          month,
-          year,
-          status: 'open',
-          opening_balance: opening,
-          base_amount: base,
-        })
-        .select()
-        .maybeSingle();
-      if (error) throw new Error(error.message);
-      
-      if (inserted) {
-        const transRows = [];
-        if (opening > 0) {
-          transRows.push({
-            id: uuidv4(),
-            family_id: familyId,
-            child_id,
-            cycle_id: inserted.id,
-            type: 'credit',
-            origin: 'base',
-            description: 'Saldo do mês anterior',
-            amount: opening,
-            status: 'approved',
-            approved_by: userId || null,
-            balance_after: 0
-          });
-        }
-        if (base > 0) {
-          transRows.push({
-            id: uuidv4(),
-            family_id: familyId,
-            child_id,
-            cycle_id: inserted.id,
-            type: 'credit',
-            origin: 'base',
-            description: 'Mesada Base',
-            amount: base,
-            status: 'approved',
-            approved_by: userId || null,
-            balance_after: 0
-          });
-        }
-        if (transRows.length > 0) {
-          await supabase.from('allowance_transactions').insert(transRows);
-        }
-      }
-
-      return { data: inserted || {} };
+      const cycle = await ensureOpenAllowanceCycleRow(supabase, familyId, child_id);
+      if (!cycle) throw new Error('Não foi possível carregar ou criar o ciclo de mesada.');
+      return { data: cycle };
     }
 
     if (path === '/allowance/transactions/manual') {
-      if (!body?.cycle_id || !body?.child_id || body.amount == null || !body?.type) {
-        throw new Error('Mesada manual: cycle_id, child_id, amount e type são obrigatórios.');
+      if (!body?.child_id || body.amount == null || !body?.type) {
+        throw new Error('Mesada manual: child_id, amount e type são obrigatórios.');
       }
+      const childId = body.child_id;
+      let cycleId = body.cycle_id;
+      if (!cycleId) {
+        const cycle = await ensureOpenAllowanceCycleRow(supabase, familyId, childId);
+        if (cycle) {
+          cycleId = cycle.id;
+        }
+      }
+      if (!cycleId) {
+        throw new Error('Não foi possível identificar ou criar um ciclo de mesada ativo para este filho.');
+      }
+
       const amt = Number(body.amount);
       const { data: inserted, error: insErr } = await supabase
         .from('allowance_transactions')
         .insert({
           id: uuidv4(),
           family_id: familyId,
-          child_id: body.child_id,
-          cycle_id: body.cycle_id,
+          child_id: childId,
+          cycle_id: cycleId,
           type: body.type,
           amount: amt,
           description: body.description ?? null,
@@ -2724,9 +2782,9 @@ const api = {
       if (insErr) throw new Error(insErr.message);
 
       const delta = body.type === 'credit' ? amt : -amt;
-      const { data: cycle } = await supabase.from('allowance_cycles').select('manual_adjustments').eq('id', body.cycle_id).eq('family_id', familyId).single();
+      const { data: cycle } = await supabase.from('allowance_cycles').select('manual_adjustments').eq('id', cycleId).eq('family_id', familyId).single();
       const currentAdj = Number(cycle?.manual_adjustments || 0);
-      await supabase.from('allowance_cycles').update({ manual_adjustments: currentAdj + delta }).eq('id', body.cycle_id).eq('family_id', familyId);
+      await supabase.from('allowance_cycles').update({ manual_adjustments: currentAdj + delta }).eq('id', cycleId).eq('family_id', familyId);
 
       return { data: inserted || {} };
     }
@@ -2760,6 +2818,77 @@ const api = {
         .eq('id', cycleId)
         .eq('family_id', familyId);
       if (closeErr) throw new Error(closeErr.message || 'Erro ao fechar ciclo.');
+
+      // Criar o ciclo seguinte automaticamente
+      const nextMonth = cycle.month === 12 ? 1 : cycle.month + 1;
+      const nextYear = cycle.month === 12 ? cycle.year + 1 : cycle.year;
+
+      const { data: nextExisting } = await supabase
+        .from('allowance_cycles')
+        .select('*')
+        .eq('child_id', cycle.child_id)
+        .eq('family_id', familyId)
+        .eq('month', nextMonth)
+        .eq('year', nextYear)
+        .eq('status', 'open')
+        .maybeSingle();
+
+      if (!nextExisting) {
+        const base = settings?.base_amount ?? 0;
+        const opening = settings?.allow_accumulation ? finalAmt : 0;
+
+        const { data: insertedNext } = await supabase
+          .from('allowance_cycles')
+          .insert({
+            family_id: familyId,
+            child_id: cycle.child_id,
+            month: nextMonth,
+            year: nextYear,
+            status: 'open',
+            opening_balance: opening,
+            base_amount: base,
+          })
+          .select()
+          .maybeSingle();
+
+        if (insertedNext) {
+          const transRows = [];
+          if (opening !== 0) {
+            transRows.push({
+              id: uuidv4(),
+              family_id: familyId,
+              child_id: cycle.child_id,
+              cycle_id: insertedNext.id,
+              type: opening > 0 ? 'credit' : 'debit',
+              origin: 'base',
+              description: 'Saldo do ciclo anterior',
+              amount: Math.abs(opening),
+              status: 'approved',
+              approved_by: null,
+              balance_after: 0
+            });
+          }
+          if (base > 0) {
+            transRows.push({
+              id: uuidv4(),
+              family_id: familyId,
+              child_id: cycle.child_id,
+              cycle_id: insertedNext.id,
+              type: 'credit',
+              origin: 'base',
+              description: 'Mesada Base',
+              amount: base,
+              status: 'approved',
+              approved_by: null,
+              balance_after: 0
+            });
+          }
+          if (transRows.length > 0) {
+            await supabase.from('allowance_transactions').insert(transRows);
+          }
+        }
+      }
+
       return { data: { ok: true, final_amount: finalAmt } };
     }
 

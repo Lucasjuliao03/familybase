@@ -95,7 +95,7 @@ export function PWAProvider({ children }) {
         applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
       });
 
-      // Send subscription to backend
+      // Envia a subscrição
       await api.post('/push/subscribe', { subscription: sub.toJSON() });
       setIsPushSubscribed(true);
       subscribedRef.current = true;

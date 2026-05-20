@@ -1,5 +1,5 @@
 /**
- * Paleta alinhada com backend/src/lib/userDisplayColors.js
+ * Paleta de cores para exibição dos membros da família.
  */
 export const USER_DISPLAY_COLOR_PALETTE = [
   '#6C5CE7', '#E84393', '#00B894', '#FDCB6E', '#74B9FF', '#E17055', '#A29BFE', '#55EFC4',

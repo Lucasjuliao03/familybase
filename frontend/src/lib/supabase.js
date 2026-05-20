@@ -5,9 +5,7 @@ export { fetchNoStoreWithDeadline, fetchNoStoreWithDeadline as fetchNoStore } fr
 
 /**
  * URL que o browser usa para Auth/REST/Storage/Functions.
- * Em produção comercial: aponte para o proxy do teu backend, ex. https://api.teudominio.com/api/supabase
- * (o servidor define SUPABASE_URL com https://<ref>.supabase.co e resolve o DNS).
- * Em dev: http://localhost:5173/api/supabase (Vite reencaminha) ou http://localhost:3001/api/supabase
+ * Conecta diretamente ao host do Supabase.
  */
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;

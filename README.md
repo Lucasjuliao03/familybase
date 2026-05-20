@@ -1,12 +1,12 @@
-# FamilyBase - Gamified Family Management API
+# FamilyBase - Gamified Family Management Platform
 
-FamilyBase is a full-stack SaaS platform designed to help families manage tasks, finances (allowance/mesada), education (grades), and schedules through a gamified and organized interface. 
+FamilyBase is a serverless SaaS platform designed to help families manage tasks, finances (allowance/mesada), education (grades), and schedules through a gamified and organized interface.
 
-The project is divided into two main parts: the **Frontend** (React + Vite) and the **Backend** (Node.js + Express).
+The project uses a frontend built with **React + Vite** communicating directly with **Supabase** (Database, Authentication, Storage, and Edge Functions).
 
-## 🚀 Features & Modules (Backend)
+## 🚀 Features & Modules (Supabase)
 
-The backend provides a robust RESTful API with the following core modules:
+A aplicação conta com os seguintes módulos e recursos integrados diretamente ao Supabase:
 
 *   **Auth Module (`/auth`)**: Handles user authentication, registration, login, and JWT token management.
 *   **Families Module (`/families`)**: Manages family units, allowing parents to add children and relatives to their family group.
@@ -46,17 +46,11 @@ The frontend is a responsive, modern web application built with React. It featur
 ## 🛠️ Technology Stack
 
 *   **Frontend**: React 19, Vite, React Router DOM, Context API.
-*   **Backend**: Node.js, Express, SQLite (better-sqlite3), JWT, Bcrypt.
+*   **Backend & Banco de Dados**: Supabase (PostgreSQL, Edge Functions, GoTrue Auth, Storage).
 
-## ⚙️ How to Run
+## ⚙️ Como Executar
 
-1.  **Backend**:
-    ```bash
-    cd backend
-    npm install
-    npm run dev
-    ```
-2.  **Frontend**:
+1.  **Frontend**:
     ```bash
     cd frontend
     npm install
