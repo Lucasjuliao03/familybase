@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import { useGeolocation } from '../hooks/useGeolocation';
@@ -45,11 +46,25 @@ export default function FamilyLocationPage() {
   const toast = useToast();
 
   // Geolocalização própria
-  const { position, error: geoError, permissionDenied } = useGeolocation({
+  const { position, error: geoError, permissionDenied, refreshing, forceRefresh } = useGeolocation({
     familyId,
     userId,
     enabled: !!familyId && !!userId,
   });
+
+  // Handler para forçar atualização do próprio GPS
+  const handleForceMyLocation = useCallback(async () => {
+    try {
+      await forceRefresh();
+      toast.success('📍 Localização atualizada!');
+    } catch (e) {
+      if (e?.code === 1) {
+        toast.error('Permissão de localização negada.');
+      } else {
+        toast.error('Não foi possível obter a localização agora.');
+      }
+    }
+  }, [forceRefresh, toast]);
 
   // Localizações da família em tempo real
   const { locations: locMap, loading: locsLoading } = useFamilyLocations({
@@ -304,6 +319,15 @@ export default function FamilyLocationPage() {
     setSelectedMemberId(targetUserId);
     setIsFollowingMember(true);
     setCenterTrigger(prev => prev + 1);
+
+    // Se clicou em si mesmo, forçar atualização GPS local imediatamente
+    if (targetUserId === userId) {
+      forceRefresh()
+        .then(() => toast.info('📍 Sua localização foi atualizada!'))
+        .catch(() => {});
+      return;
+    }
+
     if (!familyId || !targetUserId) return;
     
     // Obter o nome do alvo
@@ -326,7 +350,7 @@ export default function FamilyLocationPage() {
         }, 1500);
       }
     });
-  }, [familyId, locMap, toast]);
+  }, [familyId, locMap, toast, userId, forceRefresh]);
 
   return (
     <div className="location-page">
@@ -375,15 +399,7 @@ export default function FamilyLocationPage() {
       />
 
       {/* Floating map controls */}
-      <div style={{
-        position: 'absolute',
-        top: '65px',
-        right: '10px',
-        zIndex: 500,
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '8px'
-      }}>
+      <div className="location-floating-controls">
         {selectedMemberId && !isFollowingMember && (
           <button
             className="location-btn-icon"
@@ -392,7 +408,7 @@ export default function FamilyLocationPage() {
               setCenterTrigger(prev => prev + 1);
             }}
             title="Centralizar no Membro"
-            style={{ width: '40px', height: '40px', borderRadius: '50%', padding: 0 }}
+            style={{ width: '44px', height: '44px', borderRadius: '50%', padding: 0 }}
           >
             🎯
           </button>
@@ -405,7 +421,7 @@ export default function FamilyLocationPage() {
             setCenterTrigger(prev => prev + 1);
           }}
           title="Ver Todos"
-          style={{ width: '40px', height: '40px', borderRadius: '50%', padding: 0 }}
+          style={{ width: '44px', height: '44px', borderRadius: '50%', padding: 0 }}
         >
           🌐
         </button>
@@ -429,6 +445,18 @@ export default function FamilyLocationPage() {
         <div className="location-top-row">
           <h1 className="location-top-title">📍 Localização</h1>
           <div className="location-top-actions">
+            {/* Botão forçar GPS próprio */}
+            <button
+              className="location-btn-icon"
+              onClick={handleForceMyLocation}
+              disabled={refreshing}
+              title="Atualizar minha localização agora"
+              style={{ position: 'relative' }}
+            >
+              {refreshing ? (
+                <span style={{ display: 'inline-block', animation: 'spin 1s linear infinite' }}>⟳</span>
+              ) : '🔄'}
+            </button>
             <select
               className="location-filter-select"
               value={deviceFilter}
@@ -505,10 +533,10 @@ export default function FamilyLocationPage() {
         </div>
       )}
 
-      {/* Create Zone Modal */}
-      {showZoneModal && (
-        <div className="modal-overlay" onClick={() => setShowZoneModal(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 420 }}>
+      {/* Create Zone Modal — renderizado no document.body via portal para ficar acima de tudo */}
+      {showZoneModal && createPortal(
+        <div className="location-modal-overlay" onClick={() => setShowZoneModal(false)}>
+          <div className="location-modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2 className="modal-title">🛡️ Nova Zona Segura</h2>
               <button className="modal-close" onClick={() => setShowZoneModal(false)}>×</button>
@@ -583,13 +611,15 @@ export default function FamilyLocationPage() {
               </>
             )}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
-      
+
+      {/* DeviceManagerModal já usa portal internamente */}
       {showDeviceManager && (
-        <DeviceManagerModal 
-          familyId={familyId} 
-          onClose={() => setShowDeviceManager(false)} 
+        <DeviceManagerModal
+          familyId={familyId}
+          onClose={() => setShowDeviceManager(false)}
         />
       )}
     </div>

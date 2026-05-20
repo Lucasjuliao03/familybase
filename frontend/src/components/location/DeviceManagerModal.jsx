@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { supabase } from '../../lib/supabase';
 import { getDeviceId } from '../../lib/device';
 
@@ -116,12 +117,12 @@ export default function DeviceManagerModal({ familyId, onClose }) {
     grouped[dev.user_id].push(dev);
   });
 
-  return (
+  return createPortal(
     <div
       style={{
-        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
+        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)',
         zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center',
-        padding: 16
+        padding: 16, backdropFilter: 'blur(6px)'
       }}
       onClick={onClose}
     >
@@ -287,6 +288,7 @@ export default function DeviceManagerModal({ familyId, onClose }) {
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

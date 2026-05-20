@@ -30,6 +30,7 @@ export function useGeolocation({ familyId, userId, enabled = true }) {
   const [error, setError] = useState(null);
   const [permissionDenied, setPermissionDenied] = useState(false);
   const [sending, setSending] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   const lastSentRef = useRef({ lat: 0, lng: 0, ts: 0 });
   const watchIdRef = useRef(null);
@@ -155,5 +156,44 @@ export function useGeolocation({ familyId, userId, enabled = true }) {
     };
   }, [enabled, familyId, userId, sendToSupabase]);
 
-  return { position, error, permissionDenied, sending };
+  /**
+   * Força uma atualização imediata da localização do usuário atual.
+   * Ignora o throttle de distância/tempo e envia direto ao Supabase.
+   * Retorna uma Promise que resolve quando a posição for obtida.
+   */
+  const forceRefresh = useCallback(() => {
+    return new Promise((resolve, reject) => {
+      if (!navigator.geolocation) {
+        reject(new Error('Geolocalização não suportada'));
+        return;
+      }
+      setRefreshing(true);
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const { latitude, longitude, accuracy, speed, heading } = pos.coords;
+          setPosition({ lat: latitude, lng: longitude, accuracy, speed, heading, ts: Date.now() });
+          setError(null);
+          setPermissionDenied(false);
+          // Zera o throttle para forçar envio imediato
+          lastSentRef.current = { lat: 0, lng: 0, ts: 0 };
+          sendToSupabase(latitude, longitude, accuracy, speed, heading)
+            .finally(() => setRefreshing(false));
+          resolve({ lat: latitude, lng: longitude, accuracy });
+        },
+        (err) => {
+          setRefreshing(false);
+          if (err.code === 1) {
+            setPermissionDenied(true);
+            setError('Permissão de localização negada.');
+          } else {
+            setError('Não foi possível obter a localização.');
+          }
+          reject(err);
+        },
+        { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+      );
+    });
+  }, [sendToSupabase]);
+
+  return { position, error, permissionDenied, sending, refreshing, forceRefresh };
 }
