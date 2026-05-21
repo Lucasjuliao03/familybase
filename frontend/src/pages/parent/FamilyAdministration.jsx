@@ -136,6 +136,7 @@ export default function FamilyAdministration() {
   const [resetWizard, setResetWizard] = useState(null); // null | 'intro' | 'confirm'
   const [resetPhraseDraft, setResetPhraseDraft] = useState('');
   const [resetLoading, setResetLoading] = useState(false);
+  const [logoUploading, setLogoUploading] = useState(false);
 
   const loadAll = useCallback(async () => {
     try {
@@ -532,7 +533,16 @@ export default function FamilyAdministration() {
                 )}
               </div>
               <input type="file" accept="image/*" hidden id="fam-logo-inp" onChange={uploadLogo} />
-              <label htmlFor="fam-logo-inp" className="btn btn-secondary" style={{ cursor: 'pointer' }}>
+              <label
+                htmlFor="fam-logo-inp"
+                className="btn btn-secondary"
+                style={{
+                  cursor: logoUploading ? 'wait' : 'pointer',
+                  opacity: logoUploading ? 0.75 : 1,
+                  pointerEvents: logoUploading ? 'none' : 'auto',
+                }}
+                aria-busy={logoUploading}
+              >
                 {logoUploading ? '…' : t('fam_admin_upload_logo')}
               </label>
               {familyForm.logo_url && (
