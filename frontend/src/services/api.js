@@ -2643,16 +2643,28 @@ const api = {
           if (!found.has(id)) throw new Error('Uma ou mais crianças indicadas não pertencem à família.');
         }
 
-        const { data: dupRows, error: dErr } = await supabase
+        const { data: dupRowsRaw, error: dErr } = await supabase
           .from('tasks')
           .select('template_catalog_key, child_id')
           .eq('family_id', familyId)
-          .in('child_id', selectedChildIds)
-          .not('template_catalog_key', 'is', null);
-        if (dErr) throw new Error(dErr.message);
+          .in('child_id', selectedChildIds);
+        if (dErr) {
+          const dMsg = String(dErr.message || dErr.details || '').toLowerCase();
+          const colMissing =
+            dMsg.includes('template_catalog_key') &&
+            (dMsg.includes('does not exist') || dMsg.includes('schema cache'));
+          throw new Error(
+            colMissing
+              ? 'A base de dados ainda não tem a coluna `template_catalog_key` nas tarefas. No Supabase, execute o ficheiro de migração `20260523_tasks_template_catalog_key.sql` (SQL Editor → colar SQL → Run) e volte a tentar.'
+              : dErr.message || 'Erro ao verificar modelos já existentes.',
+          );
+        }
         const existingPair = new Set();
-        for (const r of dupRows || []) {
-          if (r.template_catalog_key && r.child_id) existingPair.add(`${r.child_id}::${r.template_catalog_key}`);
+        for (const r of dupRowsRaw || []) {
+          const k = r?.template_catalog_key;
+          if (k != null && String(k).trim() !== '' && r.child_id) {
+            existingPair.add(`${r.child_id}::${String(k).trim()}`);
+          }
         }
 
         let created = 0;
@@ -2725,6 +2737,15 @@ const api = {
                 skipped_existing += 1;
                 existingPair.add(pairKey);
                 continue;
+              }
+              const low = `${msg} ${insErr.details || ''}`.toLowerCase();
+              if (
+                low.includes('template_catalog_key') &&
+                (low.includes('does not exist') || low.includes('schema cache') || low.includes('column'))
+              ) {
+                throw new Error(
+                  'A base de dados ainda não está preparada para o catálogo FamilyBase. Execute a migração `20260523_tasks_template_catalog_key.sql` no Supabase (SQL Editor e Run) — cria `template_catalog_key` e um índice único contra duplicados.',
+                );
               }
               throw new Error(msg);
             }
