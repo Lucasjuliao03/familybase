@@ -1016,7 +1016,42 @@ export default function TaskManager() {
       {/* MODAL: catálogo FamilyBase */}
       {showCatalogSeedModal && isGestorParent && (
         <div className="modal-overlay" onClick={() => !catalogSeedMutation.isPending && setShowCatalogSeedModal(false)}>
-          <div className="modal modal-lg" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 520 }}>
+          <div
+            className="modal modal-lg"
+            role="dialog"
+            aria-modal="true"
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: 520, position: 'relative' }}
+          >
+            {catalogSeedMutation.isPending && (
+              <div
+                aria-live="polite"
+                role="status"
+                aria-busy="true"
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  borderRadius: 'inherit',
+                  background: 'color-mix(in srgb, var(--bg-card) 92%, transparent)',
+                  zIndex: 20,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexDirection: 'column',
+                  gap: 14,
+                  padding: 24,
+                  textAlign: 'center',
+                  boxSizing: 'border-box',
+                  backdropFilter: 'blur(2px)',
+                }}
+              >
+                <div className="dash-loading__spinner" style={{ flexShrink: 0 }} aria-hidden />
+                <strong style={{ fontSize: '1rem' }}>{t('task_catalog_seed_loading_title')}</strong>
+                <p style={{ margin: 0, fontSize: '0.86rem', color: 'var(--text-light)', maxWidth: 360 }}>
+                  {t('task_catalog_seed_loading_sub')}
+                </p>
+              </div>
+            )}
             <div className="modal-header">
               <h2 className="modal-title">✨ {t('task_catalog_seed_modal_title')}</h2>
               <button
@@ -1094,7 +1129,7 @@ export default function TaskManager() {
                     })
                   }
                 >
-                  {t('task_catalog_seed_run')}
+                  {catalogSeedMutation.isPending ? t('task_catalog_seed_run_loading') : t('task_catalog_seed_run')}
                 </button>
               </div>
             </div>

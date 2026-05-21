@@ -854,6 +854,78 @@ async function syncTaskAllowanceRules(supabase, taskId, allowanceRule) {
   if (tErr) throw new Error(tErr.message);
 }
 
+function isProbablyTaskUniqueViolation(err) {
+  const m = String(err?.message || err?.details || '');
+  return /duplicate key|unique constraint|ux_tasks_family_template_slug_child/i.test(m);
+}
+
+/**
+ * Inserts many catalog task rows (+ optional mesada rows) minimizando RTT ao Supabase.
+ * Em caso de conflito (corrida/concorrência), divide o lote até isolar ou ignorar duplicados.
+ */
+async function flushCatalogSeedTaskSliceRecursive(supabase, slice /* { insertRow, allowanceRuleSeed, pairKey }[] */, existingPairRef) {
+  let created = 0;
+  let skipped_dup = 0;
+  /** @type {{ task_id: string, rule: object }[]} */
+  const allowanceAttach = [];
+
+  if (!slice.length) return { created, skipped_dup, allowanceAttach };
+
+  const payloads = slice.map((s) => s.insertRow);
+  const { data: insertedBatch, error: insErr } = await supabase
+    .from('tasks')
+    .insert(payloads)
+    .select('id, child_id, template_catalog_key, affects_allowance');
+
+  const batchOk =
+    !insErr && Array.isArray(insertedBatch) && insertedBatch.length === payloads.length;
+
+  if (batchOk) {
+    const sliceByPair = new Map(slice.map((s) => [`${s.insertRow.child_id}::${s.insertRow.template_catalog_key}`, s]));
+    created = insertedBatch.length;
+    for (const row of insertedBatch) {
+      const pk = `${row.child_id}::${row.template_catalog_key}`;
+      if (existingPairRef) existingPairRef.add(pk);
+      const meta = sliceByPair.get(pk);
+      if (meta?.allowanceRuleSeed?.affects_allowance && row?.id) {
+        allowanceAttach.push({ task_id: row.id, rule: meta.allowanceRuleSeed });
+      }
+    }
+    return { created, skipped_dup, allowanceAttach };
+  }
+
+  /* Um único conflito (ou payload inválido) — granular */
+  if (payloads.length === 1) {
+    if (isProbablyTaskUniqueViolation(insErr)) {
+      skipped_dup = 1;
+      if (existingPairRef && slice[0]?.pairKey) existingPairRef.add(slice[0].pairKey);
+      return { created: 0, skipped_dup, allowanceAttach: [] };
+    }
+    const low = `${insErr?.message || ''} ${insErr?.details || ''}`.toLowerCase();
+    if (
+      low.includes('template_catalog_key') &&
+      (low.includes('does not exist') || low.includes('schema cache') || low.includes('column'))
+    ) {
+      throw new Error(
+        'A base de dados ainda não está preparada para o catálogo FamilyBase. Execute a migração `20260523_tasks_template_catalog_key.sql` no Supabase (SQL Editor → Run).',
+      );
+    }
+    throw new Error(insErr?.message || 'Erro ao inserir modelo de tarefa.');
+  }
+
+  /* Divide: transacção Postgres abortou o lote inteiro em caso de UNIQUE */
+  const mid = Math.ceil(payloads.length / 2);
+  const left = slice.slice(0, mid);
+  const right = slice.slice(mid);
+  const a = await flushCatalogSeedTaskSliceRecursive(supabase, left, existingPairRef);
+  const b = await flushCatalogSeedTaskSliceRecursive(supabase, right, existingPairRef);
+  return {
+    created: a.created + b.created,
+    skipped_dup: a.skipped_dup + b.skipped_dup,
+    allowanceAttach: [...a.allowanceAttach, ...b.allowanceAttach],
+  };
+}
+
 async function applyTaskOccurrenceAllowanceOnDecision(supabase, { familyId, userId, occurrenceId, approved, task }) {
   if (!task || task.is_health_reminder) return;
 
@@ -2671,6 +2743,8 @@ const api = {
         let skipped_existing = 0;
         let skipped_age = 0;
 
+        /** @type {{ insertRow: object; allowanceRuleSeed: object; pairKey: string }[]} */
+        const plannedInserts = [];
         for (const childId of selectedChildIds) {
           const yearsApprox = approximateAgeYearsFromBirthdayIso(found.get(childId)?.birthday);
           for (const entry of FAMILY_TASK_TEMPLATE_CATALOG) {
@@ -2726,40 +2800,38 @@ const api = {
               status: 'inactive',
             });
 
-            const { data: taskRow, error: insErr } = await supabase
-              .from('tasks')
-              .insert([insertRow])
-              .select('*, task_allowance_rules(*)')
-              .maybeSingle();
-            if (insErr) {
-              const msg = insErr.message || '';
-              if (/duplicate key|unique constraint|ux_tasks_family_template_slug_child/i.test(msg)) {
-                skipped_existing += 1;
-                existingPair.add(pairKey);
-                continue;
+            plannedInserts.push({ insertRow, allowanceRuleSeed, pairKey });
+          }
+        }
+
+        const flushRes = await flushCatalogSeedTaskSliceRecursive(supabase, plannedInserts, existingPair);
+        created += flushRes.created;
+        skipped_existing += flushRes.skipped_dup;
+
+        if (flushRes.allowanceAttach.length) {
+          const ruleRows = flushRes.allowanceAttach.map(({ task_id, rule }) => ({
+            id: uuidv4(),
+            task_id,
+            affects_allowance: true,
+            bonus_amount: Number(rule.bonus_amount ?? 0),
+            discount_amount: Number(rule.discount_amount ?? 0),
+            apply_discount_if_late: !!rule.apply_discount_if_late,
+          }));
+          const { error: allowBulkErr } = await supabase.from('task_allowance_rules').insert(ruleRows);
+          if (allowBulkErr) {
+            console.warn('[tasks] mesada bulk catálogo:', allowBulkErr.message);
+            for (const a of flushRes.allowanceAttach) {
+              try {
+                await syncTaskAllowanceRules(supabase, a.task_id, {
+                  affects_allowance: true,
+                  bonus_amount: a.rule.bonus_amount,
+                  discount_amount: a.rule.discount_amount ?? 0,
+                  apply_discount_if_late: !!a.rule.apply_discount_if_late,
+                });
+              } catch (e2) {
+                console.warn('[tasks] mesada catálogo (fallback):', e2 instanceof Error ? e2.message : e2);
               }
-              const low = `${msg} ${insErr.details || ''}`.toLowerCase();
-              if (
-                low.includes('template_catalog_key') &&
-                (low.includes('does not exist') || low.includes('schema cache') || low.includes('column'))
-              ) {
-                throw new Error(
-                  'A base de dados ainda não está preparada para o catálogo FamilyBase. Execute a migração `20260523_tasks_template_catalog_key.sql` no Supabase (SQL Editor e Run) — cria `template_catalog_key` e um índice único contra duplicados.',
-                );
-              }
-              throw new Error(msg);
             }
-            existingPair.add(pairKey);
-
-            try {
-              await syncTaskAllowanceRules(supabase, taskRow.id, allowanceRuleSeed);
-            } catch (e) {
-              console.warn('[tasks] regras mesada (seed catálogo):', e instanceof Error ? e.message : e);
-            }
-
-            /* Sem ocorrências iniciais enquanto inactive: `ensureDailyOccurrences…` materializa ao activar. */
-
-            created += 1;
           }
         }
 
