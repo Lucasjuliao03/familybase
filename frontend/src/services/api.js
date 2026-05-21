@@ -8,6 +8,11 @@ import {
   dedupeMedalsForAwardingCatalog,
   normalizedMedalDedupeKey,
 } from '../lib/childDashboardDedupe';
+import {
+  FAMILY_TASK_TEMPLATE_CATALOG,
+  catalogEntryMatchesApproxAgeYears,
+  catalogEntryToSeedDescription,
+} from '../data/familyTaskTemplateCatalog.js';
 
 const BASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
 const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
@@ -236,6 +241,7 @@ const TASK_INSERT_COLUMNS = [
   'affects_allowance',
   'visible_on_calendar',
   'generate_notification',
+  'template_catalog_key',
 ];
 
 /** Apenas campos físicos da tabela `tasks` (UI/API podem incluir bonus_amount, ícones ou JSON aninhados). */
@@ -284,6 +290,30 @@ function mapTaskRowWithAllowance(t) {
     child_color: ch?.color || rest.child_color,
     assignee_name: au?.name || rest.assignee_name || '',
   };
+}
+
+/** Idade aproximada em anos civis completos para filtragem de modelos FamilyBase (`children.birthday` ISO yyyy-mm-dd). */
+function approximateAgeYearsFromBirthdayIso(birthday) {
+  if (birthday == null || birthday === '') return null;
+  const raw = String(birthday).trim();
+  const d = new Date(raw.includes('T') ? raw : `${raw}T12:00:00`);
+  if (Number.isNaN(d.getTime())) return null;
+  const t = new Date();
+  let age = t.getFullYear() - d.getFullYear();
+  const m = t.getMonth() - d.getMonth();
+  if (m < 0 || (m === 0 && t.getDate() < d.getDate())) age -= 1;
+  return age;
+}
+
+async function assertCatalogSeedGestorGate(sb, userId) {
+  if (!userId) throw new Error('Sessão inválida.');
+  const { data: me, error } = await sb.from('users').select('role, access_profile').eq('id', userId).maybeSingle();
+  if (error) throw new Error(error.message);
+  const role = me?.role;
+  const ap = me?.access_profile ?? me?.accessProfile ?? 'gestor';
+  if (role !== 'parent' || ap !== 'gestor') {
+    throw new Error('Apenas o gestor da família pode carregar os modelos do catálogo FamilyBase.');
+  }
 }
 
 const CALENDAR_EVENT_SELECT =
@@ -2581,6 +2611,147 @@ const api = {
     }
     
     if (path.startsWith('/tasks') && !path.startsWith('/tasks/occurrences')) {
+      /** Catálogo FamilyBase — só gestor; modelos ficam `inactive` até activação manual na aba Modelos (sem duplicar por slug+filho). */
+      if (path === '/tasks/catalog/seed-templates') {
+        await assertCatalogSeedGestorGate(supabase, userId);
+        const rawIds = body.child_ids ?? body.childIds;
+        let selectedChildIds = [];
+        if (Array.isArray(rawIds)) selectedChildIds = rawIds.map((x) => String(x).trim()).filter(Boolean);
+        else if (typeof rawIds === 'string') {
+          selectedChildIds = rawIds
+            .split(/[\s,;]+/)
+            .map((s) => String(s).trim())
+            .filter(Boolean);
+        }
+        selectedChildIds = [...new Set(selectedChildIds)];
+        if (!selectedChildIds.length) throw new Error('Indique pelo menos uma criança (child_ids).');
+
+        const filterByAge =
+          body.filter_by_age !== false &&
+          body.filter_by_age !== 0 &&
+          body.filterByAge !== false &&
+          body.filterByAge !== 0;
+
+        const { data: chRows, error: chErr } = await supabase
+          .from('children')
+          .select('id, birthday')
+          .eq('family_id', familyId)
+          .in('id', selectedChildIds);
+        if (chErr) throw new Error(chErr.message);
+        const found = new Map((chRows || []).map((c) => [c.id, c]));
+        for (const id of selectedChildIds) {
+          if (!found.has(id)) throw new Error('Uma ou mais crianças indicadas não pertencem à família.');
+        }
+
+        const { data: dupRows, error: dErr } = await supabase
+          .from('tasks')
+          .select('template_catalog_key, child_id')
+          .eq('family_id', familyId)
+          .in('child_id', selectedChildIds)
+          .not('template_catalog_key', 'is', null);
+        if (dErr) throw new Error(dErr.message);
+        const existingPair = new Set();
+        for (const r of dupRows || []) {
+          if (r.template_catalog_key && r.child_id) existingPair.add(`${r.child_id}::${r.template_catalog_key}`);
+        }
+
+        let created = 0;
+        let skipped_existing = 0;
+        let skipped_age = 0;
+
+        for (const childId of selectedChildIds) {
+          const yearsApprox = approximateAgeYearsFromBirthdayIso(found.get(childId)?.birthday);
+          for (const entry of FAMILY_TASK_TEMPLATE_CATALOG) {
+            const pairKey = `${childId}::${entry.slug}`;
+            if (existingPair.has(pairKey)) {
+              skipped_existing += 1;
+              continue;
+            }
+            if (filterByAge && yearsApprox != null && !catalogEntryMatchesApproxAgeYears(entry, yearsApprox)) {
+              skipped_age += 1;
+              continue;
+            }
+
+            const recurrenceArr = Array.isArray(entry.recurrence_days) ? [...entry.recurrence_days] : [];
+            let picked = normalizeTaskPickedDatesAndRecurrence({
+              title: entry.title,
+              description: catalogEntryToSeedDescription(entry),
+              type: entry.taskType,
+              category: entry.category,
+              points: Number(entry.points ?? 10),
+              coins: Number(entry.coins ?? 0),
+              frequency: entry.frequency,
+              recurrence_days: recurrenceArr,
+              start_date: toYMDLocal(),
+              requires_approval: !!entry.requiresApproval,
+              is_recurring: entry.frequency !== 'once',
+              affects_allowance: !!entry.affectsAllowance,
+              visible_on_calendar: false,
+              generate_notification: true,
+            });
+            if (!picked.start_date) picked.start_date = toYMDLocal();
+            picked.start_date = normalizeDbDate(picked.start_date) || toYMDLocal();
+
+            const allowanceRuleSeed = entry.affectsAllowance
+              ? {
+                  affects_allowance: true,
+                  bonus_amount: Number(entry.bonus_amount ?? 0),
+                  discount_amount: 0,
+                  apply_discount_if_late: false,
+                }
+              : { affects_allowance: false };
+
+            picked.affects_allowance = !!(allowanceRuleSeed && allowanceRuleSeed.affects_allowance);
+
+            const insertRow = omitUndefined({
+              ...picked,
+              template_catalog_key: entry.slug,
+              family_id: familyId,
+              created_by: userId || null,
+              id: uuidv4(),
+              child_id: childId,
+              assignee_user_id: null,
+              status: 'inactive',
+            });
+
+            const { data: taskRow, error: insErr } = await supabase
+              .from('tasks')
+              .insert([insertRow])
+              .select('*, task_allowance_rules(*)')
+              .maybeSingle();
+            if (insErr) {
+              const msg = insErr.message || '';
+              if (/duplicate key|unique constraint|ux_tasks_family_template_slug_child/i.test(msg)) {
+                skipped_existing += 1;
+                existingPair.add(pairKey);
+                continue;
+              }
+              throw new Error(msg);
+            }
+            existingPair.add(pairKey);
+
+            try {
+              await syncTaskAllowanceRules(supabase, taskRow.id, allowanceRuleSeed);
+            } catch (e) {
+              console.warn('[tasks] regras mesada (seed catálogo):', e instanceof Error ? e.message : e);
+            }
+
+            /* Sem ocorrências iniciais enquanto inactive: `ensureDailyOccurrences…` materializa ao activar. */
+
+            created += 1;
+          }
+        }
+
+        return {
+          data: {
+            created,
+            skipped_existing,
+            skipped_age,
+            catalog_size: FAMILY_TASK_TEMPLATE_CATALOG.length,
+          },
+        };
+      }
+
       const allowanceRule = body.allowance_rule;
       const raw = { ...body };
       delete raw.allowance_rule;

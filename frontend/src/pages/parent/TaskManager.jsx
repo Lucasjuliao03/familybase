@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useToast } from '../../contexts/ToastContext';
+import { useAuth } from '../../contexts/AuthContext';
 import api from '../../services/api';
 import useDailyCalendarRefresh from '../../hooks/useDailyCalendarRefresh';
 import { enrichOccurrencesStatus } from '../../lib/taskStatus';
@@ -63,7 +64,11 @@ function TaskTableSkeleton({ cols = 7, rows = 5, ariaBusyLabel = '' }) {
 export default function TaskManager() {
   const { lang, t } = useLanguage();
   const toast = useToast();
+  const { user } = useAuth();
   const queryClient = useQueryClient();
+
+  const isGestorParent =
+    user?.role === 'parent' && (user?.access_profile ?? user?.accessProfile ?? 'gestor') === 'gestor';
 
   const weekdayButtons = useMemo(() => {
     const lc = lang === 'en' ? 'en-US' : 'pt-PT';
@@ -79,6 +84,10 @@ export default function TaskManager() {
 
   /** Atualizado em cada render para alinhar o dia civil com o servidor após pivot/poll. */
   const todayStr = todayYmdLocal();
+
+  const [showCatalogSeedModal, setShowCatalogSeedModal] = useState(false);
+  const [catalogSeedChildIds, setCatalogSeedChildIds] = useState([]);
+  const [catalogFilterByAge, setCatalogFilterByAge] = useState(true);
 
   const [filter, setFilter] = useState({ child_id: '', type: '' });
   const [histFilter, setHistFilter] = useState(initialHistoryFilter);
@@ -238,6 +247,33 @@ export default function TaskManager() {
       queryClient.invalidateQueries({ queryKey: ['tasks'] });
     },
   });
+
+  const catalogSeedMutation = useMutation({
+    mutationFn: (payload) => api.post('/tasks/catalog/seed-templates', payload),
+    onSuccess: (res) => {
+      const d = res?.data ?? {};
+      const msg = String(t('task_catalog_seed_toast'))
+        .replace('{{created}}', String(d.created ?? 0))
+        .replace('{{skipped}}', String(d.skipped_existing ?? 0))
+        .replace('{{skippedAge}}', String(d.skipped_age ?? 0));
+      toast.success(msg);
+      setShowCatalogSeedModal(false);
+    },
+    onError: (err) => {
+      toast.error(err.response?.data?.error || err.message || t('task_catalog_seed_err'));
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ['tasks'] }),
+  });
+
+  const toggleCatalogSeedChild = useCallback((id) => {
+    setCatalogSeedChildIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  }, []);
+
+  const openCatalogSeedModalFn = useCallback(() => {
+    setCatalogSeedChildIds(children.map((c) => c.id));
+    setCatalogFilterByAge(true);
+    setShowCatalogSeedModal(true);
+  }, [children]);
 
   const toggleTemplateMutation = useMutation({
     mutationFn: ({ id, active }) => api.put(`/tasks/${id}`, { status: active ? 'active' : 'inactive' }),
@@ -418,7 +454,8 @@ export default function TaskManager() {
 
   const isRecurring = form.frequency !== 'once';
 
-  const blockUi = saveTaskMutation.isPending || toggleTemplateMutation.isPending;
+  const blockUi =
+    saveTaskMutation.isPending || toggleTemplateMutation.isPending || catalogSeedMutation.isPending;
 
   return (
     <div className="animate-fade-in">
@@ -845,6 +882,21 @@ export default function TaskManager() {
       {/* TEMPLATES VIEW */}
       {viewMode === 'templates' && (
         <div className="table-container">
+          <div className="mb-24" style={{ display: 'flex', flexWrap: 'wrap', gap: 14, justifyContent: 'space-between', alignItems: 'flex-start' }}>
+            <p style={{ fontSize: '0.88rem', color: 'var(--text-light)', maxWidth: 720, margin: 0, flex: '1 1 280px' }}>
+              {isGestorParent ? t('task_catalog_seed_hint') : t('task_catalog_seed_guard')}
+            </p>
+            {isGestorParent ? (
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                disabled={catalogSeedMutation.isPending || !children.length}
+                onClick={openCatalogSeedModalFn}
+              >
+                ✨ {t('task_catalog_seed_btn')}
+              </button>
+            ) : null}
+          </div>
           <table className="table-stack-md">
             <thead>
               <tr>
@@ -885,6 +937,11 @@ export default function TaskManager() {
                   >
                     <td data-label={t('task_title')}>
                       <strong>{task.title}</strong>
+                      {task.template_catalog_key ? (
+                        <span className="badge badge-info" style={{ marginLeft: 6, fontSize: '0.7rem' }}>
+                          {t('task_badge_catalog')}
+                        </span>
+                      ) : null}
                       {task.is_recurring && <span className="badge badge-warning" style={{ marginLeft: 6, fontSize: '0.7rem' }}>🔄</span>}
                       {task.description && <div style={{ fontSize: '0.78rem', color: 'var(--text-light)' }}>{task.description}</div>}
                     </td>
@@ -953,6 +1010,95 @@ export default function TaskManager() {
               </tbody>
             )}
           </table>
+        </div>
+      )}
+
+      {/* MODAL: catálogo FamilyBase */}
+      {showCatalogSeedModal && isGestorParent && (
+        <div className="modal-overlay" onClick={() => !catalogSeedMutation.isPending && setShowCatalogSeedModal(false)}>
+          <div className="modal modal-lg" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 520 }}>
+            <div className="modal-header">
+              <h2 className="modal-title">✨ {t('task_catalog_seed_modal_title')}</h2>
+              <button
+                type="button"
+                className="modal-close"
+                disabled={catalogSeedMutation.isPending}
+                onClick={() => !catalogSeedMutation.isPending && setShowCatalogSeedModal(false)}
+              >
+                ✕
+              </button>
+            </div>
+            <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <p style={{ margin: 0, fontSize: '0.86rem', color: 'var(--text-light)' }}>{t('task_catalog_seed_hint')}</p>
+              <fieldset style={{ margin: 0, border: '1px solid var(--border)', borderRadius: 8, padding: 12 }}>
+                <legend className="form-label" style={{ padding: '0 6px', margin: 0 }}>
+                  {t('task_catalog_seed_children_label')}
+                </legend>
+                <div className="flex gap-12" style={{ marginBottom: 10 }}>
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-ghost"
+                    disabled={catalogSeedMutation.isPending}
+                    onClick={() => setCatalogSeedChildIds(children.map((c) => c.id))}
+                  >
+                    {t('task_catalog_seed_select_all')}
+                  </button>
+                  <button type="button" className="btn btn-sm btn-ghost" disabled={catalogSeedMutation.isPending} onClick={() => setCatalogSeedChildIds([])}>
+                    {t('task_catalog_seed_select_none')}
+                  </button>
+                </div>
+                {!children.length ? <p style={{ margin: 0, color: 'var(--text-light)' }}>{t('task_catalog_seed_no_children')}</p> : (
+                  <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    {children.map((c) => (
+                      <li key={c.id}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: catalogSeedMutation.isPending ? 'not-allowed' : 'pointer' }}>
+                          <input
+                            type="checkbox"
+                            checked={catalogSeedChildIds.includes(c.id)}
+                            disabled={catalogSeedMutation.isPending}
+                            onChange={() => toggleCatalogSeedChild(c.id)}
+                          />
+                          <span>
+                            <span style={{ width: 8, height: 8, borderRadius: '50%', background: c.color || 'var(--border)', display: 'inline-block', marginRight: 6 }} />
+                            {c.name}
+                          </span>
+                        </label>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </fieldset>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: '0.88rem', cursor: catalogSeedMutation.isPending ? 'not-allowed' : 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={catalogFilterByAge}
+                  disabled={catalogSeedMutation.isPending}
+                  onChange={(e) => setCatalogFilterByAge(e.target.checked)}
+                />
+                {t('task_catalog_seed_filter_age')}
+              </label>
+              <div className="flex gap-12" style={{ justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                <button type="button" className="btn btn-ghost" disabled={catalogSeedMutation.isPending} onClick={() => setShowCatalogSeedModal(false)}>
+                  {t('cancel')}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  disabled={
+                    catalogSeedMutation.isPending || !catalogSeedChildIds.length || !children.length
+                  }
+                  onClick={() =>
+                    catalogSeedMutation.mutate({
+                      child_ids: catalogSeedChildIds,
+                      filter_by_age: catalogFilterByAge,
+                    })
+                  }
+                >
+                  {t('task_catalog_seed_run')}
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
