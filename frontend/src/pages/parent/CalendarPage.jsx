@@ -326,8 +326,20 @@ export default function CalendarPage() {
       )}
 
       {showModal && (
-        <div className="modal-overlay" role="presentation" onClick={() => setShowModal(false)}>
-          <div className="modal" role="dialog" onMouseDown={(e) => e.stopPropagation()} aria-modal="true">
+        <div
+          className="modal-overlay"
+          role="presentation"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setShowModal(false);
+          }}
+        >
+          <div
+            className="modal"
+            role="dialog"
+            aria-modal="true"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="modal-header">
               <h2 className="modal-title">{form.id ? 'Editar Evento' : t('add_event')}</h2>
               <button type="button" className="modal-close" aria-label={t('cancel')} onClick={() => setShowModal(false)}>
