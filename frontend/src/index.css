@@ -533,6 +533,7 @@ tr:hover td { background: rgba(108,92,231,0.03); }
 .toast-success { background: var(--success); }
 .toast-error { background: var(--danger); }
 .toast-info { background: var(--info); }
+.toast-warning { background: #D97706; }
 
 /* Notification Bell */
 .notif-bell { position: relative; cursor: pointer; }

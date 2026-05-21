@@ -305,6 +305,14 @@ export default function TaskManager() {
       <div className="flex gap-12 mb-24" style={{ flexWrap: 'wrap', alignItems: 'center' }}>
         <div className="tabs tabs-scroll" style={{ margin: 0 }}>
           <button type="button" className={`tab ${viewMode === 'occurrences' ? 'active' : ''}`} onClick={() => setViewMode('occurrences')}>📅 Hoje</button>
+          <button type="button" className={`tab ${viewMode === 'approvals' ? 'active' : ''}`} onClick={() => setViewMode('approvals')}>
+            ⏳ Aprovações
+            {occurrences.filter(o => o.status === 'waiting_approval').length > 0 && (
+              <span className="badge badge-warning" style={{ marginLeft: 6, fontSize: '0.68rem' }}>
+                {occurrences.filter(o => o.status === 'waiting_approval').length}
+              </span>
+            )}
+          </button>
           <button type="button" className={`tab ${viewMode === 'templates' ? 'active' : ''}`} onClick={() => setViewMode('templates')}>🗂️ Modelos</button>
         </div>
         <select className="form-select" style={{ width: 'auto', maxWidth: '100%', minWidth: 0 }} value={filter.child_id} onChange={(e) => setFilter((p) => ({ ...p, child_id: e.target.value }))}>
@@ -383,6 +391,55 @@ export default function TaskManager() {
               </tbody>
             )}
           </table>
+        </div>
+      )}
+
+      {/* APPROVALS VIEW — tarefas aguardando aprovação do gestor */}
+      {viewMode === 'approvals' && (
+        <div className="table-container">
+          {occInitialSkeleton ? (
+            <table className="table-stack-md"><TaskTableSkeleton /></table>
+          ) : (() => {
+            const pending = occurrences.filter(o => o.status === 'waiting_approval');
+            if (pending.length === 0) {
+              return (
+                <div className="empty-state" style={{ padding: '48px 0' }}>
+                  <div className="empty-icon">✅</div>
+                  <h3>Nenhuma aprovação pendente</h3>
+                  <p>Quando um filho concluir uma tarefa que exige aprovação, ela aparecerá aqui.</p>
+                </div>
+              );
+            }
+            return (
+              <table className="table-stack-md">
+                <thead><tr><th>Tarefa</th><th>Filho</th><th>Horário</th><th>Pontos</th><th>Ações</th></tr></thead>
+                <tbody>
+                  {pending.map((occ) => (
+                    <tr key={occ.id}>
+                      <td data-label="Tarefa">
+                        <strong>{occ.title}</strong>
+                        {occ.description && <div style={{ fontSize: '0.78rem', color: 'var(--text-light)' }}>{occ.description}</div>}
+                      </td>
+                      <td data-label="Filho">
+                        <div className="flex gap-8" style={{ alignItems: 'center' }}>
+                          <div style={{ width: 8, height: 8, borderRadius: '50%', background: occ.child_color || 'var(--border)' }} />
+                          {occ.assignee_name || occ.child_name}
+                        </div>
+                      </td>
+                      <td data-label="Horário">{occ.due_time || '—'}</td>
+                      <td data-label="Pontos"><span className="badge badge-primary">⭐{occ.points}</span></td>
+                      <td data-label="Ações">
+                        <div className="flex gap-8">
+                          <button type="button" className="btn btn-sm btn-primary" onClick={() => handleApproveOcc(occ.id, true)}>✅ Aprovar</button>
+                          <button type="button" className="btn btn-sm btn-danger" onClick={() => handleApproveOcc(occ.id, false)}>❌ Reprovar</button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            );
+          })()}
         </div>
       )}
 

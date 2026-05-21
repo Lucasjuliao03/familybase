@@ -323,33 +323,67 @@ export default function FamilyLocationPage() {
     // Se clicou em si mesmo, forçar atualização GPS local imediatamente
     if (targetUserId === userId) {
       forceRefresh()
-        .then(() => toast.info('📍 Sua localização foi atualizada!'))
-        .catch(() => {});
+        .then(() => toast.success('📍 Sua localização foi atualizada!'))
+        .catch((e) => {
+          if (e?.code === 1) toast.error('Permissão de localização negada.');
+          else toast.error('Não foi possível obter sua localização agora.');
+        });
       return;
     }
 
     if (!familyId || !targetUserId) return;
-    
-    // Obter o nome do alvo
+
+    // Obter o nome e última atualização do alvo
     const loc = Array.from(locMap.values()).find(l => l.user_id === targetUserId);
     const targetName = loc?.users?.name?.split(' ')[0] || 'membro';
+    const lastUpdatedAt = loc?.updated_at ? new Date(loc.updated_at) : null;
+    const minutesSinceUpdate = lastUpdatedAt
+      ? Math.floor((Date.now() - lastUpdatedAt.getTime()) / 60000)
+      : null;
 
+    // Se a última atualização for muito recente (< 2min), já é suficientemente fresca
+    if (minutesSinceUpdate !== null && minutesSinceUpdate < 2) {
+      toast.info(`📍 ${targetName} — localização atualizada há ${minutesSinceUpdate < 1 ? 'menos de 1 min' : `${minutesSinceUpdate} min`}`);
+      return;
+    }
+
+    // Enviar broadcast solicitando atualização GPS ao dispositivo remoto
     const channelName = `location_updates:${familyId}`;
     const channel = supabase.channel(channelName);
-    
+    let broadcastSent = false;
+
     channel.subscribe((status) => {
       if (status === 'SUBSCRIBED') {
+        broadcastSent = true;
         channel.send({
           type: 'broadcast',
           event: 'force_update',
           payload: { user_id: targetUserId },
         });
-        toast.info(`📍 Solicitando atualização GPS de ${targetName}...`);
+
+        if (minutesSinceUpdate !== null && minutesSinceUpdate > 10) {
+          // Dispositivo provavelmente offline — informar sem criar expectativa
+          toast.info(
+            `📡 ${targetName} está offline há ~${minutesSinceUpdate} min. Mostrando última localização conhecida.`,
+          );
+        } else {
+          toast.info(`📍 Solicitando atualização GPS de ${targetName}…`);
+        }
+
         setTimeout(() => {
           supabase.removeChannel(channel);
-        }, 1500);
+        }, 2000);
       }
+
+      // Timeout: se não conseguiu se inscrever após 5s, o canal não está disponível
     });
+
+    setTimeout(() => {
+      if (!broadcastSent) {
+        supabase.removeChannel(channel);
+        toast.warning(`⚠️ Não foi possível contactar o dispositivo de ${targetName}. Mostrando última posição conhecida.`);
+      }
+    }, 5000);
   }, [familyId, locMap, toast, userId, forceRefresh]);
 
   return (

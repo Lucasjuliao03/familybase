@@ -11,7 +11,12 @@
  */
 
 /** Status que não devem ser sobrescritos pela lógica de atraso. */
-const FINAL_STATUSES = new Set(['approved', 'rejected', 'cancelled', 'completed_late']);
+const FINAL_STATUSES = new Set(['approved', 'rejected', 'cancelled', 'completed_late', 'not_completed']);
+
+/** Retorna data local no formato YYYY-MM-DD */
+function toLocalYmdStr(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
 
 /**
  * Constrói um objeto Date local a partir de uma string de data (YYYY-MM-DD)
@@ -60,6 +65,15 @@ export function computeRealTaskStatus(occ, now = new Date()) {
 
   // Para status pendente/em andamento, verificar prazo
   const dateStr = occ.occurrence_date || occ.start_date;
+
+  // Se a ocorrência é de um dia passado e não foi concluída → não concluída
+  if (dateStr) {
+    const todayYmd = toLocalYmdStr(now);
+    if (dateStr.slice(0, 10) < todayYmd) {
+      return { status: 'not_completed', isDelayed: false, wasLate: false };
+    }
+  }
+
   if (!dateStr && !occ.due_time) {
     // Sem prazo definido → sem atraso
     return { status: saved, isDelayed: false, wasLate: false };

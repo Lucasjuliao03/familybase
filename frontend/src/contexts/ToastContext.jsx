@@ -14,14 +14,15 @@ export function ToastProvider({ children }) {
   const success = (msg) => addToast(msg, 'success');
   const error = (msg) => addToast(msg, 'error');
   const info = (msg) => addToast(msg, 'info');
+  const warning = (msg) => addToast(msg, 'warning');
 
   return (
-    <ToastContext.Provider value={{ addToast, success, error, info }}>
+    <ToastContext.Provider value={{ addToast, success, error, info, warning }}>
       {children}
       <div className="toast-container">
         {toasts.map(t => (
           <div key={t.id} className={`toast toast-${t.type}`}>
-            <span>{t.type === 'success' ? '✅' : t.type === 'error' ? '❌' : 'ℹ️'}</span>
+            <span>{t.type === 'success' ? '✅' : t.type === 'error' ? '❌' : t.type === 'warning' ? '⚠️' : 'ℹ️'}</span>
             {t.message}
           </div>
         ))}
