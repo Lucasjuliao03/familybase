@@ -253,35 +253,70 @@ export default function ShoppingList() {
         </button>
       </div>
 
-      {/* TABS E FILTROS */}
-      <div className="mb-24" style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center', justifyContent: 'space-between' }}>
-        <div className="tabs tabs-scroll" style={{ margin: 0, flexShrink: 0 }}>
-          <button type="button" className={`tab ${viewMode === 'pending' ? 'active' : ''}`} onClick={() => setViewMode('pending')}>
-            📋 Para Comprar ({items.pending.length})
+      {/* Vistas principais — grelha no telemóvel (sem depender só de scroll horizontal) */}
+      <div
+        className="shopping-view-segments mb-24"
+        role="tablist"
+        aria-label="Lista de compras"
+      >
+        <button
+          type="button"
+          role="tab"
+          aria-selected={viewMode === 'pending'}
+          className={`shopping-segment${viewMode === 'pending' ? ' shopping-segment--active' : ''}`}
+          onClick={() => setViewMode('pending')}
+        >
+          <span className="shopping-segment__icon" aria-hidden>📋</span>
+          <span className="shopping-segment__label">Para comprar</span>
+          <span className="shopping-segment__count">{items.pending.length}</span>
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={viewMode === 'history'}
+          className={`shopping-segment${viewMode === 'history' ? ' shopping-segment--active' : ''}`}
+          onClick={() => setViewMode('history')}
+        >
+          <span className="shopping-segment__icon" aria-hidden>✓</span>
+          <span className="shopping-segment__label">Histórico</span>
+          <span className="shopping-segment__count">{items.history.length}</span>
+        </button>
+        {canSeeDashboard && (
+          <button
+            type="button"
+            role="tab"
+            aria-selected={viewMode === 'dashboard'}
+            className={`shopping-segment shopping-segment--accent${viewMode === 'dashboard' ? ' shopping-segment--active' : ''}`}
+            onClick={() => setViewMode('dashboard')}
+          >
+            <span className="shopping-segment__icon" aria-hidden>📊</span>
+            <span className="shopping-segment__label">Painel</span>
           </button>
-          <button className={`tab ${viewMode === 'history' ? 'active' : ''}`} onClick={() => setViewMode('history')}>
-            ✅ Histórico ({items.history.length})
-          </button>
-          {canSeeDashboard && (
-            <button className={`tab ${viewMode === 'dashboard' ? 'active' : ''}`} onClick={() => setViewMode('dashboard')}>
-              📊 Dashboard
-            </button>
-          )}
-        </div>
-        
-        {viewMode === 'dashboard' && canSeeDashboard && (
-          <div className="flex gap-8" style={{ alignItems: 'center' }}>
-            <label style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-light)' }}>Mês Referência:</label>
-            <input 
-              type="month" 
-              className="form-input" 
-              style={{ padding: '4px 10px', height: '36px', width: 'auto' }}
-              value={filterMonth}
-              onChange={(e) => setFilterMonth(e.target.value)}
-            />
-          </div>
         )}
       </div>
+
+      {viewMode === 'dashboard' && canSeeDashboard && (
+        <div
+          className="shopping-dashboard-controls mb-24"
+          style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: 12,
+            alignItems: 'center',
+            justifyContent: 'flex-end',
+            width: '100%',
+          }}
+        >
+          <label style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-light)' }}>Mês Referência:</label>
+          <input
+            type="month"
+            className="form-input"
+            style={{ padding: '4px 10px', height: '36px', width: 'auto', maxWidth: '100%' }}
+            value={filterMonth}
+            onChange={(e) => setFilterMonth(e.target.value)}
+          />
+        </div>
+      )}
 
       {isLoading ? (
         <div className="flex-center py-24"><div className="w-8 h-8 border-4 border-primary-500 border-t-transparent rounded-full animate-spin"></div></div>

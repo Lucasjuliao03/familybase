@@ -178,6 +178,27 @@ async function resolveAuthorizedChildUuidForWrites(body, familyId, authUserId) {
 }
 
 /**
+ * assignee_user_id para tarefas de adultos na família (gestor/auxiliar/conta gestão).
+ */
+async function resolveAuthorizedAssigneeUserId(assigneeUuid, familyId) {
+  const id = normalizeAuthChildUuid(assigneeUuid);
+  if (!id || !familyId) return '';
+  const { data: row } = await supabase
+    .from('users')
+    .select('id, role')
+    .eq('id', id)
+    .eq('family_id', familyId)
+    .maybeSingle();
+  if (!row?.id) {
+    throw new Error('Destinatário inválido: perfil não encontrado nesta família.');
+  }
+  if (!['parent', 'relative', 'master'].includes(row.role)) {
+    throw new Error('Para tarefas destinadas a crianças, escolha o nome na secção «Crianças».');
+  }
+  return id;
+}
+
+/**
  * Para listagens READ: mesmo âmbito de filho para contas role=child.
  */
 async function resolveViewerChildScope(familyId, authUserId) {
@@ -249,12 +270,19 @@ function mapTaskRowWithAllowance(t) {
   const r = Array.isArray(rRaw) ? rRaw[0] : rRaw;
   const rest = { ...t };
   delete rest.task_allowance_rules;
+  const ch = unwrapEmbeddedRow(rest.children);
+  const au = unwrapEmbeddedRow(rest.assignee_user);
+  delete rest.children;
+  delete rest.assignee_user;
   return {
     ...rest,
     template_active: rest.status === 'active',
     bonus_amount: r?.bonus_amount ?? 0,
     discount_amount: r?.discount_amount ?? 0,
     apply_discount_if_late: !!r?.apply_discount_if_late,
+    child_name: ch?.name || rest.child_name,
+    child_color: ch?.color || rest.child_color,
+    assignee_name: au?.name || rest.assignee_name || '',
   };
 }
 
@@ -989,7 +1017,7 @@ async function ensureRecurringOccurrencesForRange(supabase, familyId, fromYmd, t
 
   const { data: tasks, error } = await supabase
     .from('tasks')
-    .select('id, child_id, start_date, end_date, frequency, is_recurring, due_time, recurrence_days, status')
+    .select('id, child_id, assignee_user_id, start_date, end_date, frequency, is_recurring, due_time, recurrence_days, status')
     .eq('family_id', familyId)
     .eq('is_recurring', true)
     .eq('status', 'active');
@@ -999,18 +1027,23 @@ async function ensureRecurringOccurrencesForRange(supabase, familyId, fromYmd, t
   const rows = [];
   for (const d of days) {
     for (const t of tasks) {
-      if (!t.child_id) continue;
+      const hasSubject = !!(t.child_id || t.assignee_user_id);
+      if (!hasSubject) continue;
       if (!taskMatchesRecurringDate(t, d)) continue;
       const timePart = t.due_time ? normalizeTimeForDb(t.due_time) : null;
-      rows.push({
+      const base = {
         id: uuidv4(),
         task_id: t.id,
         family_id: familyId,
-        child_id: t.child_id,
         occurrence_date: d,
         due_datetime: timePart ? `${d}T${timePart}` : null,
         status: 'pending',
-      });
+      };
+      if (t.child_id) {
+        rows.push({ ...base, child_id: t.child_id, assignee_user_id: t.assignee_user_id ?? null });
+      } else {
+        rows.push({ ...base, child_id: null, assignee_user_id: t.assignee_user_id ?? null });
+      }
     }
   }
 
@@ -1019,7 +1052,7 @@ async function ensureRecurringOccurrencesForRange(supabase, familyId, fromYmd, t
     const chunk = rows.slice(i, i + chunkSize);
     const { error: upErr } = await supabase
       .from('task_occurrences')
-      .upsert(chunk, { onConflict: 'task_id,child_id,occurrence_date', ignoreDuplicates: true });
+      .upsert(chunk, { onConflict: 'task_id,occurrence_date,occ_dedupe_key', ignoreDuplicates: true });
     if (upErr && import.meta.env.DEV) console.warn('[tasks] ensure recurring range:', upErr.message);
   }
 }
@@ -1361,6 +1394,32 @@ function buildAppointmentUpdate(body) {
   });
 }
 
+const FAMILY_NOTICE_WRITABLE_FIELDS = [
+  'title', 'description', 'type', 'priority', 'status',
+  'target_type', 'target_user_ids', 'target_child_ids',
+  'start_datetime', 'due_datetime', 'notice_time',
+  'is_recurring', 'recurrence_rule', 'is_pinned',
+  'requires_read_confirmation',
+];
+
+function pickFamilyNoticeInsert(body) {
+  const row = {};
+  FAMILY_NOTICE_WRITABLE_FIELDS.forEach((k) => {
+    if (body?.[k] !== undefined) row[k] = body[k];
+  });
+  if (body?.content !== undefined && row.description === undefined) row.description = body.content;
+  return row;
+}
+
+function pickFamilyNoticePatch(body) {
+  const patch = {};
+  FAMILY_NOTICE_WRITABLE_FIELDS.forEach((k) => {
+    if (body[k] !== undefined) patch[k] = body[k];
+  });
+  if (body.content !== undefined && patch.description === undefined) patch.description = body.content;
+  return patch;
+}
+
 const DEFAULT_MODULE_KEYS = [
   'tasks', 'routines', 'calendar', 'allowance', 'family_shop', 'medals', 'grades',
   'piggy_bank', 'goals', 'reports', 'notifications', 'shopping', 'health', 'mural', 'location',
@@ -1676,6 +1735,7 @@ const api = {
       const mapped = uniqData.map(mapOcc);
       const rows = dedupeOccurrencesSameTaskSameDay(mapped);
       const childIds = [...new Set(rows.map((r) => r.child_id).filter(Boolean))];
+      const assigneeIds = [...new Set(rows.map((r) => r.assignee_user_id).filter(Boolean))];
       let colors = {};
       if (childIds.length) {
         const { data: ch } = await supabase.from('children').select('id, name, color').in('id', childIds);
@@ -1683,24 +1743,45 @@ const api = {
           colors[c.id] = { name: c.name, color: c.color };
         });
       }
+      let assigneeNames = {};
+      if (assigneeIds.length) {
+        const { data: ad } = await supabase.from('users').select('id, name').in('id', assigneeIds).eq('family_id', familyId);
+        (ad || []).forEach((u) => {
+          assigneeNames[u.id] = u.name;
+        });
+      }
       return {
         data: rows.map((r) => ({
           ...r,
           child_name: colors[r.child_id]?.name,
           child_color: colors[r.child_id]?.color,
+          assignee_name: assigneeNames[r.assignee_user_id],
         })),
       };
     }
 
     if (path.startsWith('/tasks')) {
-      let tq = supabase.from('tasks').select('*, task_allowance_rules(*)').eq('family_id', familyId);
+      let tq = supabase
+        .from('tasks')
+        .select('*, task_allowance_rules(*), assignee_user:users!tasks_assignee_user_id_fkey(name), children:child_id(name,color)')
+        .eq('family_id', familyId);
       const { data: { session: sessTk } } = await supabase.auth.getSession();
       const uidTk = sessTk?.user?.id;
-      if ((await getUserRole()) === 'child' && uidTk) {
+      const tp = config.params || {};
+      const filterChildTpl = normalizeAuthChildUuid(tp.child_id || tp.childId);
+      const filterTypeTpl = tp.type ? String(tp.type).trim() : '';
+
+      const roleTk = await getUserRole();
+
+      if (roleTk === 'child' && uidTk) {
         const scopeTk = await resolveViewerChildScope(familyId, uidTk);
         if (!scopeTk) return { data: [] };
         tq = tq.eq('child_id', scopeTk);
+      } else {
+        if (filterChildTpl) tq = tq.eq('child_id', filterChildTpl);
+        if (filterTypeTpl) tq = tq.eq('type', filterTypeTpl);
       }
+
       const { data, error } = await tq;
       if (error) throw new Error(error.message);
       return { data: (data || []).map(mapTaskRowWithAllowance) };
@@ -2172,8 +2253,26 @@ const api = {
     }
 
     if (path.startsWith('/mural/notices')) {
-      const { data } = await supabase.from('family_notices').select('*, users!family_notices_created_by_fkey(name)').eq('family_id', familyId).order('created_at', { ascending: false });
-      return { data: (data || []).map(d => ({ ...d, author_name: d.users?.name })) };
+      let q = supabase
+        .from('family_notices')
+        .select('*, users!family_notices_created_by_fkey(name)')
+        .eq('family_id', familyId);
+
+      const sp = url.includes('?') ? new URLSearchParams(url.split('?')[1]) : new URLSearchParams();
+      const stFilter = String(sp.get('status') || '').trim();
+      const typeFilter = String(sp.get('type') || '').trim();
+      const priFilter = String(sp.get('priority') || '').trim();
+      if (stFilter) q = q.eq('status', stFilter);
+      if (typeFilter) q = q.eq('type', typeFilter);
+      if (priFilter) q = q.eq('priority', priFilter);
+
+      const { data } = await q.order('created_at', { ascending: false });
+      return {
+        data: (data || []).map((d) => {
+          const { users: u, ...rest } = d || {};
+          return { ...rest, author_name: u?.name };
+        }),
+      };
     }
 
     if (path.startsWith('/families/children')) {
@@ -2491,25 +2590,48 @@ const api = {
       picked.start_date = normalizeDbDate(picked.start_date) || toYMDLocal();
       picked.affects_allowance = !!(allowanceRule && allowanceRule.affects_allowance);
 
-      const resolvedChildId = await resolveAuthorizedChildUuidForWrites(
-        { ...raw, child_id: picked.child_id },
-        familyId,
-        userId,
-      );
-
-      if (!resolvedChildId) {
-        throw new Error(
-          'Perfil da criança ainda não está disponível para criar tarefas. Aguarde alguns segundos e volte a tentar, ou peça ao gestor para ligar a tua conta ao teu registo na família.',
-        );
-      }
-
       const role = await getUserRole();
+      const uuidChildHint = normalizeAuthChildUuid(raw.child_id ?? raw.childId ?? picked.child_id);
+      const uuidAssigneeHint = normalizeAuthChildUuid(raw.assignee_user_id ?? picked.assignee_user_id);
+
+      let insertChildId = null;
+      let insertAssigneeId = null;
+
       if (role === 'child') {
+        if (uuidAssigneeHint && !uuidChildHint) {
+          throw new Error('Não é possível criar este tipo de tarefa com a conta de criança.');
+        }
+        const resolvedChildId = await resolveAuthorizedChildUuidForWrites(
+          { ...raw, child_id: picked.child_id ?? uuidChildHint },
+          familyId,
+          userId,
+        );
+        if (!resolvedChildId) {
+          throw new Error(
+            'Perfil da criança ainda não está disponível para criar tarefas. Aguarde alguns segundos e volte a tentar, ou peça ao gestor para ligar a tua conta ao teu registo na família.',
+          );
+        }
+        insertChildId = resolvedChildId;
+        insertAssigneeId = null;
         picked.points = 0;
         picked.coins = 0;
         picked.is_recurring = false;
         picked.affects_allowance = false;
         picked.requires_approval = true;
+      } else if (!uuidChildHint && uuidAssigneeHint) {
+        insertAssigneeId = await resolveAuthorizedAssigneeUserId(uuidAssigneeHint, familyId);
+        insertChildId = null;
+      } else {
+        const resolvedChildId = await resolveAuthorizedChildUuidForWrites(
+          { ...raw, child_id: picked.child_id ?? uuidChildHint },
+          familyId,
+          userId,
+        );
+        if (!resolvedChildId) {
+          throw new Error('Escolha uma criança ou um responsável/auxiliar como destinatário da tarefa.');
+        }
+        insertChildId = resolvedChildId;
+        insertAssigneeId = null;
       }
 
       const insertRow = omitUndefined({
@@ -2517,7 +2639,8 @@ const api = {
         family_id: familyId,
         created_by: userId || null,
         id: uuidv4(),
-        child_id: resolvedChildId,
+        child_id: insertChildId,
+        assignee_user_id: insertAssigneeId,
         status: picked.status || 'active',
       });
 
@@ -2534,27 +2657,39 @@ const api = {
 
       let out = taskRow;
       if (taskRow?.id) {
-        const { data: fr } = await supabase.from('tasks').select('*, task_allowance_rules(*)').eq('id', taskRow.id).eq('family_id', familyId).maybeSingle();
+        const { data: fr } = await supabase
+          .from('tasks')
+          .select('*, task_allowance_rules(*), assignee_user:users!tasks_assignee_user_id_fkey(name), children:child_id(name,color)')
+          .eq('id', taskRow.id)
+          .eq('family_id', familyId)
+          .maybeSingle();
         if (fr) out = fr;
       }
 
       const occDates = computeOccurrenceDatesForTask(taskRow || out);
-      if (occDates.length && (taskRow?.child_id || out?.child_id)) {
-        const cid = taskRow?.child_id || out?.child_id;
-        const timePart = (taskRow?.due_time ?? out?.due_time) ? normalizeTimeForDb(taskRow?.due_time ?? out?.due_time) : null;
-        const occRows = occDates.map((od) => ({
-          id: uuidv4(),
-          task_id: taskRow?.id || out?.id,
-          family_id: familyId,
-          child_id: cid,
-          occurrence_date: od,
-          due_datetime: timePart ? `${od}T${timePart}` : null,
-          status: 'pending',
-        }));
-        const { error: ocErr } = await supabase
-          .from('task_occurrences')
-          .upsert(occRows, { onConflict: 'task_id,child_id,occurrence_date', ignoreDuplicates: true });
-        if (ocErr) console.warn('[tasks] ocorrências:', ocErr.message);
+      if (occDates.length) {
+        const tk = taskRow || out;
+        const cid = tk?.child_id || null;
+        const aid = tk?.assignee_user_id || null;
+        if (cid || aid) {
+          const timePart = tk?.due_time ? normalizeTimeForDb(tk.due_time) : null;
+          const occRows = occDates.map((od) =>
+            omitUndefined({
+              id: uuidv4(),
+              task_id: tk?.id,
+              family_id: familyId,
+              child_id: cid,
+              assignee_user_id: aid,
+              occurrence_date: od,
+              due_datetime: timePart ? `${od}T${timePart}` : null,
+              status: 'pending',
+            }),
+          );
+          const { error: ocErr } = await supabase
+            .from('task_occurrences')
+            .upsert(occRows, { onConflict: 'task_id,occurrence_date,occ_dedupe_key', ignoreDuplicates: true });
+          if (ocErr) console.warn('[tasks] ocorrências:', ocErr.message);
+        }
       }
       return { data: mapTaskRowWithAllowance(out || taskRow) };
     }
@@ -2831,11 +2966,13 @@ const api = {
         return { data: { ok: true } };
       }
       if (path === '/mural/notices') {
-        const { data, error } = await supabase
-          .from('family_notices')
-          .insert([{ ...body, family_id: familyId, created_by: userId, id: uuidv4() }])
-          .select()
-          .single();
+        const row = {
+          ...pickFamilyNoticeInsert(body),
+          family_id: familyId,
+          created_by: userId,
+          id: uuidv4(),
+        };
+        const { data, error } = await supabase.from('family_notices').insert([row]).select().single();
         if (error) throw new Error(error.message);
         return { data };
       }
@@ -3451,7 +3588,7 @@ const api = {
         .update(omitUndefined(picked))
         .eq('id', taskId)
         .eq('family_id', familyId)
-        .select('*, task_allowance_rules(*)')
+        .select('*, task_allowance_rules(*), assignee_user:users!tasks_assignee_user_id_fkey(name), children:child_id(name,color)')
         .maybeSingle();
       if (error) throw new Error(error.message);
       if (!taskRow) {
@@ -3468,7 +3605,7 @@ const api = {
 
       const { data: fresh } = await supabase
         .from('tasks')
-        .select('*, task_allowance_rules(*)')
+        .select('*, task_allowance_rules(*), assignee_user:users!tasks_assignee_user_id_fkey(name), children:child_id(name,color)')
         .eq('id', taskId)
         .eq('family_id', familyId)
         .maybeSingle();
@@ -3872,15 +4009,7 @@ const api = {
     const muralNoticeUpdateMatch = path.match(/^\/mural\/notices\/([^/]+)$/);
     if (muralNoticeUpdateMatch) {
       const noticeId = muralNoticeUpdateMatch[1];
-      const allowedFields = [
-        'title', 'content', 'type', 'priority', 'status',
-        'target_type', 'target_user_ids', 'target_child_ids',
-        'start_datetime', 'due_datetime', 'notice_time',
-        'is_recurring', 'recurrence_rule', 'is_pinned',
-        'requires_read_confirmation',
-      ];
-      const patch = {};
-      allowedFields.forEach((k) => { if (body[k] !== undefined) patch[k] = body[k]; });
+      const patch = pickFamilyNoticePatch(body);
       const { data, error } = await supabase
         .from('family_notices')
         .update(patch)
@@ -3977,6 +4106,25 @@ const api = {
     const healthDel = parseHealthSubResource(path);
     if (healthDel) {
       await supabase.from(healthDel.table).delete().eq('id', healthDel.id).eq('family_id', familyId);
+      return { data: { success: true } };
+    }
+
+    if (parts[0] === 'mural' && parts[1] === 'notices' && parts[2] && parts.length === 3) {
+      const noticeId = parts[2];
+      const { data: row } = await supabase
+        .from('family_notices')
+        .select('id')
+        .eq('id', noticeId)
+        .eq('family_id', familyId)
+        .maybeSingle();
+      if (!row?.id) throw new Error('Aviso não encontrado ou sem permissão.');
+      await supabase.from('notice_reads').delete().eq('notice_id', noticeId);
+      const { error: delNoticeErr } = await supabase
+        .from('family_notices')
+        .delete()
+        .eq('id', noticeId)
+        .eq('family_id', familyId);
+      if (delNoticeErr) throw new Error(delNoticeErr.message);
       return { data: { success: true } };
     }
 

@@ -15,7 +15,8 @@ import { deriveParentHistoryBucket } from '../../lib/taskHistoryStatus';
 
 const initialForm = {
   title: '', description: '', type: 'home', points: 10, coins: 0,
-  frequency: 'once', priority: 'medium', child_id: '',
+  frequency: 'once', priority: 'medium',
+  recipient_key: '',
   is_recurring: false, recurrence_days: [], start_date: '', end_date: '', due_time: '',
   requires_approval: true, visible_on_calendar: false, generate_notification: true,
   allowance_rule: { affects_allowance: false, bonus_amount: 0, discount_amount: 0, apply_discount_if_late: false },
@@ -137,10 +138,23 @@ export default function TaskManager() {
     staleTime: 120_000,
   };
 
+  const adultsQueryOpts = {
+    queryKey: ['families', 'members', 'for-tasks'],
+    queryFn: async () => {
+      try {
+        return (await api.get('/families/members')).data || [];
+      } catch {
+        return [];
+      }
+    },
+    staleTime: 120_000,
+  };
+
   const tasksQ = useQuery(tasksQueryOptions);
   const occQ = useQuery(occQueryOptions);
   const historyQ = useQuery(historyOccQueryOpts);
   const childrenQ = useQuery(childrenQueryOptions);
+  const adultsQ = useQuery(adultsQueryOpts);
 
   const tasks = tasksQ.data ?? [];
   const rawOccurrences = occQ.data ?? [];
@@ -176,6 +190,7 @@ export default function TaskManager() {
       return c !== 0 ? c : String(a.title || '').localeCompare(String(b.title || ''));
     });
   const children = childrenQ.data ?? [];
+  const adults = adultsQ.data ?? [];
 
   const occInitialSkeleton = occQ.isPending && occurrences.length === 0 && !occQ.error;
   const tplInitialSkeleton = tasksQ.isPending && tasks.length === 0 && !tasksQ.error;
@@ -302,12 +317,34 @@ export default function TaskManager() {
 
   const handleCreate = (e) => {
     e.preventDefault();
+    const rk = String(form.recipient_key || '').trim();
+    const m = /^([cu]):(.+)$/i.exec(rk);
+    const recipientUuid = (m?.[2] ?? '').trim();
+    const recipientKind = (m?.[1] ?? '').toLowerCase();
+    if ((!recipientUuid || !recipientKind) && !editTask?.id) {
+      toast.error(t('task_recipient_required'));
+      return;
+    }
+    const {
+      recipient_key: _rk,
+      ...restForm
+    } = form;
+
     const payload = {
-      ...form,
+      ...restForm,
       is_recurring: form.frequency !== 'once',
       recurrence_days: form.recurrence_days.join(','),
       start_date: form.start_date || new Date().toISOString().split('T')[0],
     };
+
+    if (recipientUuid && recipientKind === 'u') {
+      payload.assignee_user_id = recipientUuid;
+      payload.child_id = null;
+    } else if (recipientUuid && recipientKind === 'c') {
+      payload.child_id = recipientUuid;
+      payload.assignee_user_id = null;
+    }
+
     saveTaskMutation.mutate({ taskId: editTask?.id, payload });
   };
 
@@ -317,9 +354,11 @@ export default function TaskManager() {
 
   const openEdit = (task) => {
     const days = task.recurrence_days ? task.recurrence_days.split(',').map(Number) : [];
+    const rk = task.child_id ? `c:${task.child_id}` : task.assignee_user_id ? `u:${task.assignee_user_id}` : '';
     setForm({
       title: task.title, description: task.description || '', type: task.type, points: task.points,
-      coins: task.coins || 0, frequency: task.frequency, priority: task.priority, child_id: task.child_id,
+      coins: task.coins || 0, frequency: task.frequency, priority: task.priority,
+      recipient_key: rk,
       is_recurring: !!task.is_recurring, recurrence_days: days,
       start_date: task.start_date || '', end_date: task.end_date || '', due_time: task.due_time || '',
       requires_approval: !!task.requires_approval, visible_on_calendar: !!task.visible_on_calendar,
@@ -810,7 +849,7 @@ export default function TaskManager() {
             <thead>
               <tr>
                 <th>{t('task_title')}</th>
-                <th>{t('select_child')}</th>
+                <th>{t('task_recipient_col')}</th>
                 <th>{t('task_frequency')}</th>
                 <th>{t('task_table_due_short')}</th>
                 <th>{t('task_points')}</th>
@@ -849,10 +888,16 @@ export default function TaskManager() {
                       {task.is_recurring && <span className="badge badge-warning" style={{ marginLeft: 6, fontSize: '0.7rem' }}>🔄</span>}
                       {task.description && <div style={{ fontSize: '0.78rem', color: 'var(--text-light)' }}>{task.description}</div>}
                     </td>
-                    <td data-label={t('select_child')}>
+                    <td data-label={t('task_recipient_col')}>
                       <div className="flex gap-8" style={{ alignItems: 'center' }}>
-                        <div style={{ width: 8, height: 8, borderRadius: '50%', background: task.child_color }} />
-                        {task.child_name}
+                        {task.child_id ? (
+                          <>
+                            <div style={{ width: 8, height: 8, borderRadius: '50%', background: task.child_color || 'var(--border)' }} />
+                            <span>{task.child_name || '—'}</span>
+                          </>
+                        ) : (
+                          <span>👤 {task.assignee_name || '—'}</span>
+                        )}
                       </div>
                     </td>
                     <td data-label={t('task_frequency')}>
@@ -934,16 +979,29 @@ export default function TaskManager() {
                   <textarea className="form-textarea" value={form.description} onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))} rows={2} disabled={blockUi} />
                 </div>
                 <div className="form-group">
-                  <label className="form-label">
-                    {t('select_child')} *
-                  </label>
-                  <select className="form-select" value={form.child_id} onChange={(e) => setForm((p) => ({ ...p, child_id: e.target.value }))} required disabled={blockUi}>
+                  <label className="form-label">{t('task_recipient_label')} *</label>
+                  <select
+                    className="form-select"
+                    value={form.recipient_key}
+                    onChange={(e) => setForm((p) => ({ ...p, recipient_key: e.target.value }))}
+                    required
+                    disabled={blockUi}
+                  >
                     <option value="">{t('task_form_select_placeholder')}</option>
-                    {children.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
-                    ))}
+                    <optgroup label={t('task_recipient_optgroup_children')}>
+                      {children.map((c) => (
+                        <option key={`c:${c.id}`} value={`c:${c.id}`}>
+                          {c.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                    <optgroup label={t('task_recipient_optgroup_members')}>
+                      {(adults || []).map((u) => (
+                        <option key={`u:${u.id}`} value={`u:${u.id}`}>
+                          {(u.name && String(u.name).trim()) || u.email || '—'}
+                        </option>
+                      ))}
+                    </optgroup>
                   </select>
                 </div>
                 <div className="form-group">
