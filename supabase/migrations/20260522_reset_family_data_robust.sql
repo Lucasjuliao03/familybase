@@ -1,39 +1,8 @@
--- =============================================================================
--- reset_family_data: limpeza de dados OPERACIONAIS da família (gestor apenas).
--- Preserva: families, users, auth.users (indireto), children (linhas + identidade),
---           family_members, relative_children, family_modules, vínculos.
--- Elimina histórico de tarefas, notas, mesada/loja, calendário, saúde, mural, compras,
--- notificações internas, localização operacional e medalhas/cofres da família.
--- Atualiza pontos/Xp/streak das crianças para valores iniciais.
--- Audit: insere audit_logs + tabela opcional family_data_reset_audit.
--- =============================================================================
-
-CREATE TABLE IF NOT EXISTS public.family_data_reset_audit (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  family_id UUID NOT NULL REFERENCES public.families(id) ON DELETE CASCADE,
-  performed_by UUID NOT NULL REFERENCES public.users(id) ON DELETE RESTRICT,
-  performed_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
-  success BOOLEAN NOT NULL DEFAULT true,
-  error_message TEXT
-);
-
-ALTER TABLE public.family_data_reset_audit ENABLE ROW LEVEL SECURITY;
-
-DROP POLICY IF EXISTS family_data_reset_audit_gestor_select ON public.family_data_reset_audit;
-CREATE POLICY family_data_reset_audit_gestor_select
-  ON public.family_data_reset_audit FOR SELECT TO authenticated
-  USING (
-    family_id = public.get_current_user_family_id()
-    AND EXISTS (
-      SELECT 1 FROM public.users u
-      WHERE u.id = auth.uid()
-        AND COALESCE(trim(lower(u.role::text)), '') = 'parent'
-        AND COALESCE(trim(lower(u.access_profile::text)), 'gestor') = 'gestor'
-    )
-  );
-
-REVOKE ALL ON public.family_data_reset_audit FROM PUBLIC;
-GRANT SELECT ON public.family_data_reset_audit TO authenticated;
+-- reset_family_data: garante resets mesmo com DDL variado das BDs remotas.
+-- 1) id explícito em audit_logs e family_data_reset_audit (DEFAULT em falta nos INSERTs falham com NOT NULL).
+-- 2) search_path = public para compatibilidade (gen_random_uuid nativo PostgreSQL ≥13).
+-- 3) Limpezas extra (reward_redemptions, goals, earned_medals, task_occurrences, task_allowance_rules).
+-- 4) INSERT em audit_logs envolvido em salvaguardas — falha não invalida negócio (tabelas já apagadas).
 
 CREATE OR REPLACE FUNCTION public.reset_family_data(p_family_id uuid DEFAULT NULL)
 RETURNS jsonb
@@ -72,10 +41,6 @@ BEGIN
   IF v_target <> v_fid THEN
     RAISE EXCEPTION 'family_access_denied';
   END IF;
-
-  -- =======================================================================
-  -- Apagar dados operacionais (ordem respeita FKs comuns do projeto Base Familia)
-  -- =======================================================================
 
   DELETE FROM public.allowance_transactions WHERE family_id = v_target;
 
@@ -180,7 +145,6 @@ BEGIN
     DELETE FROM public.payment_events WHERE family_id = v_target;
   END IF;
 
-  -- Reset gamificação / mesada pontual nas crianças (mantém linha do perfil)
   UPDATE public.children SET
     points = 0,
     coins = 0,
@@ -243,7 +207,3 @@ $$;
 
 REVOKE ALL ON FUNCTION public.reset_family_data(uuid) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.reset_family_data(uuid) TO authenticated;
-
-COMMENT ON FUNCTION public.reset_family_data(uuid) IS
-  'Apaga dados operacionais da própria família do utilizador chamador (apenas pai com access_profile gestor). Transaccional.';
-

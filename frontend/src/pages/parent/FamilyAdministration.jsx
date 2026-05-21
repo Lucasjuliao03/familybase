@@ -274,7 +274,12 @@ export default function FamilyAdministration() {
       await loadAll();
       if (typeof fetchMe === 'function') await fetchMe();
     } catch (e) {
-      toast.error(e?.message || t('error_occurred'));
+      const parts = [
+        typeof e?.message === 'string' ? e.message : '',
+        typeof e?.details === 'string' ? e.details : '',
+        typeof e?.hint === 'string' ? e.hint : '',
+      ].filter(Boolean);
+      toast.error(parts.length ? parts.join(' ') : t('error_occurred'));
     } finally {
       setResetLoading(false);
     }
