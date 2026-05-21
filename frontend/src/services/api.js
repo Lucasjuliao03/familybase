@@ -247,9 +247,11 @@ function mapTaskRowWithAllowance(t) {
   if (!t || typeof t !== 'object') return t;
   const rRaw = t.task_allowance_rules;
   const r = Array.isArray(rRaw) ? rRaw[0] : rRaw;
-  const { task_allowance_rules: _drop, ...rest } = t;
+  const rest = { ...t };
+  delete rest.task_allowance_rules;
   return {
     ...rest,
+    template_active: rest.status === 'active',
     bonus_amount: r?.bonus_amount ?? 0,
     discount_amount: r?.discount_amount ?? 0,
     apply_discount_if_late: !!r?.apply_discount_if_late,
@@ -893,6 +895,33 @@ function dedupeCalendarEvents(rows) {
 /** Janela (dias civis) em que criamos várias linhas para recorrências não-diárias. */
 const RECURRING_MATERIALIZE_OTHER_DAYS = 14;
 
+/** Máximo de dias materiais por pedido ao histórico (evita abusos / timeouts). */
+const RECURRING_MATERIALIZE_HISTORY_MAX_DAYS = 120;
+
+/** Lista YYYY-MM-DD local [from..to], no máximo `maxDays` entradas. */
+function eachLocalDayYmdInclusive(fromYmd, toYmd, maxDays = RECURRING_MATERIALIZE_HISTORY_MAX_DAYS) {
+  const from = normalizeDbDate(String(fromYmd || '').slice(0, 10));
+  const to = normalizeDbDate(String(toYmd || '').slice(0, 10));
+  const re = /^\d{4}-\d{2}-\d{2}$/;
+  if (!from || !to || !re.test(from) || !re.test(to) || from > to) return [];
+  const parts = from.split('-').map(Number);
+  let iter = new Date(parts[0], parts[1] - 1, parts[2]);
+  const toParts = to.split('-').map(Number);
+  const endCap = new Date(toParts[0], toParts[1] - 1, toParts[2]);
+  const out = [];
+  while (out.length < maxDays && iter.getTime() <= endCap.getTime()) {
+    out.push(`${iter.getFullYear()}-${String(iter.getMonth() + 1).padStart(2, '0')}-${String(iter.getDate()).padStart(2, '0')}`);
+    iter.setDate(iter.getDate() + 1);
+  }
+  return out;
+}
+
+/** Último dia (YYYY-MM-DD) que ainda cabe no cap a partir de from. */
+function clampHistoricalMaterializeEnd(fromYmd, toYmd, maxDays = RECURRING_MATERIALIZE_HISTORY_MAX_DAYS) {
+  const days = eachLocalDayYmdInclusive(fromYmd, toYmd, maxDays);
+  return days.length ? days[days.length - 1] : String(toYmd).slice(0, 10);
+}
+
 function occurrenceInsideTaskCalendarBounds(task, ymd) {
   const sd = normalizeDbDate(task.start_date);
   const ed = task.end_date ? normalizeDbDate(task.end_date) : null;
@@ -904,42 +933,102 @@ function occurrenceInsideTaskCalendarBounds(task, ymd) {
 }
 
 /**
- * Garante uma linha de ocorrência PENDING por (tarefa diária × criança × dia).
- * “Amanhã aparece outra”: não materializamos 365 dias à frente.
+ * Uma única combinação (modelo × criança × dia) casa com a recorrência em data civil local?
+ * Só chamado para linhas já filtradas com is_recurring = true na BD.
  */
-async function ensureDailyOccurrencesForDate(supabase, familyId, ymd) {
-  const d = String(ymd || '').slice(0, 10);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return;
+function taskMatchesRecurringDate(task, ymdStr) {
+  const dStr = normalizeDbDate(String(ymdStr || '').slice(0, 10));
+  if (!task?.is_recurring || !dStr) return false;
+  if (!occurrenceInsideTaskCalendarBounds(task, dStr)) return false;
+  const freq = task.frequency || 'daily';
+
+  const parts = dStr.split('-').map(Number);
+  const iter = new Date(parts[0], parts[1] - 1, parts[2]);
+  const dow = iter.getDay();
+
+  const recurrence = String(task.recurrence_days || '')
+    .split(',')
+    .map((x) => parseInt(String(x).trim(), 10))
+    .filter((n) => !Number.isNaN(n));
+
+  if (freq === 'daily') return true;
+
+  const sdRaw = normalizeDbDate(task.start_date);
+  let startDay = null;
+  if (sdRaw) {
+    const [sy, sm, sdf] = sdRaw.split('-').map(Number);
+    startDay = new Date(sy, sm - 1, sdf);
+  }
+
+  if (freq === 'weekly') {
+    const days = recurrence.length ? recurrence : startDay ? [startDay.getDay()] : [];
+    return days.length ? days.includes(dow) : false;
+  }
+
+  if (freq === 'monthly') {
+    const anchor = startDay ? startDay.getDate() : 1;
+    return iter.getDate() === anchor;
+  }
+
+  /* custom (= dias específicos), como lista de weekday — fallback ao dia inicial se vazio */
+  if (freq === 'custom') {
+    if (recurrence.length) return recurrence.includes(dow);
+    return startDay ? dow === startDay.getDay() : false;
+  }
+
+  return false;
+}
+
+/**
+ * Garante linhas pending por (modelo RECORRENTE ATIVO × criança × dia) dentro de [from..to].
+ * Modelos inactive não geram ocorrências; upsert só cria/atualiza quando conveniente ao conflito.
+ */
+async function ensureRecurringOccurrencesForRange(supabase, familyId, fromYmd, toYmd) {
+  const days = eachLocalDayYmdInclusive(fromYmd, toYmd, RECURRING_MATERIALIZE_HISTORY_MAX_DAYS);
+  if (!days.length) return;
+
   const { data: tasks, error } = await supabase
     .from('tasks')
-    .select('id, child_id, start_date, end_date, frequency, is_recurring, due_time')
+    .select('id, child_id, start_date, end_date, frequency, is_recurring, due_time, recurrence_days, status')
     .eq('family_id', familyId)
     .eq('is_recurring', true)
-    .eq('frequency', 'daily');
+    .eq('status', 'active');
+
   if (error || !(tasks || []).length) return;
+
   const rows = [];
-  for (const t of tasks) {
-    if (!t.child_id) continue;
-    if (!occurrenceInsideTaskCalendarBounds(t, d)) continue;
-    const timePart = t.due_time ? normalizeTimeForDb(t.due_time) : null;
-    rows.push({
-      id: uuidv4(),
-      task_id: t.id,
-      family_id: familyId,
-      child_id: t.child_id,
-      occurrence_date: d,
-      due_datetime: timePart ? `${d}T${timePart}` : null,
-      status: 'pending',
-    });
+  for (const d of days) {
+    for (const t of tasks) {
+      if (!t.child_id) continue;
+      if (!taskMatchesRecurringDate(t, d)) continue;
+      const timePart = t.due_time ? normalizeTimeForDb(t.due_time) : null;
+      rows.push({
+        id: uuidv4(),
+        task_id: t.id,
+        family_id: familyId,
+        child_id: t.child_id,
+        occurrence_date: d,
+        due_datetime: timePart ? `${d}T${timePart}` : null,
+        status: 'pending',
+      });
+    }
   }
+
   const chunkSize = 40;
   for (let i = 0; i < rows.length; i += chunkSize) {
     const chunk = rows.slice(i, i + chunkSize);
-    const { error: upDailyErr } = await supabase
+    const { error: upErr } = await supabase
       .from('task_occurrences')
       .upsert(chunk, { onConflict: 'task_id,child_id,occurrence_date', ignoreDuplicates: true });
-    if (upDailyErr && import.meta.env.DEV) console.warn('[tasks] ensure occurrences:', upDailyErr.message);
+    if (upErr && import.meta.env.DEV) console.warn('[tasks] ensure recurring range:', upErr.message);
   }
+}
+
+/** Compatível com chamadas antigas (um único dia). */
+async function ensureDailyOccurrencesForDate(supabase, familyId, ymd) {
+  const d = String(ymd || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return;
+  await ensureRecurringOccurrencesForRange(supabase, familyId, d, d);
 }
 
 function dedupeOccurrencesSameTaskSameDay(rows) {
@@ -1507,7 +1596,9 @@ const api = {
         d = toYMDLocal();
       }
 
-      /** Garante slot do dia civil para cada tarefa diária (sem pré-gerar meses à frente). */
+      const viewerRole = await getUserRole();
+
+      /** Materializa modelos RECORRENTE + ATIVOS (uma ocorrência/dia esperada, por chave UNIQUE). */
       if (!expandAll && d && !rangeFrom && !rangeTo) {
         const ds = String(d).slice(0, 10);
         if (/^\d{4}-\d{2}-\d{2}$/.test(ds)) {
@@ -1520,8 +1611,14 @@ const api = {
         const toS = String(rangeTo).slice(0, 10);
         const todayS = toYMDLocal();
         const reDate = /^\d{4}-\d{2}-\d{2}$/;
-        if (reDate.test(fromS) && reDate.test(toS) && todayS >= fromS && todayS <= toS) {
-          await ensureDailyOccurrencesForDate(supabase, familyId, todayS);
+        if (reDate.test(fromS) && reDate.test(toS)) {
+          /* Criança: só garante HOJE para não multiplicar materialização no servidor. */
+          if (viewerRole === 'child') {
+            await ensureDailyOccurrencesForDate(supabase, familyId, todayS);
+          } else {
+            const capEnd = clampHistoricalMaterializeEnd(fromS, toS);
+            await ensureRecurringOccurrencesForRange(supabase, familyId, fromS, capEnd);
+          }
         }
       }
 
@@ -1534,12 +1631,16 @@ const api = {
       const { data: { session: sessOc } } = await supabase.auth.getSession();
       const uidOc = sessOc?.user?.id;
       let occChildFilter = normalizeAuthChildUuid(config.params?.child_id);
-      if ((await getUserRole()) === 'child' && uidOc) {
+      if (viewerRole === 'child' && uidOc) {
         const scopeOc = await resolveViewerChildScope(familyId, uidOc);
         if (!scopeOc) return { data: [] };
         occChildFilter = scopeOc;
       }
       if (occChildFilter) q = q.eq('child_id', occChildFilter);
+      const taskIdOcc = config.params?.task_id ? String(config.params.task_id).trim() : '';
+      if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(taskIdOcc)) {
+        q = q.eq('task_id', taskIdOcc);
+      }
       const statusParam = config.params?.status;
       if (statusParam) q = q.eq('status', statusParam);
       const { data, error } = await q.order('occurrence_date', { ascending: true });
@@ -1560,6 +1661,7 @@ const api = {
           is_recurring: t.is_recurring,
           due_time: t.due_time,
           is_health_reminder: t.is_health_reminder,
+          requires_approval: t.requires_approval,
           affects_allowance: !!t.affects_allowance || !!r?.affects_allowance,
           bonus_amount: r?.bonus_amount ?? null,
           discount_amount: r?.discount_amount ?? null,
@@ -2416,6 +2518,7 @@ const api = {
         created_by: userId || null,
         id: uuidv4(),
         child_id: resolvedChildId,
+        status: picked.status || 'active',
       });
 
       const { data: taskRow, error } = await supabase.from('tasks').insert([insertRow]).select('*, task_allowance_rules(*)').maybeSingle();
@@ -3885,6 +3988,16 @@ const api = {
       else if (path.includes('medication-logs')) targetTable = 'health_medication_logs';
       else if (path.includes('medications')) targetTable = 'medications';
       else if (path.includes('records')) targetTable = 'health_records';
+    }
+
+    /* Apagar modelo destruiria histórico (CASCADE nas ocorrências) — apenas desativa. */
+    if (targetTable === 'tasks' && id && /^\/tasks\/[^/]+$/.test(path)) {
+      const { data: tk, error: fErr } = await supabase.from('tasks').select('id').eq('id', id).eq('family_id', familyId).maybeSingle();
+      if (fErr) throw new Error(fErr.message);
+      if (!tk?.id) throw new Error('Tarefa modelo não encontrada.');
+      const { error } = await supabase.from('tasks').update({ status: 'inactive' }).eq('id', id).eq('family_id', familyId);
+      if (error) throw new Error(error.message);
+      return { data: { success: true, deactivated: true } };
     }
 
     await supabase.from(targetTable).delete().eq('id', id).eq('family_id', familyId);
