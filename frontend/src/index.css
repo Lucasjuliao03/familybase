@@ -489,6 +489,27 @@ tr:hover td { background: rgba(108,92,231,0.03); }
 .modal-close:hover { background: var(--bg); color: var(--text); }
 .modal-footer { display: flex; gap: 12px; justify-content: flex-end; margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--border); }
 
+/* Gestão de tarefas — barra filtros/colunas responsivos */
+.task-manager-toolbar { display: flex; flex-direction: column; gap: 16px; margin-bottom: 24px; min-width: 0; align-items: stretch; }
+.task-manager-toolbar__tabs { align-self: stretch; min-width: 0; }
+.task-manager-toolbar__filters { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: stretch; align-content: flex-start; min-width: 0; }
+.task-manager-toolbar__filters .form-select,
+.task-manager-toolbar__filters .form-input {
+  flex: 1 1 auto;
+  min-width: min(280px, 100%);
+}
+@media (min-width: 900px) {
+  .task-manager-toolbar { flex-flow: row wrap; align-items: flex-end; }
+  .task-manager-toolbar__tabs { flex: 1 1 auto; max-width: 100%; min-width: 0; }
+  .task-manager-toolbar__filters .form-select,
+  .task-manager-toolbar__filters .form-input {
+    min-width: 0;
+    max-width: 100%;
+  }
+}
+.task-actions-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.task-actions-row .btn { flex: 0 1 auto; }
+
 /* Tabs */
 .tabs { display: flex; gap: 4px; border-bottom: 2px solid var(--border); margin-bottom: 24px; }
 .tab {

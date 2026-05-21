@@ -1,9 +1,11 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useToast } from '../../contexts/ToastContext';
 import { useAuth } from '../../contexts/AuthContext';
 import api, { publicAssetUrl } from '../../services/api';
+import { supabase } from '../../lib/supabase';
 import AvatarPicker, { PRESET_AVATARS } from '../../components/AvatarPicker';
 import UserDisplayColorPicker from '../../components/UserDisplayColorPicker';
 import {
@@ -13,6 +15,31 @@ import {
   USER_DISPLAY_COLOR_PALETTE,
 } from '../../lib/userDisplayColors';
 import { dedupeMedalsForAwardingCatalog } from '../../lib/childDashboardDedupe';
+
+const ADMIN_TABS_ORDER = ['family', 'users', 'profiles', 'appearance', 'medals', 'modules', 'security', 'reset_data'];
+
+const FAMILY_DATA_RESET_REMOVED_I18N_KEYS = [
+  'fam_reset_removed_tasks',
+  'fam_reset_removed_grades',
+  'fam_reset_removed_allowance',
+  'fam_reset_removed_shop',
+  'fam_reset_removed_calendar',
+  'fam_reset_removed_health',
+  'fam_reset_removed_mural',
+  'fam_reset_removed_shopping',
+  'fam_reset_removed_notif',
+  'fam_reset_removed_location',
+  'fam_reset_removed_medals',
+  'fam_reset_removed_audit_ops',
+];
+
+const FAMILY_DATA_RESET_KEPT_I18N_KEYS = [
+  'fam_reset_kept_users',
+  'fam_reset_kept_children_profiles',
+  'fam_reset_kept_family_row',
+  'fam_reset_kept_members',
+  'fam_reset_kept_plan',
+];
 
 const COLOR_PRESETS = ['#6C5CE7', '#E84393', '#00B894', '#FDCB6E', '#74B9FF', '#E17055', '#A29BFE', '#55EFC4', '#0984E3', '#FD79A8', '#636E72'];
 
@@ -105,7 +132,10 @@ export default function FamilyAdministration() {
   const [relModal, setRelModal] = useState(null);
   const [medalModal, setMedalModal] = useState(null);
   const [pwModal, setPwModal] = useState(null);
-  const [logoUploading, setLogoUploading] = useState(false);
+  const qc = useQueryClient();
+  const [resetWizard, setResetWizard] = useState(null); // null | 'intro' | 'confirm'
+  const [resetPhraseDraft, setResetPhraseDraft] = useState('');
+  const [resetLoading, setResetLoading] = useState(false);
 
   const loadAll = useCallback(async () => {
     try {
@@ -219,6 +249,44 @@ export default function FamilyAdministration() {
       toast.error(err.response?.data?.error || t('error_occurred'));
     }
   };
+
+  const resetPhraseTargetNormalized = useMemo(
+    () => (t('fam_reset_exact_phrase') || 'LIMPAR DADOS').trim().toUpperCase(),
+    [t],
+  );
+  const phraseMatchesReset = resetPhraseDraft.trim().toUpperCase() === resetPhraseTargetNormalized;
+
+  const executeFamilyDataReset = useCallback(async () => {
+    if (!isGestorUser || !phraseMatchesReset) return;
+    setResetLoading(true);
+    try {
+      const { error } = await supabase.rpc('reset_family_data', {
+        p_family_id: user?.family_id ?? null,
+      });
+      if (error) throw error;
+      toast.success(t('fam_reset_success_toast'));
+      setResetWizard(null);
+      setResetPhraseDraft('');
+      qc.invalidateQueries({ queryKey: ['tasks'] });
+      qc.invalidateQueries({ queryKey: ['families'] });
+      qc.invalidateQueries({ queryKey: ['reports'] });
+      await loadAll();
+      if (typeof fetchMe === 'function') await fetchMe();
+    } catch (e) {
+      toast.error(e?.message || t('error_occurred'));
+    } finally {
+      setResetLoading(false);
+    }
+  }, [
+    isGestorUser,
+    phraseMatchesReset,
+    user?.family_id,
+    t,
+    toast,
+    qc,
+    loadAll,
+    fetchMe,
+  ]);
 
   const openMedalFromTemplate = (m) => {
     setMedalModal({
@@ -347,7 +415,7 @@ export default function FamilyAdministration() {
             style={{ marginTop: 10 }}
             onClick={() => navigate('/parent/billing')}
           >
-            Assinatura e pagamento (Stripe)
+            {t('fam_admin_billing_stripe_cta')}
           </button>
         </div>
         {familyForm?.name && (
@@ -364,10 +432,15 @@ export default function FamilyAdministration() {
         )}
       </header>
 
-      <nav className="fam-admin-tabs">
-        {['family', 'users', 'medals', 'modules'].map((k) => (
-          <button key={k} type="button" className={`tab ${tab === k ? 'active' : ''}`} onClick={() => setTab(k)}>
-            {t(`fam_admin_tab_${k}`)}
+      <nav className="fam-admin-tabs tabs-scroll" aria-label={t('fam_admin_nav')}>
+        {ADMIN_TABS_ORDER.map((k) => (
+          <button
+            key={k}
+            type="button"
+            className={`tab ${tab === k ? 'active' : ''} ${k === 'reset_data' ? 'tab--risk' : ''}`}
+            onClick={() => setTab(k)}
+          >
+            {t(`fam_admin_tab_${k}`, k)}
           </button>
         ))}
       </nav>
@@ -409,8 +482,8 @@ export default function FamilyAdministration() {
                 value={familyForm.language || 'pt'}
                 onChange={(e) => setFamilyForm((p) => ({ ...p, language: e.target.value }))}
               >
-                <option value="pt">Português</option>
-                <option value="en">English</option>
+                <option value="pt">{t('lang_option_pt')}</option>
+                <option value="en">{t('lang_option_en')}</option>
               </select>
             </div>
             <div className="form-group">
@@ -864,6 +937,54 @@ export default function FamilyAdministration() {
         </div>
       )}
 
+      {tab === 'reset_data' && (
+        <div className="fam-admin-section">
+          {!isGestorUser ? (
+            <div className="card fam-admin-card">
+              <p className="fam-admin-reset-guard">{t('fam_reset_only_gestor_inline')}</p>
+            </div>
+          ) : (
+            <section className="card fam-admin-card fam-reset-card" aria-labelledby="fam-reset-title">
+              <h2 id="fam-reset-title" className="card-title">
+                {t('fam_reset_page_title')}
+              </h2>
+              <p className="fam-reset-lead">{t('fam_reset_page_subtitle')}</p>
+              <div className="fam-reset-columns">
+                <div>
+                  <h3 className="fam-admin-subh fam-reset-columns__title">{t('fam_reset_section_removed')}</h3>
+                  <ul className="fam-reset-list">
+                    {FAMILY_DATA_RESET_REMOVED_I18N_KEYS.map((key) => (
+                      <li key={key}>{t(key)}</li>
+                    ))}
+                  </ul>
+                </div>
+                <div>
+                  <h3 className="fam-admin-subh fam-reset-columns__title">{t('fam_reset_section_kept')}</h3>
+                  <ul className="fam-reset-list">
+                    {FAMILY_DATA_RESET_KEPT_I18N_KEYS.map((key) => (
+                      <li key={key}>{t(key)}</li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+              <div className="fam-reset-cta-row">
+                <button
+                  type="button"
+                  className="btn btn-danger"
+                  disabled={resetLoading || !user?.family_id}
+                  onClick={() => {
+                    setResetPhraseDraft('');
+                    setResetWizard('intro');
+                  }}
+                >
+                  {t('fam_reset_open_modal')}
+                </button>
+              </div>
+            </section>
+          )}
+        </div>
+      )}
+
       {/* Modal: guardião */}
       {userModal && (
         <GuardianUserModal
@@ -1050,12 +1171,128 @@ export default function FamilyAdministration() {
         />
       )}
 
+      {resetWizard && (
+        <div
+          className="modal-overlay fam-reset-overlay"
+          role="presentation"
+          onClick={() => {
+            if (!resetLoading) {
+              setResetWizard(null);
+              setResetPhraseDraft('');
+            }
+          }}
+        >
+          <div
+            className={`modal fam-admin-modal fam-reset-modal fam-reset-modal--${resetWizard}`}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="fam-reset-modal-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-header">
+              <h2 id="fam-reset-modal-title" className="modal-title">
+                {resetWizard === 'intro' ? t('fam_reset_modal_intro_title') : t('fam_reset_modal_step2_title')}
+              </h2>
+              <button
+                type="button"
+                className="modal-close"
+                disabled={resetLoading}
+                aria-label={t('cancel')}
+                onClick={() => {
+                  if (!resetLoading) {
+                    setResetWizard(null);
+                    setResetPhraseDraft('');
+                  }
+                }}
+              >
+                ×
+              </button>
+            </div>
+
+            {resetWizard === 'intro' ? (
+              <>
+                <p className="fam-reset-modal-lead">{t('fam_reset_modal_intro_body')}</p>
+                <p className="fam-reset-muted">{t('fam_reset_modal_audited')}</p>
+                <div className="modal-footer fam-reset-actions">
+                  <button
+                    type="button"
+                    className="btn btn-ghost fam-reset-actions__stretch"
+                    disabled={resetLoading}
+                    onClick={() => {
+                      setResetWizard(null);
+                      setResetPhraseDraft('');
+                    }}
+                  >
+                    {t('cancel')}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-danger fam-reset-actions__stretch"
+                    disabled={resetLoading}
+                    onClick={() => {
+                      setResetPhraseDraft('');
+                      setResetWizard('confirm');
+                    }}
+                  >
+                    {t('fam_reset_modal_continue')}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="fam-reset-modal-lead">{t('fam_reset_modal_step2_body')}</p>
+                <label className="form-label">{t('fam_reset_modal_phrase_label')}</label>
+                <div className="fam-reset-exact-chip" aria-hidden>
+                  {t('fam_reset_exact_phrase')}
+                </div>
+                <div className="form-group">
+                  <input
+                    className={`form-input${phraseMatchesReset || resetPhraseDraft.length === 0 ? '' : ' fam-reset-input--warn'}`}
+                    value={resetPhraseDraft}
+                    placeholder={t('fam_reset_modal_placeholder')}
+                    spellCheck={false}
+                    disabled={resetLoading}
+                    autoComplete="off"
+                    onChange={(e) => setResetPhraseDraft(e.target.value)}
+                  />
+                  {!phraseMatchesReset && resetPhraseDraft.trim().length > 0 ? (
+                    <p className="fam-reset-muted fam-reset-muted--risk">{t('fam_reset_modal_must_match')}</p>
+                  ) : null}
+                </div>
+                <p className="fam-reset-muted">{t('fam_reset_modal_audited')}</p>
+                <div className="modal-footer fam-reset-actions">
+                  <button
+                    type="button"
+                    className="btn btn-ghost fam-reset-actions__stretch"
+                    disabled={resetLoading}
+                    onClick={() => {
+                      setResetWizard(null);
+                      setResetPhraseDraft('');
+                    }}
+                  >
+                    {t('cancel')}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-danger fam-reset-actions__stretch"
+                    disabled={resetLoading || !phraseMatchesReset}
+                    onClick={() => executeFamilyDataReset()}
+                  >
+                    {resetLoading ? t('fam_reset_loading') : t('fam_reset_modal_execute')}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
       <style>{`
         .fam-admin-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; margin-bottom: 24px; }
         .fam-admin-badge { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-radius: var(--radius); border: 2px solid var(--border); font-weight: 600; }
         .fam-admin-emoji { font-size: 1.4rem; }
-        .fam-admin-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 24px; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
-        .fam-admin-tabs .tab { border-radius: var(--radius) var(--radius) 0 0; }
+        .fam-admin-tabs { display: flex; flex-wrap: nowrap; gap: 8px; margin-bottom: 24px; border-bottom: 1px solid var(--border); padding-bottom: 8px; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+        .fam-admin-tabs .tab { border-radius: var(--radius) var(--radius) 0 0; flex: 0 0 auto; white-space: nowrap; }
         .fam-modules-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr)); gap: 20px; }
         .fam-module-card { padding: 20px; border: 1px solid var(--border); border-radius: var(--radius); text-align: left; transition: box-shadow 0.2s; }
         .fam-module-card--on { border-color: color-mix(in srgb, var(--primary) 45%, var(--border)); box-shadow: 0 4px 20px rgba(108, 92, 231, 0.08); }
@@ -1069,6 +1306,27 @@ export default function FamilyAdministration() {
         .fam-admin-section { margin-bottom: 32px; }
         .fam-admin-subh { font-size: 1.05rem; font-weight: 700; margin: 16px 0 12px; }
         .fam-admin-modal { max-width: 520px; max-height: 90vh; overflow: auto; }
+        .fam-reset-lead { margin-top: 8px; color: var(--text-light); max-width: 720px; line-height: 1.55; }
+        .fam-reset-columns { margin-top: 20px; display: grid; gap: 20px 32px; grid-template-columns: 1fr; }
+        @media (min-width: 768px) { .fam-reset-columns { grid-template-columns: 1fr 1fr; } }
+        .fam-reset-columns__title { margin-top: 0; font-size: 1rem !important; font-weight: 700; }
+        .fam-reset-list { margin: 0 0 0 1.15rem; padding: 0; line-height: 1.62; font-size: 0.92rem; color: var(--text); min-height: 0; }
+        .fam-reset-list li { margin-bottom: 8px; }
+        .fam-reset-cta-row { margin-top: 28px; display: flex; flex-wrap: wrap; gap: 12px; }
+        @media (max-width: 480px) {
+          .fam-reset-cta-row .btn-danger { flex: 1 1 auto; justify-content: center; min-height: 44px; white-space: normal; text-align: center; }
+        }
+        .fam-reset-overlay { z-index: 10100 !important; padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(28px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)) !important; align-items: center !important; }
+        .fam-reset-modal.modal { align-self: center; width: 100%; margin: auto 0; }
+        .fam-reset-modal-lead { line-height: 1.58; margin-bottom: 12px; }
+        .fam-reset-muted { font-size: 0.82rem; color: var(--text-light); margin: 12px 0 0; }
+        .fam-reset-muted--risk { color: color-mix(in srgb, var(--danger) 75%, var(--text)); margin-top: 8px !important; }
+        .fam-reset-exact-chip { padding: 12px 14px; margin: 6px 0 12px; font-family: ui-monospace, Consolas, monospace; font-weight: 600; letter-spacing: 0.04em; border-radius: var(--radius-sm); border: 2px dashed var(--danger); background: rgba(225,112,85,0.08); word-break: break-all; font-size: 0.92rem; }
+        .fam-reset-input--warn { border-color: color-mix(in srgb, var(--danger) 55%, var(--border)) !important; }
+        .fam-reset-actions { flex-wrap: wrap !important; justify-content: flex-end !important; gap: 10px !important; align-items: stretch; }
+        @media (max-width: 520px) { .fam-reset-actions__stretch { flex: 1 1 calc(50% - 10px); min-height: 44px; justify-content: center !important; } }
+        .tab--risk { color: color-mix(in srgb, var(--danger) 92%, var(--text-light)); border-bottom-width: 2px; margin-bottom: -2px; }
+        .tab--risk.active { color: var(--danger) !important; border-bottom-color: var(--danger) !important; }
         .fam-admin-list { padding-left: 1.2rem; line-height: 1.8; color: var(--text-light); }
       `}</style>
     </div>
@@ -1090,7 +1348,7 @@ function PasswordResetModal({ pwModal, onClose, onSaved, t }) {
       onSaved();
     } catch (err) {
       console.error(err);
-      alert(err.response?.data?.error || err.message || 'Erro ao alterar senha.');
+      alert(err.response?.data?.error || err.message || t('fam_admin_password_change_error'));
     }
   };
   return (

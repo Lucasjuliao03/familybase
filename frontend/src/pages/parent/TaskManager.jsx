@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useToast } from '../../contexts/ToastContext';
@@ -11,12 +11,7 @@ import {
   taskListQueryKey,
   taskOccurrencesQueryKey,
 } from '../../lib/familiaQueryKeys';
-import { deriveParentHistoryBucket, historyBucketLabel } from '../../lib/taskHistoryStatus';
-
-const DAYS = [
-  { label: 'Dom', value: 0 }, { label: 'Seg', value: 1 }, { label: 'Ter', value: 2 },
-  { label: 'Qua', value: 3 }, { label: 'Qui', value: 4 }, { label: 'Sex', value: 5 }, { label: 'Sáb', value: 6 },
-];
+import { deriveParentHistoryBucket } from '../../lib/taskHistoryStatus';
 
 const initialForm = {
   title: '', description: '', type: 'home', points: 10, coins: 0,
@@ -49,9 +44,9 @@ function initialHistoryFilter() {
   };
 }
 
-function TaskTableSkeleton({ cols = 7, rows = 5 }) {
+function TaskTableSkeleton({ cols = 7, rows = 5, ariaBusyLabel = '' }) {
   return (
-    <tbody aria-busy="true" aria-label="A carregar tarefas">
+    <tbody aria-busy="true" aria-label={ariaBusyLabel}>
       {Array.from({ length: rows }, (_, ri) => (
         <tr key={ri} className="table-skel-row">
           <td><div className="fam-sk fam-sk-line fam-sk-line--med" /></td>
@@ -65,9 +60,21 @@ function TaskTableSkeleton({ cols = 7, rows = 5 }) {
 }
 
 export default function TaskManager() {
-  const { t } = useLanguage();
+  const { lang, t } = useLanguage();
   const toast = useToast();
   const queryClient = useQueryClient();
+
+  const weekdayButtons = useMemo(() => {
+    const lc = lang === 'en' ? 'en-US' : 'pt-PT';
+    const sunday = new Date(2024, 0, 7);
+    return [0, 1, 2, 3, 4, 5, 6].map((i) => {
+      const d = new Date(sunday);
+      d.setDate(sunday.getDate() + i);
+      return { value: i, label: new Intl.DateTimeFormat(lc, { weekday: 'short' }).format(d) };
+    });
+  }, [lang]);
+
+  const skeletonBusyLabel = t('task_skeleton_loading');
 
   /** Atualizado em cada render para alinhar o dia civil com o servidor após pivot/poll. */
   const todayStr = todayYmdLocal();
@@ -221,13 +228,11 @@ export default function TaskManager() {
     mutationFn: ({ id, active }) => api.put(`/tasks/${id}`, { status: active ? 'active' : 'inactive' }),
     onSuccess: (_d, { active }) => {
       toast.success(
-        active
-          ? 'Modelo ativado: volta a criar ocorrências nos dias certos.'
-          : 'Modelo desativado: não cria novas ocorrências. O histórico mantém-se.',
+        active ? t('task_template_enabled_toast') : t('task_template_disabled_toast'),
       );
     },
     onError: (err) => {
-      toast.error(err.response?.data?.error || err.message || 'Não foi possível atualizar o modelo.');
+      toast.error(err.response?.data?.error || err.message || t('task_template_toggle_err'));
     },
     onSettled: () => queryClient.invalidateQueries({ queryKey: ['tasks'] }),
   });
@@ -246,7 +251,7 @@ export default function TaskManager() {
     onError: (_err, _vars, ctx) => restoreOccSnapshots(ctx?.previous),
     onSuccess: (_d, { intake }) => {
       toast.success(
-        intake === 'taken' ? 'Medicamento registado como tomado.' : 'Medicamento registado como não tomado.',
+        intake === 'taken' ? t('task_health_taken_toast') : t('task_health_skipped_toast'),
       );
     },
     onSettled: () => {
@@ -283,7 +288,7 @@ export default function TaskManager() {
       return { mode: 'create' };
     },
     onSuccess: async (_d, { taskId }) => {
-      if (taskId) toast.success('Tarefa atualizada!');
+      if (taskId) toast.success(t('task_updated'));
       else toast.success(t('task_created'));
       setShowModal(false);
       setEditTask(null);
@@ -346,15 +351,24 @@ export default function TaskManager() {
     completed_late: 'warning',
     not_completed: 'warning',
   };
-  const statusLabel = {
-    pending: 'Pendente', in_progress: 'Em andamento', waiting_approval: '⏳ Aguardando',
-    completed: 'Concluída', approved: '✅ Aprovada', rejected: '❌ Reprovada',
-    delayed: '⚠️ Atrasada', expired: 'Expirada', cancelled: 'Cancelada',
-    completed_late: '⚠️ Concluída c/ Atraso',
-    not_completed: '✖️ Não concluída',
-  };
+  const statusLabel = useMemo(() => {
+    const keys = [
+      'pending',
+      'in_progress',
+      'waiting_approval',
+      'completed',
+      'approved',
+      'rejected',
+      'delayed',
+      'expired',
+      'cancelled',
+      'completed_late',
+      'not_completed',
+    ];
+    return keys.reduce((acc, k) => ({ ...acc, [k]: t(`task_status_${k}`) }), {});
+  }, [t]);
 
-  const historyBucketBadge = {
+  const histBucketTxt = useCallback((b) => t(`hist_bucket_${b}`, b), [t]);
     completed: 'success',
     rejected: 'danger',
     not_completed: 'warning',
@@ -370,7 +384,7 @@ export default function TaskManager() {
       <div className="flex-between mb-24" style={{ flexWrap: 'wrap', gap: 12 }}>
         <div>
           <h1 className="page-title">✅ {t('task_management')}</h1>
-          <p className="page-subtitle">Gerencie tarefas únicas e recorrentes</p>
+          <p className="page-subtitle">{t('task_parent_subtitle')}</p>
         </div>
         <button
           type="button"
@@ -386,115 +400,129 @@ export default function TaskManager() {
         ((occurrences.length > 0 && viewMode !== 'history') ||
           tasks.length > 0 ||
           (historyOccurrences.length > 0 && viewMode === 'history')) && (
-        <p className="parent-dash__refetch-banner" aria-live="polite">A atualizar…</p>
+        <p className="parent-dash__refetch-banner" aria-live="polite">{t('task_updating')}</p>
       )}
 
       {/* FILTERS */}
-      <div className="flex gap-12 mb-24" style={{ flexWrap: 'wrap', alignItems: 'center' }}>
-        <div className="tabs tabs-scroll" style={{ margin: 0 }}>
-          <button type="button" className={`tab ${viewMode === 'occurrences' ? 'active' : ''}`} onClick={() => setViewMode('occurrences')}>📅 Hoje</button>
+      <div className="task-manager-toolbar">
+        <div className="tabs tabs-scroll task-manager-toolbar__tabs" style={{ margin: 0 }}>
+          <button type="button" className={`tab ${viewMode === 'occurrences' ? 'active' : ''}`} onClick={() => setViewMode('occurrences')}>
+            📅 {t('task_tab_today')}
+          </button>
           <button type="button" className={`tab ${viewMode === 'approvals' ? 'active' : ''}`} onClick={() => setViewMode('approvals')}>
-            ⏳ Aprovações
-            {occurrences.filter(o => o.status === 'waiting_approval').length > 0 && (
+            ⏳ {t('task_tab_approvals')}
+            {occurrences.filter((o) => o.status === 'waiting_approval').length > 0 && (
               <span className="badge badge-warning" style={{ marginLeft: 6, fontSize: '0.68rem' }}>
-                {occurrences.filter(o => o.status === 'waiting_approval').length}
+                {occurrences.filter((o) => o.status === 'waiting_approval').length}
               </span>
             )}
           </button>
-          <button type="button" className={`tab ${viewMode === 'history' ? 'active' : ''}`} onClick={() => setViewMode('history')}>📜 Histórico</button>
-          <button type="button" className={`tab ${viewMode === 'templates' ? 'active' : ''}`} onClick={() => setViewMode('templates')}>🗂️ Modelos</button>
+          <button type="button" className={`tab ${viewMode === 'history' ? 'active' : ''}`} onClick={() => setViewMode('history')}>
+            📜 {t('task_tab_history')}
+          </button>
+          <button type="button" className={`tab ${viewMode === 'templates' ? 'active' : ''}`} onClick={() => setViewMode('templates')}>
+            🗂️ {t('task_tab_templates')}
+          </button>
         </div>
-        <select className="form-select" style={{ width: 'auto', maxWidth: '100%', minWidth: 0 }} value={filter.child_id} onChange={(e) => setFilter((p) => ({ ...p, child_id: e.target.value }))}>
-          <option value="">{t('all')} {t('children')}</option>
-          {children.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
-        <select className="form-select" style={{ width: 'auto' }} value={filter.type} onChange={(e) => setFilter((p) => ({ ...p, type: e.target.value }))}>
-          <option value="">{t('all')} Tipos</option>
-          <option value="home">{t('home')}</option>
-          <option value="school">{t('school')}</option>
-          <option value="routine">Rotina</option>
-          <option value="challenge">Desafio</option>
-        </select>
+        <div className="task-manager-toolbar__filters">
+          <select
+            className="form-select"
+            value={filter.child_id}
+            onChange={(e) => setFilter((p) => ({ ...p, child_id: e.target.value }))}
+          >
+            <option value="">
+              {t('all')} {t('children')}
+            </option>
+            {children.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+          <select className="form-select" value={filter.type} onChange={(e) => setFilter((p) => ({ ...p, type: e.target.value }))}>
+            <option value="">{t('task_filter_all_types')}</option>
+            <option value="home">{t('home')}</option>
+            <option value="school">{t('school')}</option>
+            <option value="routine">{t('task_type_routine')}</option>
+            <option value="challenge">{t('task_type_challenge')}</option>
+          </select>
 
-        {viewMode === 'history' && (
-          <>
-            <span style={{ fontSize: '0.82rem', color: 'var(--text-light)' }}>Intervalo:</span>
-            <input
-              type="date"
-              className="form-input"
-              style={{ width: 'auto', minHeight: 40 }}
-              value={histFilter.from}
-              max={histFilter.to}
-              aria-label="Data inicial histórico"
-              onChange={(e) =>
-                setHistFilter((p) => ({ ...p, from: e.target.value }))
-              }
-            />
-            <span style={{ fontSize: '0.82rem', color: 'var(--text-light)' }}>a</span>
-            <input
-              type="date"
-              className="form-input"
-              style={{ width: 'auto', minHeight: 40 }}
-              value={histFilter.to}
-              min={histFilter.from}
-              aria-label="Data final histórico"
-              onChange={(e) =>
-                setHistFilter((p) => ({ ...p, to: e.target.value }))
-              }
-            />
-            <select
-              className="form-select"
-              style={{ width: 'auto', maxWidth: 220 }}
-              aria-label="Filtro estado resumo"
-              value={histFilter.history_status}
-              onChange={(e) =>
-                setHistFilter((p) => ({ ...p, history_status: e.target.value }))
-              }
-            >
-              <option value="all">Resumo: todos</option>
-              <option value="completed">Concluídas</option>
-              <option value="not_completed">Não concluídas</option>
-              <option value="rejected">Recusadas pelo pai</option>
-              <option value="open">Em aberto (dia em curso)</option>
-            </select>
-            <select
-              className="form-select"
-              style={{ width: 'auto' }}
-              aria-label="Tipo tarefa recorrente ou avulsa"
-              value={histFilter.recurring_kind}
-              onChange={(e) =>
-                setHistFilter((p) => ({ ...p, recurring_kind: e.target.value }))
-              }
-            >
-              <option value="all">Origem: todas</option>
-              <option value="recurring">Só recorrentes</option>
-              <option value="once">Só avulsas</option>
-            </select>
-            <select
-              className="form-select"
-              style={{ width: 'auto', minWidth: 160, maxWidth: 'min(280px, 100vw)' }}
-              aria-label="Filtrar por modelo de tarefa"
-              value={histFilter.task_id}
-              onChange={(e) =>
-                setHistFilter((p) => ({ ...p, task_id: e.target.value }))
-              }
-            >
-              <option value="">Tarefa: todas</option>
-              {tasks.map((tk) => (
-                <option key={tk.id} value={tk.id}>
-                  {(tk.title && tk.title.slice(0, 48)) || tk.id}
-                  {tk.is_recurring ? ' 🔄' : ''}
-                </option>
-              ))}
-            </select>
-          </>
-        )}
+          {viewMode === 'history' && (
+            <>
+              <span style={{ fontSize: '0.82rem', color: 'var(--text-light)', alignSelf: 'center' }}>
+                {t('task_hist_interval_label')}:
+              </span>
+              <input
+                type="date"
+                className="form-input"
+                style={{ width: 'auto', minHeight: 40 }}
+                value={histFilter.from}
+                max={histFilter.to}
+                aria-label={t('task_hist_date_from_aria')}
+                onChange={(e) => setHistFilter((p) => ({ ...p, from: e.target.value }))}
+              />
+              <span style={{ fontSize: '0.82rem', color: 'var(--text-light)', alignSelf: 'center' }}>
+                {t('task_hist_filter_range_to')}
+              </span>
+              <input
+                type="date"
+                className="form-input"
+                style={{ width: 'auto', minHeight: 40 }}
+                value={histFilter.to}
+                min={histFilter.from}
+                aria-label={t('task_hist_date_to_aria')}
+                onChange={(e) => setHistFilter((p) => ({ ...p, to: e.target.value }))}
+              />
+              <select
+                className="form-select"
+                style={{ width: 'auto', maxWidth: 320 }}
+                aria-label={t('task_hist_status_filter_aria')}
+                value={histFilter.history_status}
+                onChange={(e) => setHistFilter((p) => ({ ...p, history_status: e.target.value }))}
+              >
+                <option value="all">{t('task_hist_summary_opt_all')}</option>
+                <option value="completed">{t('task_hist_summary_opt_completed')}</option>
+                <option value="not_completed">{t('task_hist_summary_opt_not_completed')}</option>
+                <option value="rejected">{t('task_hist_summary_opt_rejected')}</option>
+                <option value="open">{t('task_hist_summary_opt_open')}</option>
+              </select>
+              <select
+                className="form-select"
+                style={{ width: 'auto' }}
+                aria-label={t('task_hist_recurring_kind_aria')}
+                value={histFilter.recurring_kind}
+                onChange={(e) => setHistFilter((p) => ({ ...p, recurring_kind: e.target.value }))}
+              >
+                <option value="all">{t('task_hist_kind_all')}</option>
+                <option value="recurring">{t('task_hist_kind_recurring_only')}</option>
+                <option value="once">{t('task_hist_kind_once_only')}</option>
+              </select>
+              <select
+                className="form-select"
+                style={{ width: 'auto', minWidth: 0, maxWidth: 'min(320px, 100vw)' }}
+                aria-label={t('task_hist_filter_pick_task')}
+                value={histFilter.task_id}
+                onChange={(e) => setHistFilter((p) => ({ ...p, task_id: e.target.value }))}
+              >
+                <option value="">{t('task_filter_task_all_option')}</option>
+                {tasks.map((tk) => (
+                  <option key={tk.id} value={tk.id}>
+                    {(tk.title && tk.title.slice(0, 48)) || tk.id}
+                    {tk.is_recurring ? ' 🔄' : ''}
+                  </option>
+                ))}
+              </select>
+            </>
+          )}
+        </div>
       </div>
 
       {childrenQ.isError && (
         <p className="mb-16" style={{ fontSize: '0.88rem', color: 'var(--danger)' }}>
-          Lista de filhos indisponível. {' '}
-          <button type="button" className="btn btn-sm btn-ghost" onClick={() => childrenQ.refetch()}>Repetir</button>
+          {t('task_children_list_err')}{' '}
+          <button type="button" className="btn btn-sm btn-ghost" onClick={() => childrenQ.refetch()}>
+            {t('task_retry_short')}
+          </button>
         </p>
       )}
 
@@ -502,15 +530,27 @@ export default function TaskManager() {
       {viewMode === 'occurrences' && (
         <div className="table-container">
           <table className="table-stack-md">
-            <thead><tr><th>Tarefa</th><th>Filho</th><th>Horário</th><th>Tipo</th><th>Pontos</th><th>Status</th><th>Ações</th></tr></thead>
+            <thead>
+              <tr>
+                <th>{t('task_hist_col_task')}</th>
+                <th>{t('task_hist_col_child')}</th>
+                <th>{t('task_table_due_short')}</th>
+                <th>{t('task_type')}</th>
+                <th>{t('task_points')}</th>
+                <th>{t('task_hist_col_record_status')}</th>
+                <th>{t('task_hist_col_actions')}</th>
+              </tr>
+            </thead>
             {occInitialSkeleton ? (
-              <TaskTableSkeleton />
+              <TaskTableSkeleton ariaBusyLabel={skeletonBusyLabel} />
             ) : occQ.isError ? (
               <tbody>
                 <tr>
                   <td colSpan={7} style={{ textAlign: 'center', padding: 40 }}>
-                    <p style={{ color: 'var(--danger)', marginBottom: 12 }}>Erro ao carregar ocorrências.</p>
-                    <button type="button" className="btn btn-sm btn-primary" onClick={() => occQ.refetch()}>Tentar novamente</button>
+                    <p style={{ color: 'var(--danger)', marginBottom: 12 }}>{t('task_occurrences_err')}</p>
+                    <button type="button" className="btn btn-sm btn-primary" onClick={() => occQ.refetch()}>
+                      {t('task_try_again')}
+                    </button>
                   </td>
                 </tr>
               </tbody>
@@ -519,33 +559,68 @@ export default function TaskManager() {
                 {occurrences.length === 0 && occQ.isSuccess ? (
                   <tr>
                     <td colSpan={7} style={{ textAlign: 'center', padding: 40, color: 'var(--text-light)' }}>
-                      Nenhuma tarefa para hoje. Crie tarefas recorrentes para vê-las aqui automaticamente.
+                      {t('task_occurrences_empty')}
                     </td>
                   </tr>
                 ) : occurrences.map((occ) => (
                   <tr key={occ.id} style={occ.isDelayed ? { background: 'rgba(239,68,68,0.05)', borderLeft: '3px solid var(--danger)' } : undefined}>
-                    <td data-label="Tarefa">
+                    <td data-label={t('task_hist_col_task')}>
                       <strong>{occ.title}</strong>
-                      {occ.is_recurring && <span className="badge badge-info ml-8" style={{ marginLeft: 6, fontSize: '0.7rem' }}>🔄 {occ.frequency}</span>}
-                      {occ.isDelayed && <span className="badge badge-danger" style={{ marginLeft: 6, fontSize: '0.7rem' }}>⚠️ Atrasada</span>}
-                      {occ.wasLate && <span className="badge badge-warning" style={{ marginLeft: 6, fontSize: '0.7rem' }}>⚠️ C/ Atraso</span>}
+                      {occ.is_recurring && (
+                        <span className="badge badge-info ml-8" style={{ marginLeft: 6, fontSize: '0.7rem' }}>
+                          🔄 {occ.frequency}
+                        </span>
+                      )}
+                      {occ.isDelayed && (
+                        <span className="badge badge-danger" style={{ marginLeft: 6, fontSize: '0.7rem' }}>
+                          ⚠️ {t('task_badge_delayed')}
+                        </span>
+                      )}
+                      {occ.wasLate && (
+                        <span className="badge badge-warning" style={{ marginLeft: 6, fontSize: '0.7rem' }}>
+                          ⚠️ {t('task_badge_late_completed')}
+                        </span>
+                      )}
                       {occ.description && <div style={{ fontSize: '0.78rem', color: 'var(--text-light)' }}>{occ.description}</div>}
                     </td>
-                    <td data-label="Filho"><div className="flex gap-8" style={{ alignItems: 'center' }}><div style={{ width: 8, height: 8, borderRadius: '50%', background: occ.child_color || 'var(--border)' }} />{occ.assignee_name || occ.child_name}</div></td>
-                    <td data-label="Horário">{occ.due_time || '—'}</td>
-                    <td data-label="Tipo"><span className="badge badge-info">{t(occ.type)}</span></td>
-                    <td data-label="Pontos">{Number(occ.is_health_reminder) === 1 ? '—' : <span className="badge badge-primary">⭐{occ.points}</span>}</td>
-                    <td data-label="Status"><span className={`badge badge-${statusColor[occ.status] || 'info'}`}>{statusLabel[occ.status] || occ.status}</span></td>
-                    <td data-label="Ações">
+                    <td data-label={t('task_hist_col_child')}>
+                      <div className="flex gap-8" style={{ alignItems: 'center' }}>
+                        <div style={{ width: 8, height: 8, borderRadius: '50%', background: occ.child_color || 'var(--border)' }} />
+                        {occ.assignee_name || occ.child_name}
+                      </div>
+                    </td>
+                    <td data-label={t('task_table_due_short')}>{occ.due_time || '—'}</td>
+                    <td data-label={t('task_type')}>
+                      <span className="badge badge-info">{t(occ.type)}</span>
+                    </td>
+                    <td data-label={t('task_points')}>
+                      {Number(occ.is_health_reminder) === 1 ? '—' : (
+                        <span className="badge badge-primary">
+                          ⭐{occ.points}
+                        </span>
+                      )}
+                    </td>
+                    <td data-label={t('task_hist_col_record_status')}>
+                      <span className={`badge badge-${statusColor[occ.status] || 'info'}`}>{statusLabel[occ.status] || occ.status}</span>
+                    </td>
+                    <td data-label={t('task_hist_col_actions')}>
                       {Number(occ.is_health_reminder) === 1 && ['pending', 'in_progress', 'delayed'].includes(occ.status) ? (
-                        <div className="flex gap-8 flex-wrap">
-                          <button type="button" className="btn btn-sm btn-primary" onClick={() => handleHealthOcc(occ.id, 'taken')}>Tomado</button>
-                          <button type="button" className="btn btn-sm btn-ghost" onClick={() => handleHealthOcc(occ.id, 'skipped')}>Não tomado</button>
+                        <div className="task-actions-row">
+                          <button type="button" className="btn btn-sm btn-primary" onClick={() => handleHealthOcc(occ.id, 'taken')}>
+                            {t('task_health_taken')}
+                          </button>
+                          <button type="button" className="btn btn-sm btn-ghost" onClick={() => handleHealthOcc(occ.id, 'skipped')}>
+                            {t('task_health_skipped')}
+                          </button>
                         </div>
                       ) : occ.status === 'waiting_approval' ? (
-                        <div className="flex gap-8">
-                          <button type="button" className="btn btn-sm btn-primary" onClick={() => handleApproveOcc(occ.id, true)}>✅</button>
-                          <button type="button" className="btn btn-sm btn-danger" onClick={() => handleApproveOcc(occ.id, false)}>❌</button>
+                        <div className="task-actions-row">
+                          <button type="button" className="btn btn-sm btn-primary" onClick={() => handleApproveOcc(occ.id, true)}>
+                            ✅
+                          </button>
+                          <button type="button" className="btn btn-sm btn-danger" onClick={() => handleApproveOcc(occ.id, false)}>
+                            ❌
+                          </button>
                         </div>
                       ) : null}
                     </td>
@@ -561,40 +636,54 @@ export default function TaskManager() {
       {viewMode === 'approvals' && (
         <div className="table-container">
           {occInitialSkeleton ? (
-            <table className="table-stack-md"><TaskTableSkeleton /></table>
+            <table className="table-stack-md"><TaskTableSkeleton ariaBusyLabel={skeletonBusyLabel} /></table>
           ) : (() => {
             const pending = occurrences.filter(o => o.status === 'waiting_approval');
             if (pending.length === 0) {
               return (
                 <div className="empty-state" style={{ padding: '48px 0' }}>
                   <div className="empty-icon">✅</div>
-                  <h3>Nenhuma aprovação pendente</h3>
-                  <p>Quando um filho concluir uma tarefa que exige aprovação, ela aparecerá aqui.</p>
+                  <h3>{t('task_approvals_empty_title')}</h3>
+                  <p>{t('task_approvals_empty_desc')}</p>
                 </div>
               );
             }
             return (
               <table className="table-stack-md">
-                <thead><tr><th>Tarefa</th><th>Filho</th><th>Horário</th><th>Pontos</th><th>Ações</th></tr></thead>
+                <thead>
+                  <tr>
+                    <th>{t('task_hist_col_task')}</th>
+                    <th>{t('task_hist_col_child')}</th>
+                    <th>{t('task_table_due_short')}</th>
+                    <th>{t('task_points')}</th>
+                    <th>{t('task_hist_col_actions')}</th>
+                  </tr>
+                </thead>
                 <tbody>
                   {pending.map((occ) => (
                     <tr key={occ.id}>
-                      <td data-label="Tarefa">
+                      <td data-label={t('task_hist_col_task')}>
                         <strong>{occ.title}</strong>
                         {occ.description && <div style={{ fontSize: '0.78rem', color: 'var(--text-light)' }}>{occ.description}</div>}
                       </td>
-                      <td data-label="Filho">
+                      <td data-label={t('task_hist_col_child')}>
                         <div className="flex gap-8" style={{ alignItems: 'center' }}>
                           <div style={{ width: 8, height: 8, borderRadius: '50%', background: occ.child_color || 'var(--border)' }} />
                           {occ.assignee_name || occ.child_name}
                         </div>
                       </td>
-                      <td data-label="Horário">{occ.due_time || '—'}</td>
-                      <td data-label="Pontos"><span className="badge badge-primary">⭐{occ.points}</span></td>
-                      <td data-label="Ações">
-                        <div className="flex gap-8">
-                          <button type="button" className="btn btn-sm btn-primary" onClick={() => handleApproveOcc(occ.id, true)}>✅ Aprovar</button>
-                          <button type="button" className="btn btn-sm btn-danger" onClick={() => handleApproveOcc(occ.id, false)}>❌ Reprovar</button>
+                      <td data-label={t('task_table_due_short')}>{occ.due_time || '—'}</td>
+                      <td data-label={t('task_points')}>
+                        <span className="badge badge-primary">⭐{occ.points}</span>
+                      </td>
+                      <td data-label={t('task_hist_col_actions')}>
+                        <div className="task-actions-row">
+                          <button type="button" className="btn btn-sm btn-primary" onClick={() => handleApproveOcc(occ.id, true)}>
+                            ✅ {t('task_approve')}
+                          </button>
+                          <button type="button" className="btn btn-sm btn-danger" onClick={() => handleApproveOcc(occ.id, false)}>
+                            ❌ {t('task_reject')}
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -610,30 +699,30 @@ export default function TaskManager() {
       {viewMode === 'history' && (
         <div className="table-container">
           <p className="mb-16" style={{ fontSize: '0.86rem', color: 'var(--text-light)', maxWidth: 860 }}>
-            <strong>Histórico</strong>: cada linha corresponde a uma ocorrência num dia (recorrentes geram uma por dia quando o modelo está{' '}
-            <strong>ativo</strong>). Concluída = feita pelo filho e{' '}
-            <strong>confirmada pelo pai</strong> quando a regra pede aprovação — ou marcada como concluída sem esse passo quando não pede.
+            {t('task_hist_intro')}
           </p>
           <table className="table-stack-md">
             <thead>
               <tr>
-                <th>Data</th>
-                <th>Tarefa</th>
-                <th>Filho</th>
-                <th>Origem</th>
-                <th>Resumo</th>
-                <th>Estado registado</th>
-                <th>Ações</th>
+                <th>{t('task_hist_col_date')}</th>
+                <th>{t('task_hist_col_task')}</th>
+                <th>{t('task_hist_col_child')}</th>
+                <th>{t('task_hist_col_origin')}</th>
+                <th>{t('task_hist_col_summary')}</th>
+                <th>{t('task_hist_col_record_status')}</th>
+                <th>{t('task_hist_col_actions')}</th>
               </tr>
             </thead>
             {histInitialSkeleton ? (
-              <TaskTableSkeleton cols={7} />
+              <TaskTableSkeleton cols={7} ariaBusyLabel={skeletonBusyLabel} />
             ) : historyQ.isError ? (
               <tbody>
                 <tr>
                   <td colSpan={7} style={{ textAlign: 'center', padding: 40 }}>
-                    <p style={{ color: 'var(--danger)', marginBottom: 12 }}>Erro ao carregar histórico.</p>
-                    <button type="button" className="btn btn-sm btn-primary" onClick={() => historyQ.refetch()}>Repetir</button>
+                    <p style={{ color: 'var(--danger)', marginBottom: 12 }}>{t('task_history_err')}</p>
+                    <button type="button" className="btn btn-sm btn-primary" onClick={() => historyQ.refetch()}>
+                      {t('task_try_again')}
+                    </button>
                   </td>
                 </tr>
               </tbody>
@@ -642,21 +731,20 @@ export default function TaskManager() {
                 {historyOccurrences.length === 0 && historyQ.isSuccess ? (
                   <tr>
                     <td colSpan={7} style={{ textAlign: 'center', padding: 40, color: 'var(--text-light)' }}>
-                      Sem resultados neste período ou filtros. Alargue as datas ou defina filtros diferentes.
-                      As tarefas recorrentes ativas aparecem no histórico dia a dia.
+                      {t('task_hist_empty')}
                     </td>
                   </tr>
                 ) : (
                   historyOccurrences.map((occ) => (
                     <tr key={occ.id}>
-                      <td data-label="Data">{occ.occurrence_date}</td>
-                      <td data-label="Tarefa">
+                      <td data-label={t('task_hist_col_date')}>{occ.occurrence_date}</td>
+                      <td data-label={t('task_hist_col_task')}>
                         <strong>{occ.title}</strong>
                         {occ.description && (
                           <div style={{ fontSize: '0.78rem', color: 'var(--text-light)' }}>{occ.description}</div>
                         )}
                       </td>
-                      <td data-label="Filho">
+                      <td data-label={t('task_hist_col_child')}>
                         <div className="flex gap-8" style={{ alignItems: 'center' }}>
                           <div
                             style={{ width: 8, height: 8, borderRadius: '50%', background: occ.child_color || 'var(--border)' }}
@@ -664,36 +752,44 @@ export default function TaskManager() {
                           {occ.assignee_name || occ.child_name}
                         </div>
                       </td>
-                      <td data-label="Origem">
+                      <td data-label={t('task_hist_col_origin')}>
                         {occ.is_recurring ? (
-                          <span className="badge badge-info">🔄 {occ.frequency || 'recorrente'}</span>
+                          <span className="badge badge-info">🔄 {occ.frequency || t('task_recurring_fallback')}</span>
                         ) : (
-                          <span className="badge badge-ghost">Avulsa</span>
+                          <span className="badge badge-ghost">{t('task_template_once')}</span>
                         )}
                       </td>
-                      <td data-label="Resumo">
+                      <td data-label={t('task_hist_col_summary')}>
                         <span className={`badge badge-${historyBucketBadge[occ.history_bucket] || 'info'}`}>
-                          {historyBucketLabel(occ.history_bucket)}
+                          {histBucketTxt(occ.history_bucket)}
                         </span>
                       </td>
-                      <td data-label="Estado registado">
+                      <td data-label={t('task_hist_col_record_status')}>
                         <span className={`badge badge-${statusColor[occ.status] || 'info'}`}>
                           {statusLabel[occ.status] || occ.status}
                         </span>
                       </td>
-                      <td data-label="Ações">
+                      <td data-label={t('task_hist_col_actions')}>
                         {Number(occ.is_health_reminder) === 1 && ['pending', 'in_progress', 'delayed'].includes(occ.status) ? (
-                          <div className="flex gap-8 flex-wrap">
-                            <button type="button" className="btn btn-sm btn-primary" onClick={() => handleHealthOcc(occ.id, 'taken')}>Tomado</button>
-                            <button type="button" className="btn btn-sm btn-ghost" onClick={() => handleHealthOcc(occ.id, 'skipped')}>Não tomado</button>
+                          <div className="task-actions-row">
+                            <button type="button" className="btn btn-sm btn-primary" onClick={() => handleHealthOcc(occ.id, 'taken')}>
+                              {t('task_health_taken')}
+                            </button>
+                            <button type="button" className="btn btn-sm btn-ghost" onClick={() => handleHealthOcc(occ.id, 'skipped')}>
+                              {t('task_health_skipped')}
+                            </button>
                           </div>
                         ) : occ.status === 'waiting_approval' ? (
-                          <div className="flex gap-8 flex-wrap">
-                            <button type="button" className="btn btn-sm btn-primary" onClick={() => handleApproveOcc(occ.id, true)}>✅ Aprovar</button>
-                            <button type="button" className="btn btn-sm btn-danger" onClick={() => handleApproveOcc(occ.id, false)}>❌ Recusar</button>
+                          <div className="task-actions-row">
+                            <button type="button" className="btn btn-sm btn-primary" onClick={() => handleApproveOcc(occ.id, true)}>
+                              ✅ {t('task_approve')}
+                            </button>
+                            <button type="button" className="btn btn-sm btn-danger" onClick={() => handleApproveOcc(occ.id, false)}>
+                              ❌ {t('task_reject')}
+                            </button>
                           </div>
                         ) : (
-                          <span style={{ fontSize: '0.76rem', color: 'var(--text-light)' }}>—</span>
+                          <span style={{ fontSize: '0.76rem', color: 'var(--text-light)' }}>{t('task_hist_actions_none')}</span>
                         )}
                       </td>
                     </tr>
@@ -709,22 +805,38 @@ export default function TaskManager() {
       {viewMode === 'templates' && (
         <div className="table-container">
           <table className="table-stack-md">
-            <thead><tr><th>{t('task_title')}</th><th>{t('select_child')}</th><th>Recorrência</th><th>Horário</th><th>{t('points')}</th><th>Modelo</th><th>Ações</th></tr></thead>
+            <thead>
+              <tr>
+                <th>{t('task_title')}</th>
+                <th>{t('select_child')}</th>
+                <th>{t('task_frequency')}</th>
+                <th>{t('task_table_due_short')}</th>
+                <th>{t('task_points')}</th>
+                <th>{t('task_templates_col_status')}</th>
+                <th>{t('task_hist_col_actions')}</th>
+              </tr>
+            </thead>
             {tplInitialSkeleton ? (
-              <TaskTableSkeleton />
+              <TaskTableSkeleton ariaBusyLabel={skeletonBusyLabel} />
             ) : tasksQ.isError ? (
               <tbody>
                 <tr>
                   <td colSpan={7} style={{ textAlign: 'center', padding: 40 }}>
-                    <p style={{ color: 'var(--danger)', marginBottom: 12 }}>Erro ao carregar modelos.</p>
-                    <button type="button" className="btn btn-sm btn-primary" onClick={() => tasksQ.refetch()}>Tentar novamente</button>
+                    <p style={{ color: 'var(--danger)', marginBottom: 12 }}>{t('task_templates_err')}</p>
+                    <button type="button" className="btn btn-sm btn-primary" onClick={() => tasksQ.refetch()}>
+                      {t('task_try_again')}
+                    </button>
                   </td>
                 </tr>
               </tbody>
             ) : (
               <tbody>
                 {tasks.length === 0 && tasksQ.isSuccess ? (
-                  <tr><td colSpan={7} style={{ textAlign: 'center', padding: 40, color: 'var(--text-light)' }}>{t('no_tasks')}</td></tr>
+                  <tr>
+                    <td colSpan={7} style={{ textAlign: 'center', padding: 40, color: 'var(--text-light)' }}>
+                      {t('no_tasks')}
+                    </td>
+                  </tr>
                 ) : tasks.map((task) => (
                   <tr
                     key={task.id}
@@ -735,35 +847,58 @@ export default function TaskManager() {
                       {task.is_recurring && <span className="badge badge-warning" style={{ marginLeft: 6, fontSize: '0.7rem' }}>🔄</span>}
                       {task.description && <div style={{ fontSize: '0.78rem', color: 'var(--text-light)' }}>{task.description}</div>}
                     </td>
-                    <td data-label={t('select_child')}><div className="flex gap-8" style={{ alignItems: 'center' }}><div style={{ width: 8, height: 8, borderRadius: '50%', background: task.child_color }} />{task.child_name}</div></td>
-                    <td data-label="Recorrência">{task.is_recurring ? <span className="badge badge-primary">{task.frequency}</span> : <span className="badge badge-ghost">única</span>}</td>
-                    <td data-label="Horário">{task.due_time || '—'}</td>
-                    <td data-label={t('points')}><span className="badge badge-primary">⭐{task.points}</span></td>
-                    <td data-label="Modelo">
+                    <td data-label={t('select_child')}>
+                      <div className="flex gap-8" style={{ alignItems: 'center' }}>
+                        <div style={{ width: 8, height: 8, borderRadius: '50%', background: task.child_color }} />
+                        {task.child_name}
+                      </div>
+                    </td>
+                    <td data-label={t('task_frequency')}>
+                      {task.is_recurring ? (
+                        <span className="badge badge-primary">{t(task.frequency, task.frequency)}</span>
+                      ) : (
+                        <span className="badge badge-ghost">{t('task_freq_once')}</span>
+                      )}
+                    </td>
+                    <td data-label={t('task_table_due_short')}>{task.due_time || '—'}</td>
+                    <td data-label={t('task_points')}>
+                      <span className="badge badge-primary">⭐{task.points}</span>
+                    </td>
+                    <td data-label={t('task_templates_col_status')}>
                       {task.status === 'active' ? (
-                        <span className="badge badge-success">Ativo</span>
+                        <span className="badge badge-success">{t('task_template_active')}</span>
                       ) : task.status === 'inactive' ? (
-                        <span className="badge badge-ghost" title="Inativo: não gera novas ocorrências; histórico preservado.">
-                          Inativo
+                        <span className="badge badge-ghost" title={t('task_template_inactive_title')}>
+                          {t('task_template_inactive')}
                         </span>
                       ) : (
                         <span className="badge badge-warning">{task.status}</span>
                       )}
                     </td>
-                    <td data-label="Ações">
-                      <div className="flex gap-8 flex-wrap">
-                        {task.status === 'completed' && <button type="button" className="btn btn-sm btn-primary" onClick={() => handleApproveTask(task.id, true)}>✅</button>}
-                        {task.status === 'completed' && <button type="button" className="btn btn-sm btn-danger" onClick={() => handleApproveTask(task.id, false)}>❌</button>}
+                    <td data-label={t('task_hist_col_actions')}>
+                      <div className="task-actions-row">
+                        {task.status === 'completed' && (
+                          <button type="button" className="btn btn-sm btn-primary" onClick={() => handleApproveTask(task.id, true)}>
+                            ✅
+                          </button>
+                        )}
+                        {task.status === 'completed' && (
+                          <button type="button" className="btn btn-sm btn-danger" onClick={() => handleApproveTask(task.id, false)}>
+                            ❌
+                          </button>
+                        )}
                         <button
                           type="button"
                           className="btn btn-sm btn-ghost"
                           disabled={toggleTemplateMutation.isPending}
-                          title={task.status === 'active' ? 'Para de criar novas ocorrências' : 'Volta a gerar ocorrências nos dias combinados'}
+                          title={task.status === 'active' ? t('task_tooltip_pause_template') : t('task_tooltip_resume_template')}
                           onClick={() => toggleTemplateMutation.mutate({ id: task.id, active: task.status !== 'active' })}
                         >
-                          {task.status === 'active' ? '⏸ Desativar' : '▶️ Ativar'}
+                          {task.status === 'active' ? `⏸ ${t('task_deactivate_template')}` : `▶️ ${t('task_activate_template')}`}
                         </button>
-                        <button type="button" className="btn btn-sm btn-ghost" disabled={toggleTemplateMutation.isPending} onClick={() => openEdit(task)}>✏️</button>
+                        <button type="button" className="btn btn-sm btn-ghost" disabled={toggleTemplateMutation.isPending} onClick={() => openEdit(task)}>
+                          ✏️
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -779,111 +914,236 @@ export default function TaskManager() {
         <div className="modal-overlay" onClick={() => !blockUi && setShowModal(false)}>
           <div className="modal modal-lg" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 680 }}>
             <div className="modal-header">
-              <h2 className="modal-title">{editTask ? '✏️ Editar Tarefa' : '➕ Nova Tarefa'}</h2>
-              <button type="button" className="modal-close" onClick={() => !blockUi && setShowModal(false)}>✕</button>
+              <h2 className="modal-title">{editTask ? `✏️ ${t('task_modal_edit_title')}` : `➕ ${t('task_modal_new_title')}`}</h2>
+              <button type="button" className="modal-close" onClick={() => !blockUi && setShowModal(false)}>
+                ✕
+              </button>
             </div>
             <form onSubmit={handleCreate}>
               <div className="grid grid-2">
                 <div className="form-group" style={{ gridColumn: '1/-1' }}>
-                  <label className="form-label">Título *</label>
+                  <label className="form-label">
+                    {t('task_title')} *
+                  </label>
                   <input className="form-input" value={form.title} onChange={(e) => setForm((p) => ({ ...p, title: e.target.value }))} required disabled={blockUi} />
                 </div>
                 <div className="form-group" style={{ gridColumn: '1/-1' }}>
-                  <label className="form-label">Descrição</label>
+                  <label className="form-label">{t('task_description')}</label>
                   <textarea className="form-textarea" value={form.description} onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))} rows={2} disabled={blockUi} />
                 </div>
                 <div className="form-group">
-                  <label className="form-label">Filho *</label>
+                  <label className="form-label">
+                    {t('select_child')} *
+                  </label>
                   <select className="form-select" value={form.child_id} onChange={(e) => setForm((p) => ({ ...p, child_id: e.target.value }))} required disabled={blockUi}>
-                    <option value="">Selecionar...</option>
-                    {children.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    <option value="">{t('task_form_select_placeholder')}</option>
+                    {children.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
                   </select>
                 </div>
                 <div className="form-group">
-                  <label className="form-label">Tipo</label>
+                  <label className="form-label">{t('task_type')}</label>
                   <select className="form-select" value={form.type} onChange={(e) => setForm((p) => ({ ...p, type: e.target.value }))} disabled={blockUi}>
-                    <option value="home">🏠 Casa</option>
-                    <option value="school">📚 Escola</option>
-                    <option value="routine">⏰ Rotina</option>
-                    <option value="challenge">🏆 Desafio</option>
+                    <option value="home">🏠 {t('home')}</option>
+                    <option value="school">📚 {t('school')}</option>
+                    <option value="routine">⏰ {t('task_type_routine')}</option>
+                    <option value="challenge">🏆 {t('task_type_challenge')}</option>
                   </select>
                 </div>
                 <div className="form-group">
-                  <label className="form-label">Recorrência</label>
-                  <select className="form-select" value={form.frequency} onChange={(e) => setForm((p) => ({ ...p, frequency: e.target.value, is_recurring: e.target.value !== 'once' }))} disabled={blockUi}>
-                    <option value="once">🔹 Única</option>
-                    <option value="daily">🔄 Diária</option>
-                    <option value="weekly">📅 Semanal</option>
-                    <option value="monthly">📆 Mensal</option>
-                    <option value="custom">🎯 Dias específicos</option>
+                  <label className="form-label">{t('task_frequency')}</label>
+                  <select
+                    className="form-select"
+                    value={form.frequency}
+                    onChange={(e) =>
+                      setForm((p) => ({ ...p, frequency: e.target.value, is_recurring: e.target.value !== 'once' }))
+                    }
+                    disabled={blockUi}
+                  >
+                    <option value="once">🔹 {t('task_freq_once')}</option>
+                    <option value="daily">🔄 {t('task_freq_daily')}</option>
+                    <option value="weekly">📅 {t('weekly')}</option>
+                    <option value="monthly">📆 {t('monthly')}</option>
+                    <option value="custom">🎯 {t('task_freq_custom')}</option>
                   </select>
                 </div>
                 <div className="form-group">
-                  <label className="form-label">Horário Limite {isRecurring && '*'}</label>
-                  <input type="time" className="form-input" value={form.due_time} onChange={(e) => setForm((p) => ({ ...p, due_time: e.target.value }))} required={isRecurring} disabled={blockUi} />
+                  <label className="form-label">
+                    {t('task_table_due_short')}
+                    {isRecurring && ` ${t('task_form_deadline_notice')}`}
+                  </label>
+                  <input
+                    type="time"
+                    className="form-input"
+                    value={form.due_time}
+                    onChange={(e) => setForm((p) => ({ ...p, due_time: e.target.value }))}
+                    required={isRecurring}
+                    disabled={blockUi}
+                  />
                 </div>
 
                 {(form.frequency === 'weekly' || form.frequency === 'custom') && (
                   <div className="form-group" style={{ gridColumn: '1/-1' }}>
-                    <label className="form-label">Dias da Semana</label>
+                    <label className="form-label">{t('task_form_weekdays')}</label>
                     <div className="flex gap-8" style={{ flexWrap: 'wrap' }}>
-                      {DAYS.map((d) => (
-                        <button key={d.value} type="button" onClick={() => toggleDay(d.value)}
-                          className={`btn btn-sm ${form.recurrence_days.includes(d.value) ? 'btn-primary' : 'btn-ghost'}`} disabled={blockUi}>{d.label}</button>
+                      {weekdayButtons.map((d) => (
+                        <button
+                          key={d.value}
+                          type="button"
+                          onClick={() => toggleDay(d.value)}
+                          className={`btn btn-sm ${form.recurrence_days.includes(d.value) ? 'btn-primary' : 'btn-ghost'}`}
+                          disabled={blockUi}
+                        >
+                          {d.label}
+                        </button>
                       ))}
                     </div>
                   </div>
                 )}
 
                 {isRecurring && (
-                  <div className="form-group"><label className="form-label">Data de Início *</label><input type="date" className="form-input" value={form.start_date} onChange={(e) => setForm((p) => ({ ...p, start_date: e.target.value }))} required disabled={blockUi} /></div>
+                  <div className="form-group">
+                    <label className="form-label">{t('task_form_start_required')}</label>
+                    <input
+                      type="date"
+                      className="form-input"
+                      value={form.start_date}
+                      onChange={(e) => setForm((p) => ({ ...p, start_date: e.target.value }))}
+                      required
+                      disabled={blockUi}
+                    />
+                  </div>
                 )}
                 {isRecurring && (
-                  <div className="form-group"><label className="form-label">Data de Fim</label><input type="date" className="form-input" value={form.end_date} onChange={(e) => setForm((p) => ({ ...p, end_date: e.target.value }))} disabled={blockUi} /></div>
+                  <div className="form-group">
+                    <label className="form-label">{t('task_form_end')}</label>
+                    <input
+                      type="date"
+                      className="form-input"
+                      value={form.end_date}
+                      onChange={(e) => setForm((p) => ({ ...p, end_date: e.target.value }))}
+                      disabled={blockUi}
+                    />
+                  </div>
                 )}
 
-                <div className="form-group"><label className="form-label">Pontos</label><input type="number" className="form-input" value={form.points} onChange={(e) => setForm((p) => ({ ...p, points: +e.target.value }))} min={0} disabled={blockUi} /></div>
                 <div className="form-group">
-                  <label className="form-label">Prioridade</label>
+                  <label className="form-label">{t('task_points')}</label>
+                  <input
+                    type="number"
+                    className="form-input"
+                    value={form.points}
+                    onChange={(e) => setForm((p) => ({ ...p, points: +e.target.value }))}
+                    min={0}
+                    disabled={blockUi}
+                  />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">{t('task_priority')}</label>
                   <select className="form-select" value={form.priority} onChange={(e) => setForm((p) => ({ ...p, priority: e.target.value }))} disabled={blockUi}>
-                    <option value="low">🔵 Baixa</option>
-                    <option value="medium">🟡 Média</option>
-                    <option value="high">🔴 Alta</option>
+                    <option value="low">🔵 {t('low')}</option>
+                    <option value="medium">🟡 {t('medium')}</option>
+                    <option value="high">🔴 {t('high')}</option>
                   </select>
                 </div>
               </div>
 
               <div className="flex gap-16 mb-16" style={{ flexWrap: 'wrap' }}>
                 <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: blockUi ? 'default' : 'pointer' }}>
-                  <input type="checkbox" checked={form.requires_approval} onChange={(e) => setForm((p) => ({ ...p, requires_approval: e.target.checked }))} disabled={blockUi} />
-                  <span>Exige aprovação dos pais</span>
+                  <input
+                    type="checkbox"
+                    checked={form.requires_approval}
+                    onChange={(e) => setForm((p) => ({ ...p, requires_approval: e.target.checked }))}
+                    disabled={blockUi}
+                  />
+                  <span>{t('task_requires_parent_approval')}</span>
                 </label>
                 <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: blockUi ? 'default' : 'pointer' }}>
-                  <input type="checkbox" checked={form.visible_on_calendar} onChange={(e) => setForm((p) => ({ ...p, visible_on_calendar: e.target.checked }))} disabled={blockUi} />
-                  <span>Aparece no calendário</span>
+                  <input
+                    type="checkbox"
+                    checked={form.visible_on_calendar}
+                    onChange={(e) => setForm((p) => ({ ...p, visible_on_calendar: e.target.checked }))}
+                    disabled={blockUi}
+                  />
+                  <span>{t('task_show_on_calendar')}</span>
                 </label>
                 <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: blockUi ? 'default' : 'pointer' }}>
-                  <input type="checkbox" checked={form.generate_notification} onChange={(e) => setForm((p) => ({ ...p, generate_notification: e.target.checked }))} disabled={blockUi} />
-                  <span>Gera notificação</span>
+                  <input
+                    type="checkbox"
+                    checked={form.generate_notification}
+                    onChange={(e) => setForm((p) => ({ ...p, generate_notification: e.target.checked }))}
+                    disabled={blockUi}
+                  />
+                  <span>{t('task_generates_notification')}</span>
                 </label>
               </div>
 
               <div className="card" style={{ background: 'var(--bg)', marginBottom: 16 }}>
                 <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: blockUi ? 'default' : 'pointer', marginBottom: 12 }}>
-                  <input type="checkbox" checked={form.allowance_rule.affects_allowance} onChange={(e) => setForm((p) => ({ ...p, allowance_rule: { ...p.allowance_rule, affects_allowance: e.target.checked } }))} style={{ width: 18, height: 18 }} disabled={blockUi} />
-                  <span style={{ fontWeight: 600 }}>💰 Impacta Mesada</span>
+                  <input
+                    type="checkbox"
+                    checked={form.allowance_rule.affects_allowance}
+                    onChange={(e) =>
+                      setForm((p) => ({
+                        ...p,
+                        allowance_rule: { ...p.allowance_rule, affects_allowance: e.target.checked },
+                      }))
+                    }
+                    style={{ width: 18, height: 18 }}
+                    disabled={blockUi}
+                  />
+                  <span style={{ fontWeight: 600 }}>💰 {t('task_allowance_impact_title')}</span>
                 </label>
                 {form.allowance_rule.affects_allowance && (
                   <div className="grid grid-2">
-                    <div className="form-group"><label className="form-label">Bônus (R$)</label><input type="number" step="0.01" min="0" className="form-input" value={form.allowance_rule.bonus_amount || ''} onChange={(e) => setForm((p) => ({ ...p, allowance_rule: { ...p.allowance_rule, bonus_amount: parseFloat(e.target.value) || 0 } }))} disabled={blockUi} /></div>
-                    <div className="form-group"><label className="form-label">Desconto (R$)</label><input type="number" step="0.01" min="0" className="form-input" value={form.allowance_rule.discount_amount || ''} onChange={(e) => setForm((p) => ({ ...p, allowance_rule: { ...p.allowance_rule, discount_amount: parseFloat(e.target.value) || 0 } }))} disabled={blockUi} /></div>
+                    <div className="form-group">
+                      <label className="form-label">{`${t('task_bonus_amount')} (R$)`}</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        className="form-input"
+                        value={form.allowance_rule.bonus_amount || ''}
+                        onChange={(e) =>
+                          setForm((p) => ({
+                            ...p,
+                            allowance_rule: { ...p.allowance_rule, bonus_amount: parseFloat(e.target.value) || 0 },
+                          }))
+                        }
+                        disabled={blockUi}
+                      />
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">{`${t('task_discount_amount')} (R$)`}</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        className="form-input"
+                        value={form.allowance_rule.discount_amount || ''}
+                        onChange={(e) =>
+                          setForm((p) => ({
+                            ...p,
+                            allowance_rule: { ...p.allowance_rule, discount_amount: parseFloat(e.target.value) || 0 },
+                          }))
+                        }
+                        disabled={blockUi}
+                      />
+                    </div>
                   </div>
                 )}
               </div>
 
               <div className="modal-footer">
-                <button type="button" className="btn btn-ghost" onClick={() => !blockUi && setShowModal(false)}>{t('cancel')}</button>
-                <button type="submit" className="btn btn-primary" disabled={blockUi}>{editTask ? t('save') : t('add_task')}</button>
+                <button type="button" className="btn btn-ghost" onClick={() => !blockUi && setShowModal(false)}>
+                  {t('cancel')}
+                </button>
+                <button type="submit" className="btn btn-primary" disabled={blockUi}>
+                  {editTask ? t('save') : t('add_task')}
+                </button>
               </div>
             </form>
           </div>
