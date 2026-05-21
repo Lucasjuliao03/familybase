@@ -369,6 +369,8 @@ export default function TaskManager() {
   }, [t]);
 
   const histBucketTxt = useCallback((b) => t(`hist_bucket_${b}`, b), [t]);
+
+  const historyBucketBadge = {
     completed: 'success',
     rejected: 'danger',
     not_completed: 'warning',
