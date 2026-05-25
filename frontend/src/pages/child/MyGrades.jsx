@@ -190,9 +190,10 @@ export default function MyGrades() {
                     {subjectIcon(subj.name)}
                   </span>
                   <span className="my-grades-subject-chip__name">{subj.name}</span>
-                  <span className="my-grades-subject-chip__avg">{fmtAvg(subj.currentAvg)}</span>
-                  <span className="my-grades-subject-chip__status">
-                    {ds.dot} {ds.label}
+                  <span className="my-grades-subject-chip__pts-total">
+                    {subj.maxEvaluated > 0
+                      ? `${fmtPts(subj.obtained)} de ${fmtPts(subj.maxEvaluated)} pts`
+                      : 'Sem notas lançadas'}
                   </span>
                 </button>
               );

@@ -118,22 +118,13 @@
   overflow: hidden;
 }
 
-.my-grades-subject-chip__avg {
-  font-size: 1.35rem;
+.my-grades-subject-chip__pts-total {
+  font-size: 0.82rem;
   font-weight: 800;
   color: #1e293b;
-  line-height: 1;
-  margin-bottom: 4px;
-}
-
-.my-grades-subject-chip__status {
-  font-size: 0.68rem;
-  font-weight: 600;
-  color: #64748b;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 100%;
+  line-height: 1.25;
+  text-align: center;
+  margin-top: 4px;
 }
 
 .my-grades-detail {
