@@ -118,13 +118,21 @@
   overflow: hidden;
 }
 
-.my-grades-subject-chip__pts-total {
-  font-size: 0.82rem;
+.my-grades-subject-chip__accum {
+  font-size: 1.35rem;
   font-weight: 800;
   color: #1e293b;
+  line-height: 1;
+  margin-top: 2px;
+}
+
+.my-grades-subject-chip__pts-total {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: #64748b;
   line-height: 1.25;
   text-align: center;
-  margin-top: 4px;
+  margin-top: 3px;
 }
 
 .my-grades-detail {
