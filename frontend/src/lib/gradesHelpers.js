@@ -199,10 +199,100 @@ export function statusBadgeStyle(status) {
   switch (status) {
     case 'approved':
     case 'comfortable': return { ...base, background: 'rgba(34,197,94,0.1)', color: 'var(--success)', border: '1px solid rgba(34,197,94,0.2)' };
+    case 'good': return { ...base, background: 'rgba(59,130,246,0.1)', color: '#2563EB', border: '1px solid rgba(59,130,246,0.2)' };
     case 'attention': return { ...base, background: 'rgba(245,158,11,0.1)', color: '#D97706', border: '1px solid rgba(245,158,11,0.2)' };
     case 'risk':
-    case 'failed': return { ...base, background: 'rgba(239,68,68,0.1)', color: 'var(--danger)', border: '1px solid rgba(239,68,68,0.2)' };
+    case 'failed': return { ...base, background: 'rgba(248,113,113,0.12)', color: '#E11D48', border: '1px solid rgba(248,113,113,0.22)' };
     default: return { ...base, background: 'var(--bg-hover)', color: 'var(--text-muted)', border: '1px solid var(--border)' };
   }
+}
+
+/** Ícone amigável por disciplina (área infantil). */
+export function subjectIcon(subjectName) {
+  const n = String(subjectName || '').toLowerCase();
+  if (n.includes('portugu')) return '📖';
+  if (n.includes('matem')) return '🔢';
+  if (n.includes('ciên') || n.includes('cienc')) return '🔬';
+  if (n.includes('hist')) return '🏛️';
+  if (n.includes('geo')) return '🌍';
+  if (n.includes('ingl') || n.includes('espan')) return '🗣️';
+  if (n.includes('fís') || n.includes('fis')) return '⚡';
+  if (n.includes('quím') || n.includes('quim')) return '🧪';
+  if (n.includes('bio')) return '🌱';
+  if (n.includes('arte')) return '🎨';
+  if (n.includes('mús') || n.includes('mus')) return '🎵';
+  if (n.includes('educação fís') || n.includes('edf')) return '⚽';
+  return '📚';
+}
+
+/** Rótulo e cor para cards infantis (Confortável, Bom, Atenção, Risco). */
+export function getSubjectDisplayStatus(subj) {
+  if (!subj || subj.maxEvaluated === 0 || subj.status === 'nodata') {
+    return { key: 'nodata', label: 'Sem notas', dot: '⚪', pastel: '#F1F5F9', accent: '#94A3B8' };
+  }
+  const avg = subj.currentAvg;
+  if (subj.status === 'failed' || subj.status === 'risk') {
+    return { key: 'risk', label: 'Risco', dot: '🟠', pastel: '#FFF1F2', accent: '#FB7185' };
+  }
+  if (subj.status === 'attention') {
+    return { key: 'attention', label: 'Atenção', dot: '🟡', pastel: '#FFFBEB', accent: '#FBBF24' };
+  }
+  if (subj.status === 'approved' || (avg != null && avg >= 9)) {
+    return { key: 'comfortable', label: 'Confortável', dot: '🟢', pastel: '#ECFDF5', accent: '#34D399' };
+  }
+  if (avg != null && avg >= 7.5) {
+    return { key: 'good', label: 'Bom', dot: '🔵', pastel: '#EFF6FF', accent: '#60A5FA' };
+  }
+  return { key: 'comfortable', label: 'Confortável', dot: '🟢', pastel: '#ECFDF5', accent: '#34D399' };
+}
+
+export function gradeTypeLabel(type) {
+  const map = {
+    test: 'Prova',
+    homework: 'Dever',
+    project: 'Trabalho',
+    assignment: 'Trabalho',
+    concept: 'Conceito',
+    participation: 'Participação',
+    exam: 'Prova',
+    quiz: 'Quiz',
+    other: 'Avaliação',
+  };
+  return map[type] || 'Avaliação';
+}
+
+/** Texto curto da nota para chips (ex.: 10/10 ou conceito). */
+export function formatGradeChip(g) {
+  if (g.score != null && g.max_score != null) {
+    const s = Number(g.score);
+    const m = Number(g.max_score);
+    const fs = Number.isInteger(s) ? String(s) : s.toFixed(1).replace(/\.0$/, '');
+    const fm = Number.isInteger(m) ? String(m) : m.toFixed(1).replace(/\.0$/, '');
+    return `${fs}/${fm}`;
+  }
+  if (g.concept) return String(g.concept);
+  return '—';
+}
+
+export function schoolGoalMessage(subj) {
+  if (!subj || subj.maxEvaluated === 0) return null;
+  if (subj.status === 'approved' || subj.missing <= 0) {
+    return 'Meta da escola alcançada! Parabéns!';
+  }
+  if (subj.missing > 0) {
+    return `Faltam ${subj.missing.toFixed(1).replace(/\.0$/, '')} pontos para alcançar a meta.`;
+  }
+  return null;
+}
+
+export function familyGoalMessage(subj) {
+  if (!subj || subj.maxEvaluated === 0) return null;
+  if (subj.goalReached) {
+    return 'Meta da família alcançada! Muito bem!';
+  }
+  if (subj.missingGoal > 0) {
+    return `Faltam ${subj.missingGoal.toFixed(1).replace(/\.0$/, '')} pontos para atingir a meta.`;
+  }
+  return null;
 }
 

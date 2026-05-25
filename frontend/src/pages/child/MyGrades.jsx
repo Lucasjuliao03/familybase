@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { useLanguage } from '../../contexts/LanguageContext';
@@ -6,13 +6,33 @@ import { useToast } from '../../contexts/ToastContext';
 import api from '../../services/api';
 import { supabase } from '../../lib/supabase';
 import useAutoRefresh from '../../hooks/useAutoRefresh';
-import { buildPeriodConfig, buildSubjectBoletim, scoreColorByStatus, statusBadgeStyle } from '../../lib/gradesHelpers';
+import {
+  buildPeriodConfig,
+  buildSubjectBoletim,
+  formatGradeChip,
+  gradeTypeLabel,
+  getSubjectDisplayStatus,
+  schoolGoalMessage,
+  familyGoalMessage,
+  subjectIcon,
+} from '../../lib/gradesHelpers';
+import './myGrades.css';
 
 const PREDEFINED_SUBJECTS = [
-  'Matemática','Português','Ciências','História','Geografia',
-  'Educação Física','Artes','Inglês','Espanhol','Física',
-  'Química','Biologia','Filosofia','Sociologia','Música',
+  'Matemática', 'Português', 'Ciências', 'História', 'Geografia',
+  'Educação Física', 'Artes', 'Inglês', 'Espanhol', 'Física',
+  'Química', 'Biologia', 'Filosofia', 'Sociologia', 'Música',
 ];
+
+function fmtAvg(n) {
+  if (n == null || Number.isNaN(n)) return '—';
+  return n.toFixed(1).replace('.', ',');
+}
+
+function fmtPts(n) {
+  if (n == null || Number.isNaN(n)) return '0';
+  return n.toFixed(1).replace('.', ',');
+}
 
 export default function MyGrades() {
   const { childProfile, ensureChildProfile, family } = useAuth();
@@ -23,11 +43,12 @@ export default function MyGrades() {
   const [grades, setGrades] = useState([]);
   const [subjectOptions, setSubjectOptions] = useState([]);
   const [showModal, setShowModal] = useState(false);
-  const [filterPeriod, setFilterPeriod] = useState(0); // 0 = geral, senão número do período
-  
+  const [selectedSubjectName, setSelectedSubjectName] = useState(null);
+  const [expandedPeriods, setExpandedPeriods] = useState(() => new Set([1]));
+
   const [settings, setSettings] = useState({ evaluation_model: 'bimonthly', approval_pct: 60 });
   const [periods, setPeriods] = useState([]);
-  
+
   const [form, setForm] = useState({
     subject: '', type: 'test', score: '', max_score: '10',
     concept: '', observation: '', date: '', period_number: 1,
@@ -46,7 +67,6 @@ export default function MyGrades() {
       })
       .catch(() => setSubjectOptions(PREDEFINED_SUBJECTS));
 
-    // Carregar configuração do aluno
     const cid = childProfile?.id;
     if (cid && family?.id) {
       const { data: cfg } = await supabase
@@ -72,13 +92,38 @@ export default function MyGrades() {
 
   const pConfig = buildPeriodConfig(settings, periods);
   const boletim = buildSubjectBoletim(grades, pConfig, settings);
+  const subjects = boletim.subjects;
+  const subjectNamesKey = subjects.map((s) => s.name).join('\u0001');
 
-  const filteredSubjects = filterPeriod === 0 
-    ? boletim.subjects 
-    : boletim.subjects.map(s => ({
-        ...s,
-        periods: s.periods.filter(p => p.number === filterPeriod)
-      })).filter(s => s.periods.length > 0);
+  useEffect(() => {
+    if (!subjects.length) {
+      setSelectedSubjectName(null);
+      return;
+    }
+    setSelectedSubjectName((prev) => {
+      if (prev && subjects.some((s) => s.name === prev)) return prev;
+      return subjects[0].name;
+    });
+  }, [subjectNamesKey]);
+
+  const selectedSubject = useMemo(
+    () => subjects.find((s) => s.name === selectedSubjectName) || subjects[0] || null,
+    [subjects, selectedSubjectName],
+  );
+
+  const selectSubject = (name) => {
+    setSelectedSubjectName(name);
+    setExpandedPeriods(new Set([pConfig[0]?.number ?? 1]));
+  };
+
+  const togglePeriod = (num) => {
+    setExpandedPeriods((prev) => {
+      const next = new Set(prev);
+      if (next.has(num)) next.delete(num);
+      else next.add(num);
+      return next;
+    });
+  };
 
   const handleCreate = async (e) => {
     e.preventDefault();
@@ -101,168 +146,175 @@ export default function MyGrades() {
     } catch (err) { toast.error(err.response?.data?.error || err.message || t('error_occurred')); }
   };
 
-  const typeLabels = { test:'Prova', homework:'Dever', project:'Projeto', concept:'Conceito', participation:'Participação' };
+  const displayStatus = selectedSubject ? getSubjectDisplayStatus(selectedSubject) : null;
 
   return (
-    <div className="animate-fade-in">
-      {/* Header */}
-      <div className="flex-between mb-16" style={{ flexWrap: 'wrap', gap: 12 }}>
-        <h1 className="page-title" style={{ minWidth: 0 }}>📚 {t('my_grades')}</h1>
-        <button type="button" className="btn btn-primary" onClick={() => setShowModal(true)}>+ Cadastrar Nota</button>
-      </div>
-
-      {/* Filtro de período */}
-      <div className="flex gap-8 mb-16" style={{ flexWrap: 'wrap' }}>
-        <button className={`btn btn-sm ${filterPeriod === 0 ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setFilterPeriod(0)}>Geral (Ano)</button>
-        {pConfig.map((p) => (
-          <button key={p.number} className={`btn btn-sm ${filterPeriod === p.number ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setFilterPeriod(p.number)}>
-            {p.label}
-          </button>
-        ))}
-      </div>
-
-      {/* Dashboard Geral (só aparece se filtro for 0) */}
-      {filterPeriod === 0 && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12, marginBottom: 20 }}>
-          <div className="stat-card" style={{ padding: '16px' }}>
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-light)', marginBottom: 4 }}>Média Geral</div>
-            <div style={{ fontWeight: 800, fontSize: '1.8rem', color: 'var(--primary)' }}>
-              {boletim.overall.avg !== null ? boletim.overall.avg.toFixed(1) : '-'}
-            </div>
-          </div>
-          <div className="stat-card" style={{ padding: '16px', borderColor: 'var(--success)', background: 'rgba(34,197,94,0.03)' }}>
-            <div style={{ fontSize: '0.75rem', color: 'var(--success)', marginBottom: 4 }}>Tudo Certo!</div>
-            <div style={{ fontWeight: 800, fontSize: '1.5rem', color: 'var(--success)' }}>
-              {boletim.overall.approved} <span style={{ fontSize: '0.8rem', fontWeight: 500 }}>matéria(s)</span>
-            </div>
-          </div>
-          {boletim.overall.attention > 0 && (
-            <div className="stat-card" style={{ padding: '16px', borderColor: '#F59E0B', background: 'rgba(245,158,11,0.03)' }}>
-              <div style={{ fontSize: '0.75rem', color: '#D97706', marginBottom: 4 }}>Atenção</div>
-              <div style={{ fontWeight: 800, fontSize: '1.5rem', color: '#D97706' }}>
-                {boletim.overall.attention} <span style={{ fontSize: '0.8rem', fontWeight: 500 }}>matéria(s)</span>
-              </div>
-            </div>
-          )}
-          {(boletim.overall.risk > 0 || boletim.overall.failed > 0) && (
-            <div className="stat-card" style={{ padding: '16px', borderColor: 'var(--danger)', background: 'rgba(239,68,68,0.03)' }}>
-              <div style={{ fontSize: '0.75rem', color: 'var(--danger)', marginBottom: 4 }}>Precisa Estudar</div>
-              <div style={{ fontWeight: 800, fontSize: '1.5rem', color: 'var(--danger)' }}>
-                {boletim.overall.risk + boletim.overall.failed} <span style={{ fontSize: '0.8rem', fontWeight: 500 }}>matéria(s)</span>
-              </div>
-            </div>
-          )}
+    <div className="animate-fade-in my-grades-page">
+      <div className="my-grades-section-head">
+        <div>
+          <h2>Minhas matérias</h2>
+          <p>Resumo rápido do desempenho</p>
         </div>
-      )}
+        <button type="button" className="btn btn-primary my-grades-add-btn" onClick={() => setShowModal(true)}>
+          + Nota
+        </button>
+      </div>
 
-      {/* Grid de Matérias */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 16 }}>
-        {filteredSubjects.map((subj) => (
-          <div key={subj.name} className="card" style={{ padding: 0, overflow: 'hidden', borderLeft: `4px solid ${scoreColorByStatus(subj.status)}` }}>
-            
-            {/* Header da Matéria */}
-            <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', background: 'var(--bg)' }}>
-              <div className="flex-between mb-8">
-                <div>
-                  <h3 style={{ fontWeight: 800, fontSize: '1.2rem', marginBottom: 2 }}>{subj.name}</h3>
+      {subjects.length === 0 ? (
+        <div className="my-grades-empty">
+          <div className="my-grades-empty__icon">📚</div>
+          <p style={{ margin: 0, fontWeight: 600 }}>Ainda não há matérias com notas.</p>
+          <p style={{ margin: '8px 0 0', fontSize: '0.88rem' }}>Toque em &quot;+ Nota&quot; para começar.</p>
+        </div>
+      ) : (
+        <>
+          <div className="my-grades-subjects-scroll" role="tablist" aria-label="Matérias">
+            {subjects.map((subj) => {
+              const ds = getSubjectDisplayStatus(subj);
+              const isSel = selectedSubject?.name === subj.name;
+              return (
+                <button
+                  key={subj.name}
+                  type="button"
+                  role="tab"
+                  aria-selected={isSel}
+                  className={`my-grades-subject-chip${isSel ? ' is-selected' : ''}`}
+                  style={{ background: isSel ? ds.pastel : '#fff' }}
+                  onClick={() => selectSubject(subj.name)}
+                >
+                  {isSel && <span className="my-grades-subject-chip__check" aria-hidden>✓</span>}
+                  <span
+                    className="my-grades-subject-chip__icon"
+                    style={{ background: ds.pastel, border: `1px solid ${ds.accent}33` }}
+                  >
+                    {subjectIcon(subj.name)}
+                  </span>
+                  <span className="my-grades-subject-chip__name">{subj.name}</span>
+                  <span className="my-grades-subject-chip__avg">{fmtAvg(subj.currentAvg)}</span>
+                  <span className="my-grades-subject-chip__status">
+                    {ds.dot} {ds.label}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          {selectedSubject && displayStatus && (
+            <article className="my-grades-detail" aria-live="polite">
+              <header className="my-grades-detail__hero">
+                <div
+                  className="my-grades-detail__hero-icon"
+                  style={{ background: displayStatus.pastel, border: `1px solid ${displayStatus.accent}44` }}
+                >
+                  {subjectIcon(selectedSubject.name)}
                 </div>
-                <div style={statusBadgeStyle(subj.status)}>{subj.statusLabel}</div>
-              </div>
+                <div className="my-grades-detail__hero-text">
+                  <h3>{selectedSubject.name}</h3>
+                  <span
+                    className="my-grades-detail__badge"
+                    style={{
+                      background: `${displayStatus.accent}22`,
+                      color: '#334155',
+                      border: `1px solid ${displayStatus.accent}55`,
+                    }}
+                  >
+                    {displayStatus.dot} {displayStatus.label}
+                  </span>
+                </div>
+              </header>
 
-              {/* Progresso Anual */}
-              {subj.maxEvaluated > 0 ? (
-                <div style={{ marginTop: 12 }}>
-                  <div className="flex-between" style={{ fontSize: '0.8rem', marginBottom: 8 }}>
-                    <span style={{ color: 'var(--text-light)' }}>
-                      Acumulado: <strong>{subj.obtained.toFixed(1)}</strong> <span style={{fontSize:'0.7rem'}}>/ {subj.maxEvaluated.toFixed(1)} pts</span>
-                    </span>
-                    <span style={{ fontWeight: 600, color: 'var(--text)' }}>Média Atual: {subj.currentAvg?.toFixed(1)}</span>
-                  </div>
-                  {subj.status === 'approved' && (
-                    <div style={{ fontSize: '0.8rem', color: 'var(--success)', padding: '8px 10px', background: 'rgba(34,197,94,0.1)', borderRadius: 6, fontWeight: 500 }}>
-                      🎉 {t('approved_school', 'Você garantiu a média da escola!')}
-                    </div>
-                  )}
-                  {subj.status !== 'approved' && subj.missing > 0 && subj.remainingAnnualPoints > 0 && (
-                    <div style={{ fontSize: '0.8rem', marginTop: 8, padding: '10px', background: 'var(--bg-hover)', borderRadius: 6, lineHeight: 1.4 }}>
-                      🎯 <strong>{t('school_goal', 'Média da Escola')} ({subj.minRequiredAnnual.toFixed(1)}pts):</strong> {t('need_points', 'Faltam')} <strong>{subj.missing.toFixed(1)}pts</strong> {t('in_remaining', 'nos')} {subj.remainingAnnualPoints.toFixed(1)}pts {t('remaining_points', 'restantes')}. 
-                      {subj.requiredRate > 75 ? ' ' + t('focus_hard', 'Foco total!') : ' ' + t('you_can_do_it', 'Você consegue!')}
-                    </div>
-                  )}
-
-                  {/* Meta do Gestor/Pai */}
-                  {subj.goalReached ? (
-                    <div style={{ fontSize: '0.8rem', color: 'var(--primary)', padding: '8px 10px', background: 'rgba(99,102,241,0.1)', borderRadius: 6, fontWeight: 500, marginTop: 8 }}>
-                      ⭐ {t('goal_reached', 'Você atingiu a Meta do seu responsável! Parabéns!')}
-                    </div>
-                  ) : (
-                    subj.missingGoal > 0 && subj.remainingAnnualPoints > 0 && (
-                      <div style={{ fontSize: '0.8rem', marginTop: 8, padding: '10px', background: 'var(--bg-hover)', borderRadius: 6, lineHeight: 1.4, borderLeft: '3px solid var(--primary)' }}>
-                        ⭐ <strong>{t('parent_goal', 'Meta de Casa')} ({subj.goalRequiredAnnual.toFixed(1)}pts):</strong> {t('need_points', 'Faltam')} <strong>{subj.missingGoal.toFixed(1)}pts</strong> {t('to_reach_goal', 'para alcançar a meta do seu responsável!')}
+              {selectedSubject.maxEvaluated > 0 ? (
+                <>
+                  <div className="my-grades-performance">
+                    <div className="my-grades-performance__col">
+                      <div className="my-grades-performance__label">Nota acumulada</div>
+                      <div className="my-grades-performance__value">{fmtPts(selectedSubject.obtained)}</div>
+                      <div className="my-grades-performance__sub">
+                        de {fmtPts(selectedSubject.maxEvaluated)} pts
                       </div>
-                    )
-                  )}
-                </div>
+                    </div>
+                    <div className="my-grades-performance__col">
+                      <div className="my-grades-performance__label">Média atual</div>
+                      <div className="my-grades-performance__value">{fmtAvg(selectedSubject.currentAvg)}</div>
+                      <div className="my-grades-performance__sub">de 10</div>
+                    </div>
+                  </div>
+
+                  <div className="my-grades-goals">
+                    <div className="my-grades-goal-card">
+                      <div className="my-grades-goal-card__icon">🎯</div>
+                      <div className="my-grades-goal-card__title">Meta da escola</div>
+                      <p className="my-grades-goal-card__text">{schoolGoalMessage(selectedSubject)}</p>
+                    </div>
+                    <div className="my-grades-goal-card">
+                      <div className="my-grades-goal-card__icon">⭐</div>
+                      <div className="my-grades-goal-card__title">Meta da família</div>
+                      <p className="my-grades-goal-card__text">{familyGoalMessage(selectedSubject)}</p>
+                    </div>
+                  </div>
+                </>
               ) : (
-                <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Sem notas lançadas ainda.</div>
+                <p style={{ padding: '16px 20px', margin: 0, color: '#64748b', fontSize: '0.88rem' }}>
+                  Sem notas lançadas nesta matéria ainda.
+                </p>
               )}
-            </div>
 
-            {/* Lista de Períodos */}
-            <div style={{ padding: '12px 20px' }}>
-              {subj.periods.map(p => (
-                <div key={p.number} style={{ padding: '12px 0', borderBottom: '1px dashed var(--border)' }}>
-                  <div className="flex-between mb-8">
-                    <div style={{ fontSize: '0.9rem', fontWeight: 600 }}>{p.label}</div>
-                    {p.hasData ? (
-                      <div style={{ textAlign: 'right' }}>
-                        <div style={{ fontWeight: 700, fontSize: '1rem', color: p.passed ? 'var(--success)' : 'var(--danger)' }}>
-                          {p.obtained.toFixed(1)} <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 400 }}>/ {p.maxEvaluated}pts</span>
-                        </div>
-                      </div>
-                    ) : (
-                      <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>-</div>
-                    )}
-                  </div>
-                  
-                  {/* Notas individuais no período */}
-                  {p.hasData && (
-                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                      {p.grades.map(g => (
-                        <div key={g.id} style={{ background: 'var(--bg-card)', padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)', fontSize: '0.7rem' }}>
-                          <span style={{ color: 'var(--text-light)', marginRight: 4 }}>{typeLabels[g.type] || g.type}:</span>
-                          {g.score != null ? (
-                            <strong style={{ color: scoreColorByStatus(g.score >= (g.max_score * 0.6) ? 'comfortable' : 'risk') }}>
-                              {g.score}/{g.max_score}
-                            </strong>
+              <section className="my-grades-evaluations">
+                <h4>Avaliações</h4>
+                {selectedSubject.periods.map((p) => {
+                  const open = expandedPeriods.has(p.number);
+                  return (
+                    <div key={p.number} className={`my-grades-period${open ? ' is-open' : ''}`}>
+                      <button
+                        type="button"
+                        className="my-grades-period__head"
+                        onClick={() => togglePeriod(p.number)}
+                        aria-expanded={open}
+                      >
+                        <span>
+                          <span className="my-grades-period__title">{p.label}</span>
+                          {p.hasData && (
+                            <span className="my-grades-period__summary">
+                              {' '}
+                              · {fmtPts(p.obtained)} / {fmtPts(p.maxEvaluated)} pts
+                            </span>
+                          )}
+                        </span>
+                        <span className="my-grades-period__chevron" aria-hidden>
+                          ▼
+                        </span>
+                      </button>
+                      {open && (
+                        <div className="my-grades-period__body">
+                          {!p.hasData ? (
+                            <p className="my-grades-period__empty">Sem avaliações lançadas</p>
                           ) : (
-                            <strong>{g.concept || '-'}</strong>
+                            <div className="my-grades-grade-chips">
+                              {p.grades.map((g) => (
+                                <div key={g.id} className="my-grades-grade-chip">
+                                  <span className="my-grades-grade-chip__type">{gradeTypeLabel(g.type)}</span>
+                                  <span className="my-grades-grade-chip__score">{formatGradeChip(g)}</span>
+                                </div>
+                              ))}
+                            </div>
                           )}
                         </div>
-                      ))}
+                      )}
                     </div>
-                  )}
-                </div>
-              ))}
-            </div>
+                  );
+                })}
+              </section>
+            </article>
+          )}
+        </>
+      )}
 
-          </div>
-        ))}
-        
-        {filteredSubjects.length === 0 && (
-          <div style={{ gridColumn: '1 / -1', textAlign: 'center', padding: 40, color: 'var(--text-light)' }}>
-            Nenhuma matéria encontrada.
-          </div>
-        )}
-      </div>
-
-      {/* Modal */}
       {showModal && (
         <div className="modal-overlay" onClick={() => setShowModal(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2 className="modal-title">📚 Cadastrar Nota</h2>
-              <button className="modal-close" onClick={() => setShowModal(false)}>✕</button>
+              <button type="button" className="modal-close" onClick={() => setShowModal(false)}>✕</button>
             </div>
             <form onSubmit={handleCreate}>
               <div className="form-group">
@@ -282,7 +334,7 @@ export default function MyGrades() {
                   <select className="form-select" value={form.type} onChange={(e) => setForm((p) => ({ ...p, type: e.target.value }))}>
                     <option value="test">Prova</option>
                     <option value="homework">Dever de Casa</option>
-                    <option value="project">Projeto</option>
+                    <option value="project">Trabalho</option>
                     <option value="concept">Conceito</option>
                     <option value="participation">Participação</option>
                   </select>
@@ -304,7 +356,7 @@ export default function MyGrades() {
                   <label className="form-label">Conceito</label>
                   <select className="form-select" value={form.concept} onChange={(e) => setForm((p) => ({ ...p, concept: e.target.value }))}>
                     <option value="">Selecione</option>
-                    {['A','B','C','D','E','F'].map((c) => <option key={c} value={c}>{c}</option>)}
+                    {['A', 'B', 'C', 'D', 'E', 'F'].map((c) => <option key={c} value={c}>{c}</option>)}
                   </select>
                 </div>
               )}
