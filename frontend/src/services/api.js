@@ -4090,7 +4090,6 @@ const api = {
         return { data: { ok: true, noop: true, message: 'Esta ocorrência já foi processada' } };
       }
 
-      const task = data.tasks;
       if (task && !task.is_health_reminder) {
         await applyTaskOccurrenceAllowanceOnDecision(supabase, { familyId, userId, occurrenceId: occId, approved, task });
       }
