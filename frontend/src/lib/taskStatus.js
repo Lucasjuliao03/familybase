@@ -4,14 +4,18 @@
  *
  * REGRA:
  *  - Status finais (approved, rejected, cancelled) → mantém o status salvo
- *  - completed → verifica se foi após o prazo → 'completed_late' ou 'completed'
- *  - pending / in_progress → verifica se o prazo passou → 'delayed' ou mantém
+ *  - completed → verifica se foi após o prazo → wasLate
+ *  - pending / in_progress → verifica atraso no mesmo dia → delayed
+ *  - Recorrente: reprovação automática só persiste na API; aqui espelhamos fim do dia
+ *  - Única: após horário limite → reprovada (display)
  *
  * Timezone: usa o horário LOCAL do dispositivo (Date()), como o utilizador espera.
  */
+import { isOccurrenceDayEnded } from './taskHistoryStatus.js';
+import { isRecurringTask, isOpenOccurrenceStatus, shouldAutoRejectOccurrence } from './taskOccurrenceClosure.js';
 
 /** Status que não devem ser sobrescritos pela lógica de atraso. */
-const FINAL_STATUSES = new Set(['approved', 'rejected', 'cancelled', 'completed_late', 'not_completed']);
+const FINAL_STATUSES = new Set(['approved', 'rejected', 'cancelled', 'completed_late']);
 
 /** Retorna data local no formato YYYY-MM-DD */
 function toLocalYmdStr(date) {
@@ -36,6 +40,16 @@ export function buildDueDatetime(dateStr, timeStr) {
   return new Date(y, m - 1, d, 23, 59, 59, 0);
 }
 
+function taskFromOcc(occ) {
+  return {
+    is_recurring: occ.is_recurring ?? occ.tasks?.is_recurring,
+    frequency: occ.frequency ?? occ.tasks?.frequency,
+    due_time: occ.due_time ?? occ.tasks?.due_time,
+    start_date: occ.start_date ?? occ.tasks?.start_date,
+    is_health_reminder: occ.is_health_reminder ?? occ.tasks?.is_health_reminder,
+  };
+}
+
 /**
  * Retorna o status real da ocorrência levando em conta o horário atual.
  * @param {object} occ   – objeto de ocorrência vindo da API
@@ -44,43 +58,55 @@ export function buildDueDatetime(dateStr, timeStr) {
  */
 export function computeRealTaskStatus(occ, now = new Date()) {
   const saved = occ.status || 'pending';
+  const task = taskFromOcc(occ);
 
   // Status finais não mudam
   if (FINAL_STATUSES.has(saved)) {
-    return { status: saved, isDelayed: false, wasLate: false };
+    return { status: saved, isDelayed: false, wasLate: !!occ.wasLate };
+  }
+
+  if (saved === 'rejected') {
+    return { status: 'rejected', isDelayed: false, wasLate: false };
   }
 
   // Se já está concluída, verificar se foi após o prazo
   if (saved === 'completed' || saved === 'waiting_approval') {
     const dateStr = occ.occurrence_date || occ.start_date;
-    const dueAt = buildDueDatetime(dateStr, occ.due_time);
+    const dueAt = buildDueDatetime(dateStr, task.due_time);
+    const completedLateFlag = !!occ.completed_late;
     if (dueAt && occ.completed_at) {
       const completedAt = new Date(occ.completed_at);
-      if (completedAt > dueAt) {
-        return { status: saved === 'completed' ? 'completed_late' : 'waiting_approval', isDelayed: false, wasLate: true };
+      const wasLate = completedLateFlag || completedAt > dueAt;
+      if (wasLate) {
+        return { status: saved, isDelayed: false, wasLate: true };
       }
+    } else if (completedLateFlag) {
+      return { status: saved, isDelayed: false, wasLate: true };
     }
     return { status: saved, isDelayed: false, wasLate: false };
   }
 
-  // Para status pendente/em andamento, verificar prazo
   const dateStr = occ.occurrence_date || occ.start_date;
 
-  // Se a ocorrência é de um dia passado e não foi concluída → não concluída
-  if (dateStr) {
+  // Reprovação automática (display alinhado à API)
+  if (isOpenOccurrenceStatus(saved) && shouldAutoRejectOccurrence(occ, task, now)) {
+    return { status: 'rejected', isDelayed: false, wasLate: false };
+  }
+
+  // Dia passado ainda aberto na BD (antes do fecho lazy) → reprovada na UI
+  if (dateStr && isOpenOccurrenceStatus(saved)) {
     const todayYmd = toLocalYmdStr(now);
     if (dateStr.slice(0, 10) < todayYmd) {
-      return { status: 'not_completed', isDelayed: false, wasLate: false };
+      return { status: 'rejected', isDelayed: false, wasLate: false };
     }
   }
 
-  if (!dateStr && !occ.due_time) {
-    // Sem prazo definido → sem atraso
+  if (!dateStr && !task.due_time) {
     return { status: saved, isDelayed: false, wasLate: false };
   }
 
-  const dueAt = buildDueDatetime(dateStr, occ.due_time);
-  if (dueAt && now > dueAt) {
+  const dueAt = buildDueDatetime(dateStr, task.due_time);
+  if (dueAt && now > dueAt && isRecurringTask(task) && !isOccurrenceDayEnded(dateStr, now)) {
     return { status: 'delayed', isDelayed: true, wasLate: false };
   }
 
@@ -89,7 +115,6 @@ export function computeRealTaskStatus(occ, now = new Date()) {
 
 /**
  * Aplica computeRealTaskStatus a um array de ocorrências.
- * Retorna novo array com status corrigido e campos extras.
  * @param {object[]} occurrences
  * @param {Date} [now]
  * @returns {object[]}
@@ -109,8 +134,9 @@ export function enrichOccurrencesStatus(occurrences, now = new Date()) {
  */
 export function minutesToDeadline(occ, now = new Date()) {
   const dateStr = occ.occurrence_date || occ.start_date;
-  if (!dateStr && !occ.due_time) return null;
-  const dueAt = buildDueDatetime(dateStr, occ.due_time);
+  const dueTime = occ.due_time ?? occ.tasks?.due_time;
+  if (!dateStr && !dueTime) return null;
+  const dueAt = buildDueDatetime(dateStr, dueTime);
   if (!dueAt) return null;
   return Math.floor((dueAt - now) / 60000);
 }

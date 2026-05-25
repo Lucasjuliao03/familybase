@@ -96,7 +96,7 @@ describe('deriveParentHistoryBucket', () => {
     );
   });
 
-  it('pending + dia passado → not_completed', () => {
+  it('pending + dia passado → rejected (fecho automático)', () => {
     assert.equal(
       deriveParentHistoryBucket(
         {
@@ -106,7 +106,7 @@ describe('deriveParentHistoryBucket', () => {
         },
         now,
       ),
-      'not_completed',
+      'rejected',
     );
   });
 
@@ -148,7 +148,7 @@ describe('isOccurrenceDayEnded', () => {
 
 describe('historyBucketLabel', () => {
   it('retorna texto PT', () => {
-    assert.equal(historyBucketLabel('rejected'), 'Recusada pelo pai');
+    assert.equal(historyBucketLabel('rejected'), 'Reprovada');
     assert.ok(historyBucketLabel('completed').includes('Concl'));
   });
 });

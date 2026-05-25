@@ -13,6 +13,13 @@ import {
   catalogEntryMatchesApproxAgeYears,
   catalogEntryToSeedDescription,
 } from '../data/familyTaskTemplateCatalog.js';
+import {
+  AUTO_REJECT_REASON,
+  OPEN_OCCURRENCE_STATUSES,
+  isCompletionLate,
+  isOpenOccurrenceStatus,
+  shouldAutoRejectOccurrence,
+} from '../lib/taskOccurrenceClosure.js';
 
 const BASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
 const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
@@ -994,6 +1001,69 @@ async function applyTaskOccurrenceAllowanceOnDecision(supabase, { familyId, user
   }
 }
 
+async function autoRejectTaskOccurrence(supabase, { familyId, userId, occ, task, reason = AUTO_REJECT_REASON }) {
+  if (!isOpenOccurrenceStatus(occ?.status)) return { skipped: true };
+
+  const { data, error } = await supabase
+    .from('task_occurrences')
+    .update({
+      status: 'rejected',
+      rejected_at: new Date().toISOString(),
+      rejected_by: userId || null,
+      rejection_reason: reason,
+    })
+    .eq('id', occ.id)
+    .eq('family_id', familyId)
+    .in('status', OPEN_OCCURRENCE_STATUSES)
+    .select('*, tasks(*)')
+    .maybeSingle();
+
+  if (error) throw new Error(error.message);
+  if (!data) return { skipped: true };
+
+  if (task && !task.is_health_reminder) {
+    await applyTaskOccurrenceAllowanceOnDecision(supabase, {
+      familyId,
+      userId,
+      occurrenceId: occ.id,
+      approved: false,
+      task,
+    });
+  }
+
+  return { rejected: true, data };
+}
+
+/** Fecha ocorrências em aberto cujo prazo terminou (lazy, no GET de tarefas). */
+async function closeExpiredTaskOccurrencesForFamily(supabase, familyId, now = new Date()) {
+  const todayYmd = toYMDLocal(now);
+  const { data: openOccs, error } = await supabase
+    .from('task_occurrences')
+    .select('*, tasks(*)')
+    .eq('family_id', familyId)
+    .in('status', OPEN_OCCURRENCE_STATUSES)
+    .lte('occurrence_date', todayYmd);
+
+  if (error || !(openOccs || []).length) return;
+
+  for (const occ of openOccs) {
+    const task = occ.tasks;
+    if (!task || task.is_health_reminder) continue;
+    if (!shouldAutoRejectOccurrence(occ, task, now)) continue;
+    try {
+      await autoRejectTaskOccurrence(supabase, {
+        familyId,
+        userId: null,
+        occ,
+        task,
+        reason: AUTO_REJECT_REASON,
+      });
+    } catch (e) {
+      if (import.meta.env.DEV) console.warn('[tasks] auto-reject:', e.message);
+    }
+  }
+}
+
 function mapCalendarEventFromDb(d) {
   if (!d) return d;
   const crRaw = d.creator;
@@ -1758,6 +1828,9 @@ const api = {
       }
 
       const viewerRole = await getUserRole();
+
+      /** Reprova automaticamente ocorrências vencidas antes de materializar o dia. */
+      await closeExpiredTaskOccurrencesForFamily(supabase, familyId);
 
       /** Materializa modelos RECORRENTE + ATIVOS (uma ocorrência/dia esperada, por chave UNIQUE). */
       if (!expandAll && d && !rangeFrom && !rangeTo) {
@@ -3893,10 +3966,32 @@ const api = {
         if (error) throw new Error(error.message);
         return { data: { message: 'Registo guardado', status: 'completed', health_intake: intake } };
       }
+
+      if (shouldAutoRejectOccurrence(occ, task, new Date())) {
+        await autoRejectTaskOccurrence(supabase, {
+          familyId,
+          userId: null,
+          occ,
+          task,
+          reason: AUTO_REJECT_REASON,
+        });
+        throw new Error('O prazo desta tarefa terminou. Ela foi marcada como reprovada.');
+      }
+
+      if (!isOpenOccurrenceStatus(occ.status) && occ.status !== 'delayed') {
+        throw new Error('Esta tarefa já não pode ser concluída.');
+      }
+
+      const completedAt = new Date();
+      const completedLate = isCompletionLate(occ, task, completedAt);
       const newStatus = task?.requires_approval ? 'waiting_approval' : 'completed';
       const { error } = await supabase
         .from('task_occurrences')
-        .update({ status: newStatus, completed_at: new Date().toISOString() })
+        .update({
+          status: newStatus,
+          completed_at: completedAt.toISOString(),
+          completed_late: completedLate,
+        })
         .eq('id', occId);
       if (error) throw new Error(error.message);
 
@@ -3942,13 +4037,40 @@ const api = {
         await checkAndAwardMedals(supabase, occ.child_id, familyId, chAfter?.streak_current || 0);
       }
 
-      return { data: { message: 'Ocorrência atualizada', status: newStatus } };
+      return { data: { message: 'Ocorrência atualizada', status: newStatus, completed_late: completedLate } };
     }
 
     const approveMatch = path.match(/^\/tasks\/occurrences\/([^/]+)\/approve$/);
     if (approveMatch) {
       const occId = approveMatch[1];
       const approved = !!body?.approved;
+
+      const { data: occRow, error: occFetchErr } = await supabase
+        .from('task_occurrences')
+        .select('*, tasks(*)')
+        .eq('id', occId)
+        .eq('family_id', familyId)
+        .single();
+      if (occFetchErr || !occRow) throw new Error('Ocorrência não encontrada');
+
+      const task = occRow.tasks;
+
+      /* Reprovação manual pelo responsável em tarefa ainda em aberto */
+      if (!approved && isOpenOccurrenceStatus(occRow.status)) {
+        const role = await getUserRole();
+        if (role === 'child') throw new Error('Sem permissão para reprovar esta tarefa.');
+        const result = await autoRejectTaskOccurrence(supabase, {
+          familyId,
+          userId,
+          occ: occRow,
+          task,
+          reason: body?.rejection_reason || 'Reprovada pelo responsável',
+        });
+        if (result.skipped) {
+          return { data: { ok: true, noop: true, message: 'Esta ocorrência já foi processada' } };
+        }
+        return { data: { message: 'Tarefa reprovada', status: 'rejected' } };
+      }
 
       const patch = approved
         ? { status: 'approved', approved_at: new Date().toISOString(), approved_by: userId }

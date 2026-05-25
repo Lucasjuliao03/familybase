@@ -691,6 +691,12 @@ export default function TaskManager() {
                             {t('task_health_skipped')}
                           </button>
                         </div>
+                      ) : ['pending', 'in_progress', 'delayed'].includes(occ.status) ? (
+                        <div className="task-actions-row">
+                          <button type="button" className="btn btn-sm btn-danger" onClick={() => handleApproveOcc(occ.id, false)}>
+                            ❌ {t('task_reject')}
+                          </button>
+                        </div>
                       ) : occ.status === 'waiting_approval' ? (
                         <div className="task-actions-row">
                           <button type="button" className="btn btn-sm btn-primary" onClick={() => handleApproveOcc(occ.id, true)}>
@@ -702,7 +708,7 @@ export default function TaskManager() {
                         </div>
                       ) : null}
                     </td>
-                  </tr>
+                    </tr>
                 ))}
               </tbody>
             )}

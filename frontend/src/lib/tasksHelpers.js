@@ -1,3 +1,5 @@
+import { shouldAutoRejectOccurrence } from './taskOccurrenceClosure.js';
+
 const FREQ_PT = {
   daily: 'Diária',
   weekly: 'Semanal',
@@ -16,7 +18,7 @@ const TYPE_PT = {
 const STATUS_PT = {
   pending: 'Pendente',
   in_progress: 'Em andamento',
-  waiting_approval: 'Aguardando',
+  waiting_approval: 'Aguardando aprovação',
   approved: 'Aprovada',
   rejected: 'Reprovada',
   delayed: 'Atrasada',
@@ -49,7 +51,8 @@ export function taskTypeLabel(type) {
 export function taskStatusLabel(occ) {
   const s = occ?.status || 'pending';
   if (occ?.isDelayed || s === 'delayed') return 'Atrasada';
-  if (occ?.wasLate && s === 'waiting_approval') return 'Aguardando';
+  if (occ?.wasLate && s === 'waiting_approval') return 'Aguardando aprovação com atraso';
+  if (occ?.wasLate && s === 'completed') return 'Concluída com atraso';
   return STATUS_PT[s] || s;
 }
 
@@ -135,11 +138,23 @@ export function countDelayed(occurrences) {
   return occurrences.filter((o) => o.isDelayed || o.status === 'delayed').length;
 }
 
-export function canCompleteTask(occ) {
+export function canCompleteTask(occ, now = new Date()) {
+  if (Number(occ.is_health_reminder) === 1) return false;
+  if (occ.status === 'rejected') return false;
+
   const isDelayed = occ.isDelayed || occ.status === 'delayed';
-  return (
-    occ.status === 'pending'
-    || occ.status === 'in_progress'
-    || isDelayed
-  ) && Number(occ.is_health_reminder) !== 1;
+  const open = occ.status === 'pending' || occ.status === 'in_progress' || isDelayed;
+  if (!open) return false;
+
+  const task = {
+    is_recurring: occ.is_recurring,
+    frequency: occ.frequency,
+    due_time: occ.due_time,
+    start_date: occ.occurrence_date,
+    is_health_reminder: occ.is_health_reminder,
+  };
+
+  if (shouldAutoRejectOccurrence(occ, task, now)) return false;
+
+  return true;
 }

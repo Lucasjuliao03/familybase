@@ -84,7 +84,12 @@ export function deriveParentHistoryBucket(occ, now = new Date()) {
     return isOccurrenceDayEnded(occ.occurrence_date, now) ? 'not_completed' : 'pending_open';
   }
 
-  /* pending, in_progress, delayed, expired … */
+  /* pending, in_progress, delayed — após fecho do dia = reprovada (auto ou display) */
+  if (['pending', 'in_progress', 'delayed'].includes(saved)) {
+    if (isOccurrenceDayEnded(occ.occurrence_date, now)) return 'rejected';
+    return 'pending_open';
+  }
+
   if (isOccurrenceDayEnded(occ.occurrence_date, now)) return 'not_completed';
   return 'pending_open';
 }
@@ -99,7 +104,7 @@ export function historyBucketLabel(bucket) {
     case 'not_completed':
       return 'Não concluída';
     case 'rejected':
-      return 'Recusada pelo pai';
+      return 'Reprovada';
     case 'pending_open':
       return 'Em aberto';
     default:

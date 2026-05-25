@@ -172,7 +172,7 @@ export default function MyTasks() {
           const mins = minutesToDeadline(occ, now);
           const closeToDue = mins !== null && mins >= 0 && mins <= 30;
           const isHealth = Number(occ.is_health_reminder) === 1;
-          const showComplete = canCompleteTask(occ);
+          const showComplete = canCompleteTask(occ, now);
           const icon = taskIcon(occ.title, occ.type);
 
           return (
