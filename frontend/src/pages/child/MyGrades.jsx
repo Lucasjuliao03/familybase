@@ -53,6 +53,7 @@ export default function MyGrades() {
     subject: '', type: 'test', score: '', max_score: '10',
     concept: '', observation: '', date: '', period_number: 1,
   });
+  const [isNewSubject, setIsNewSubject] = useState(false);
 
   const loadBundle = useCallback(async () => {
     try {
@@ -62,7 +63,10 @@ export default function MyGrades() {
 
     api.get('/grades/subjects')
       .then((r) => {
-        const extra = (r.data || []).filter((s) => !PREDEFINED_SUBJECTS.includes(s));
+        const extra = (r.data || []).filter((s) => {
+          const norm = s.trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+          return !PREDEFINED_SUBJECTS.some(p => p.trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "") === norm);
+        });
         setSubjectOptions([...PREDEFINED_SUBJECTS, ...extra]);
       })
       .catch(() => setSubjectOptions(PREDEFINED_SUBJECTS));
@@ -125,14 +129,26 @@ export default function MyGrades() {
     });
   };
 
+  const openNewModal = () => {
+    setForm({ subject: '', type: 'test', score: '', max_score: '10', concept: '', observation: '', date: '', period_number: 1 });
+    setIsNewSubject(false);
+    setShowModal(true);
+  };
+
   const handleCreate = async (e) => {
     e.preventDefault();
     let row = childProfile;
     if (!row?.id) row = await ensureChildProfile();
     if (!row?.id) { toast.error('Perfil em carregamento. Tente dentro de instantes.'); return; }
     try {
+      const subjectName = isNewSubject ? form.subject.trim() : form.subject;
+      if (!subjectName) {
+        toast.error('Informe a disciplina.');
+        return;
+      }
       await api.post('/grades', {
         ...form,
+        subject: subjectName,
         child_id: row.id,
         score: form.score !== '' ? parseFloat(form.score) : null,
         max_score: parseFloat(form.max_score) || 10,
@@ -142,6 +158,7 @@ export default function MyGrades() {
       toast.success('Nota cadastrada! 📚');
       setShowModal(false);
       setForm({ subject: '', type: 'test', score: '', max_score: '10', concept: '', observation: '', date: '', period_number: 1 });
+      setIsNewSubject(false);
       loadBundle();
     } catch (err) { toast.error(err.response?.data?.error || err.message || t('error_occurred')); }
   };
@@ -155,7 +172,7 @@ export default function MyGrades() {
           <h2>Minhas matérias</h2>
           <p>Resumo rápido do desempenho</p>
         </div>
-        <button type="button" className="btn btn-primary my-grades-add-btn" onClick={() => setShowModal(true)}>
+        <button type="button" className="btn btn-primary my-grades-add-btn" onClick={openNewModal}>
           + Nota
         </button>
       </div>
@@ -323,8 +340,38 @@ export default function MyGrades() {
             <form onSubmit={handleCreate}>
               <div className="form-group">
                 <label className="form-label">Disciplina *</label>
-                <input className="form-input" list="subj-c" value={form.subject} onChange={(e) => setForm((p) => ({ ...p, subject: e.target.value }))} placeholder="Selecione ou digite..." required />
-                <datalist id="subj-c">{subjectOptions.map((s) => <option key={s} value={s} />)}</datalist>
+                <select
+                  className="form-select"
+                  value={isNewSubject ? '__new__' : form.subject}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val === '__new__') {
+                      setIsNewSubject(true);
+                      setForm((p) => ({ ...p, subject: '' }));
+                    } else {
+                      setIsNewSubject(false);
+                      setForm((p) => ({ ...p, subject: val }));
+                    }
+                  }}
+                  required
+                >
+                  <option value="">-- Selecione a Disciplina --</option>
+                  {subjectOptions.map((s) => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                  <option value="__new__">➕ Adicionar nova disciplina...</option>
+                </select>
+                {isNewSubject && (
+                  <input
+                    className="form-input"
+                    style={{ marginTop: 8 }}
+                    type="text"
+                    placeholder="Digite o nome da nova disciplina..."
+                    value={form.subject}
+                    onChange={(e) => setForm((p) => ({ ...p, subject: e.target.value }))}
+                    required
+                  />
+                )}
               </div>
               <div className="grid grid-2">
                 <div className="form-group">

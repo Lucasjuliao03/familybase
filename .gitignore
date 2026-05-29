@@ -7,6 +7,20 @@ build/
 .next/
 out/
 
+# Capacitor / Android (artefactos locais — manter pasta android/ no repo)
+frontend/android/.gradle/
+frontend/android/.idea/
+frontend/android/local.properties
+frontend/android/keystore.properties
+frontend/android/app/build/
+frontend/android/build/
+frontend/android/captures/
+frontend/android/.cxx/
+*.apk
+*.aab
+*.keystore
+!frontend/android/app/debug.keystore
+
 # ambiente / segredos
 .env
 .env.*

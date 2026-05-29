@@ -828,6 +828,48 @@ tr:hover td { background: rgba(108,92,231,0.03); }
 .empty-state h3 { font-weight: 600; margin-bottom: 4px; color: var(--text); }
 .tag { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 6px; font-size: 0.75rem; font-weight: 600; }
 
+/* Capacitor / app nativo Android — layout mobile + safe area */
+html.capacitor-native,
+html.capacitor-native body,
+html.capacitor-native #root {
+  min-height: 100dvh;
+  height: 100%;
+}
+
+html.capacitor-native body {
+  overscroll-behavior-y: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html.capacitor-native .app-layout {
+  min-height: 100dvh;
+}
+
+html.capacitor-native .app-sidebar {
+  display: none !important;
+}
+
+html.capacitor-native .app-main {
+  margin-left: 0 !important;
+  margin-bottom: calc(var(--mbb-inner-height, 52px) + env(safe-area-inset-bottom, 0px)) !important;
+}
+
+html.capacitor-native .app-header {
+  padding-top: max(12px, env(safe-area-inset-top, 0px)) !important;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)) !important;
+  padding-right: max(16px, env(safe-area-inset-right, 0px)) !important;
+}
+
+html.capacitor-native .mobile-bottom-bar {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+html.capacitor-native .app-content {
+  padding: 16px !important;
+  padding-bottom: 8px !important;
+  overflow-x: hidden;
+}
+
 /* Language Switcher */
 .lang-switch { display: flex; align-items: center; gap: 4px; background: var(--bg); border-radius: 8px; padding: 2px; }
 .lang-btn { padding: 4px 10px; border: none; background: none; border-radius: 6px; cursor: pointer; font-size: 0.8rem; font-weight: 600; color: var(--text-light); transition: var(--transition); }

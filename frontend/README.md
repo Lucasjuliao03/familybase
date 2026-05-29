@@ -1,16 +1,33 @@
-# React + Vite
+# Frontend — Base Familiar
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+App web em React + Vite. Pode ser usado no browser ou empacotado como **app Android** via Capacitor.
 
-Currently, two official plugins are available:
+## Desenvolvimento web
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+```bash
+npm install
+npm run dev
+```
 
-## React Compiler
+Abre em `http://localhost:5173`.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Build web (Vercel / produção)
 
-## Expanding the ESLint configuration
+```bash
+npm run build
+```
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+## App Android
+
+Ver guia completo: **[ANDROID.md](./ANDROID.md)**
+
+```bash
+npm run cap:sync    # build + sync
+npm run cap:open    # Android Studio
+```
+
+## Testes
+
+```bash
+npm test
+```

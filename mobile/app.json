@@ -1,0 +1,85 @@
+{
+  "expo": {
+    "name": "FamilyBase",
+    "slug": "familybase-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "scheme": "familybase",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.familybase.mobile",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "FamilyBase precisa da sua localização para mostrar os membros da família no mapa.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "FamilyBase precisa rastrear sua localização em segundo plano para atualizar automaticamente sua posição para a família.",
+        "NSLocationAlwaysUsageDescription": "FamilyBase precisa da sua localização em segundo plano para manter sua posição atualizada na família.",
+        "UIBackgroundModes": [
+          "location",
+          "fetch"
+        ]
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "package": "com.familybase.mobile",
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_LOCATION"
+      ]
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "static",
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-status-bar",
+      "expo-font",
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "FamilyBase precisa da sua localização para mostrar sua posição para a família.",
+          "locationAlwaysPermission": "FamilyBase rastreia sua localização em segundo plano para manter sua posição atualizada.",
+          "locationWhenInUsePermission": "FamilyBase precisa da sua localização para mostrar no mapa da família.",
+          "isIosBackgroundLocationEnabled": true,
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
+        }
+      ],
+      [
+        "react-native-maps",
+        {
+          "iosGoogleMapsApiKey": "",
+          "androidGoogleMapsApiKey": ""
+        }
+      ],
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "O Tudo de Casa usa o Face ID para você entrar com segurança sem digitar a senha."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "O Tudo de Casa precisa acessar suas fotos para você escolher o avatar do perfil."
+        }
+      ],
+      "expo-secure-store"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

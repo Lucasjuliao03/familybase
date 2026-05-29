@@ -143,7 +143,7 @@ export default function MyAllowance() {
                                 color: isCredit ? 'var(--success)' : 'var(--danger)',
                                 fontSize: '0.8rem'
                               }}>
-                                {isCredit ? '↓' : '↑'}
+                                {isCredit ? '+' : '−'}
                               </span>
                               {tx.description || (isCredit ? 'Entrada' : 'Saída')}
                             </div>

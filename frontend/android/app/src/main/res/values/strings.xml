@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Base Familiar</string>
+    <string name="title_activity_main">Base Familiar</string>
+    <string name="package_name">com.basefamiliar.app</string>
+    <string name="custom_url_scheme">com.basefamiliar.app</string>
+</resources>

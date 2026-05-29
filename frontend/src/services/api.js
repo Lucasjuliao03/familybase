@@ -1342,6 +1342,13 @@ function normalizeGradeRow(body, familyId, idOverride) {
     max_score: body.max_score != null ? Number(body.max_score) : body.max_value != null ? Number(body.max_value) : 10,
     concept: body.concept ?? body.term ?? null,
     observation: body.observation ?? body.notes ?? null,
+    period_number: body.period_number != null ? Number(body.period_number) : undefined,
+    period_type: body.period_type || undefined,
+    weight: body.weight != null ? Number(body.weight) : undefined,
+    subject_id: body.subject_id || undefined,
+    bimestre: body.bimestre != null ? Number(body.bimestre) : (body.period_number != null ? Number(body.period_number) : undefined),
+    nota: body.nota != null ? Number(body.nota) : (body.score != null ? Number(body.score) : null),
+    aluno_id: body.aluno_id || body.child_id || undefined,
   });
   return row;
 }
@@ -1706,17 +1713,27 @@ const api = {
     if (!familyId) throw new Error('Not authenticated');
 
     if (path.startsWith('/grades/subjects')) {
-      let subjQ = supabase.from('grades').select('subject').eq('family_id', familyId);
-      const { data: { session: sessSub } } = await supabase.auth.getSession();
-      const uidSub = sessSub?.user?.id;
-      if ((await getUserRole()) === 'child' && uidSub) {
-        const scopeSub = await resolveViewerChildScope(familyId, uidSub);
-        if (!scopeSub) return { data: [] };
-        subjQ = subjQ.eq('child_id', scopeSub);
+      const { data: subjects, error } = await supabase
+        .from('subjects')
+        .select('name')
+        .eq('family_id', familyId)
+        .order('name', { ascending: true });
+      
+      if (error) {
+        // Fallback to grades table scan if subjects table is not ready
+        let subjQ = supabase.from('grades').select('subject').eq('family_id', familyId);
+        const { data: { session: sessSub } } = await supabase.auth.getSession();
+        const uidSub = sessSub?.user?.id;
+        if ((await getUserRole()) === 'child' && uidSub) {
+          const scopeSub = await resolveViewerChildScope(familyId, uidSub);
+          if (scopeSub) subjQ = subjQ.eq('child_id', scopeSub);
+        }
+        const { data: grades } = await subjQ;
+        const uniq = [...new Set((grades || []).map((g) => g.subject).filter(Boolean))];
+        return { data: uniq.sort() };
       }
-      const { data: grades } = await subjQ;
-      const uniq = [...new Set((grades || []).map((g) => g.subject).filter(Boolean))];
-      return { data: uniq.sort() };
+      const names = (subjects || []).map(s => s.name).filter(Boolean);
+      return { data: names };
     }
 
     if (path.startsWith('/grades')) {
@@ -2637,12 +2654,85 @@ const api = {
         );
       }
       const row = normalizeGradeRow({ ...gradePayload, child_id: forcedGradeChild }, familyId);
-      /** Garante string explícita: o cliente Supabase omite chaves undefined no JSON para o REST. */
-      const insertGrade = {
-        ...omitUndefined(row),
-        child_id: forcedGradeChild,
-      };
-      const { data, error } = await supabase.from('grades').insert([insertGrade]).select('*, children:child_id(name, color, avatar_url, avatar_preset)').single();
+
+      // Ensure subject is synced in 'subjects' table (if it exists/migration applied)
+      let resolvedSubjectId = row.subject_id;
+      try {
+        if (row.subject) {
+          const { data: existingSub } = await supabase
+            .from('subjects')
+            .select('id, name')
+            .eq('family_id', familyId)
+            .ilike('name', row.subject.trim())
+            .maybeSingle();
+          if (existingSub) {
+            resolvedSubjectId = existingSub.id;
+            row.subject = existingSub.name; // Standardize casing/accent from DB
+          } else {
+            const { data: newSub, error: newSubErr } = await supabase
+              .from('subjects')
+              .insert([{ family_id: familyId, name: row.subject.trim() }])
+              .select('id, name')
+              .single();
+            if (!newSubErr && newSub) {
+              resolvedSubjectId = newSub.id;
+              row.subject = newSub.name;
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('Could not sync subject in subjects table:', e);
+      }
+      row.subject_id = resolvedSubjectId;
+
+      // Check if a grade already exists for this child, subject, period and type
+      const { data: existing } = await supabase
+        .from('grades')
+        .select('*')
+        .eq('family_id', familyId)
+        .eq('child_id', forcedGradeChild)
+        .eq('subject', row.subject)
+        .eq('period_number', row.period_number)
+        .eq('type', row.type)
+        .maybeSingle();
+
+      let data, error;
+      if (existing) {
+        // Update existing grade
+        const updatePayload = {
+          score: row.score,
+          max_score: row.max_score,
+          concept: row.concept,
+          observation: row.observation,
+          date: row.date,
+          subject_id: row.subject_id,
+          bimestre: row.bimestre,
+          nota: row.nota,
+          aluno_id: row.aluno_id,
+        };
+        const { data: updData, error: updErr } = await supabase
+          .from('grades')
+          .update(omitUndefined(updatePayload))
+          .eq('id', existing.id)
+          .select('*, children:child_id(name, color, avatar_url, avatar_preset)')
+          .single();
+        data = updData;
+        error = updErr;
+      } else {
+        // Insert new grade
+        const insertGrade = {
+          ...omitUndefined(row),
+          child_id: forcedGradeChild,
+        };
+        const { data: insData, error: insErr } = await supabase
+          .from('grades')
+          .insert([insertGrade])
+          .select('*, children:child_id(name, color, avatar_url, avatar_preset)')
+          .single();
+        data = insData;
+        error = insErr;
+      }
+
       if (error) throw new Error(error.message);
       const childIdAward = data?.child_id;
       if (childIdAward) {

@@ -53,6 +53,7 @@ export default function GradeTracker() {
     subject: '', type: 'test', score: '', max_score: 10,
     concept: '', observation: '', date: '', child_id: '', period_number: 1,
   });
+  const [isNewSubject, setIsNewSubject] = useState(false);
 
   const loadBundle = useCallback(async () => {
     const params = {};
@@ -61,10 +62,21 @@ export default function GradeTracker() {
       const { data } = await api.get('/grades', { params });
       setGrades(data || []);
     } catch { /* manter estado anterior */ }
-    api.get('/families/children').then((r) => setChildren(r.data || [])).catch(() => {});
+    api.get('/families/children')
+      .then((r) => {
+        const list = r.data || [];
+        setChildren(list);
+        if (list.length > 0 && !filterChild) {
+          setFilterChild(list[0].id);
+        }
+      })
+      .catch(() => {});
     api.get('/grades/subjects')
       .then((r) => {
-        const extra = (r.data || []).filter((s) => !PREDEFINED_SUBJECTS.includes(s));
+        const extra = (r.data || []).filter((s) => {
+          const norm = s.trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+          return !PREDEFINED_SUBJECTS.some(p => p.trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "") === norm);
+        });
         setSubjectOptions([...PREDEFINED_SUBJECTS, ...extra]);
       })
       .catch(() => setSubjectOptions(PREDEFINED_SUBJECTS));
@@ -106,17 +118,29 @@ export default function GradeTracker() {
 
   // Filtrar notas por período
   const filteredGrades = grades.filter((g) => {
-    if (filterPeriod && g.period_number !== filterPeriod) return false;
+    if (filterPeriod && Number(g.period_number) !== Number(filterPeriod)) return false;
     return true;
   });
 
   // (calcChildMetrics removed)
 
+  const openNewModal = () => {
+    setForm({ id: null, subject: '', type: 'test', score: '', max_score: 10, concept: '', observation: '', date: '', child_id: filterChild || '', period_number: 1 });
+    setIsNewSubject(false);
+    setShowModal(true);
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
+      const subjectName = isNewSubject ? form.subject.trim() : form.subject;
+      if (!subjectName) {
+        toast.error('Informe a matéria.');
+        return;
+      }
       const payload = {
         ...form,
+        subject: subjectName,
         score: form.score !== '' ? parseFloat(form.score) : null,
         max_score: parseFloat(form.max_score),
         period_number: Number(form.period_number),
@@ -134,10 +158,13 @@ export default function GradeTracker() {
       setShowModal(false);
       loadBundle();
       setForm({ id: null, subject: '', type: 'test', score: '', max_score: 10, concept: '', observation: '', date: '', child_id: '', period_number: 1 });
+      setIsNewSubject(false);
     } catch { toast.error(t('error_occurred')); }
   };
 
   const handleEdit = (grade) => {
+    const isCustom = grade.subject && !subjectOptions.includes(grade.subject);
+    setIsNewSubject(isCustom);
     setForm({
       id: grade.id,
       subject: grade.subject || '',
@@ -247,13 +274,12 @@ export default function GradeTracker() {
           <h1 className="page-title">📚 {t('grade_tracking')}</h1>
           <p className="page-subtitle" style={{ fontSize: '0.85rem', color: 'var(--text-light)' }}>Acompanhe o desempenho escolar</p>
         </div>
-        <button className="btn btn-primary" onClick={() => setShowModal(true)}>+ {t('add_grade')}</button>
+        <button className="btn btn-primary" onClick={openNewModal}>+ {t('add_grade')}</button>
       </div>
 
       {/* Filtros */}
       <div className="flex gap-10 mb-16" style={{ flexWrap: 'wrap', alignItems: 'center' }}>
         <select className="form-select" style={{ width: 'auto', minWidth: 140 }} value={filterChild} onChange={(e) => setFilterChild(e.target.value)}>
-          <option value="">Todos os alunos</option>
           {children.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
         <select className="form-select" style={{ width: 'auto', minWidth: 130 }} value={filterPeriod} onChange={(e) => setFilterPeriod(Number(e.target.value))}>
@@ -287,48 +313,73 @@ export default function GradeTracker() {
             return (
               <>
                 {/* Resumo Geral Premium */}
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12, marginBottom: 24 }}>
-                  <div className="stat-card" style={{ padding: '16px' }}>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-light)', marginBottom: 4 }}>Média Geral</div>
-                    <div style={{ fontWeight: 800, fontSize: '1.8rem', color: 'var(--primary)' }}>
-                      {boletim.overall.avg !== null ? boletim.overall.avg.toFixed(1) : '-'}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16, marginBottom: 24 }}>
+                  <div className="stat-card">
+                    <div className="stat-icon" style={{ background: 'rgba(99,102,241,0.1)' }}>📊</div>
+                    <div className="stat-info">
+                      <h3>{boletim.overall.avg !== null ? boletim.overall.avg.toFixed(1) : '-'}</h3>
+                      <p>Média Geral</p>
                     </div>
                   </div>
-                  <div className="stat-card" style={{ padding: '16px', borderColor: 'var(--success)', background: 'rgba(34,197,94,0.03)' }}>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--success)', marginBottom: 4 }}>Aprovado/Confortável</div>
-                    <div style={{ fontWeight: 800, fontSize: '1.5rem', color: 'var(--success)' }}>
-                      {boletim.overall.approved} <span style={{ fontSize: '0.8rem', fontWeight: 500 }}>matéria(s)</span>
+
+                  <div className="stat-card">
+                    <div className="stat-icon" style={{ background: 'rgba(34,197,94,0.1)' }}>✅</div>
+                    <div className="stat-info">
+                      <h3>{boletim.overall.approved} <span style={{ fontSize: '0.8rem', fontWeight: 500, color: 'var(--text-light)' }}>matéria(s)</span></h3>
+                      <p>Aprovado/Confortável</p>
                     </div>
                   </div>
-                  {boletim.overall.attention > 0 && (
-                    <div className="stat-card" style={{ padding: '16px', borderColor: '#F59E0B', background: 'rgba(245,158,11,0.03)' }}>
-                      <div style={{ fontSize: '0.75rem', color: '#D97706', marginBottom: 4 }}>Em Atenção</div>
-                      <div style={{ fontWeight: 800, fontSize: '1.5rem', color: '#D97706' }}>
-                        {boletim.overall.attention} <span style={{ fontSize: '0.8rem', fontWeight: 500 }}>matéria(s)</span>
-                      </div>
+
+                  <div className="stat-card">
+                    <div className="stat-icon" style={{ background: 'rgba(245,158,11,0.1)' }}>🟡</div>
+                    <div className="stat-info">
+                      <h3>{boletim.overall.attention} <span style={{ fontSize: '0.8rem', fontWeight: 500, color: 'var(--text-light)' }}>matéria(s)</span></h3>
+                      <p>Em Atenção</p>
                     </div>
-                  )}
-                  {(boletim.overall.risk > 0 || boletim.overall.failed > 0) && (
-                    <div className="stat-card" style={{ padding: '16px', borderColor: 'var(--danger)', background: 'rgba(239,68,68,0.03)' }}>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--danger)', marginBottom: 4 }}>Em Risco/Reprovado</div>
-                      <div style={{ fontWeight: 800, fontSize: '1.5rem', color: 'var(--danger)' }}>
-                        {boletim.overall.risk + boletim.overall.failed} <span style={{ fontSize: '0.8rem', fontWeight: 500 }}>matéria(s)</span>
-                      </div>
+                  </div>
+
+                  <div className="stat-card">
+                    <div className="stat-icon" style={{ background: 'rgba(239,68,68,0.1)' }}>⚠️</div>
+                    <div className="stat-info">
+                      <h3>{boletim.overall.risk + boletim.overall.failed} <span style={{ fontSize: '0.8rem', fontWeight: 500, color: 'var(--text-light)' }}>matéria(s)</span></h3>
+                      <p>Em Risco/Reprovado</p>
                     </div>
-                  )}
+                  </div>
                 </div>
 
                 {/* Resumo para os Pais */}
-                <div className="card mb-20" style={{ padding: 16, background: 'var(--bg-hover)' }}>
-                  <h3 style={{ fontSize: '1rem', fontWeight: 700, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
-                    💡 Resumo para os Pais
+                <div className="card mb-20" style={{ 
+                  padding: '20px', 
+                  background: 'linear-gradient(135deg, rgba(99,102,241,0.05) 0%, rgba(34,197,94,0.03) 100%)', 
+                  border: '1px solid rgba(99,102,241,0.15)',
+                  borderRadius: '12px',
+                  boxShadow: 'var(--shadow-sm)'
+                }}>
+                  <h3 style={{ 
+                    fontSize: '1.05rem', 
+                    fontWeight: 800, 
+                    marginBottom: 10, 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    gap: 8,
+                    color: 'var(--primary)'
+                  }}>
+                    💡 Resumo Geral Escolar
                   </h3>
-                  <p style={{ fontSize: '0.9rem', color: 'var(--text-light)', lineHeight: 1.5 }}>
-                    Seu filho(a) tem <strong>{boletim.overall.totalSubjects} matérias</strong> registradas. 
-                    {' '}Está tranquilo(a) em <strong>{boletim.overall.approved}</strong>, 
-                    {' '}precisa de atenção em <strong>{boletim.overall.attention}</strong> 
-                    {' '}e está em risco em <strong>{boletim.overall.risk + boletim.overall.failed}</strong>.
-                    {boletim.overall.risk > 0 ? ' Acompanhe as matérias em vermelho mais de perto nesta semana!' : ''}
+                  <p style={{ fontSize: '0.92rem', color: 'var(--text-light)', lineHeight: 1.6, margin: 0 }}>
+                    Seu filho(a) possui um total de <strong style={{ color: 'var(--text)' }}>{boletim.overall.totalSubjects} disciplinas</strong> cadastradas no boletim. 
+                    {'\n'}Status atual: está com desempenho <strong style={{ color: 'var(--success)' }}>{boletim.overall.approved} Confortável/Aprovado</strong>, 
+                    {' '}<strong style={{ color: '#D97706' }}>{boletim.overall.attention} em Atenção</strong> 
+                    {' '}e <strong style={{ color: 'var(--danger)' }}>{boletim.overall.risk + boletim.overall.failed} em Risco/Reprovado</strong>.
+                    {boletim.overall.risk + boletim.overall.failed > 0 ? (
+                      <span style={{ display: 'block', marginTop: 8, padding: '8px 12px', background: 'rgba(239,68,68,0.06)', borderRadius: '6px', color: 'var(--danger)', fontSize: '0.85rem', fontWeight: 600 }}>
+                        ⚠️ Recomendação: Acompanhe as matérias marcadas em vermelho com mais atenção para ajudá-lo(a) a recuperar as notas.
+                      </span>
+                    ) : (
+                      <span style={{ display: 'block', marginTop: 8, padding: '8px 12px', background: 'rgba(34,197,94,0.06)', borderRadius: '6px', color: 'var(--success)', fontSize: '0.85rem', fontWeight: 600 }}>
+                        🎉 Parabéns pelo acompanhamento! O desempenho geral está excelente.
+                      </span>
+                    )}
                   </p>
                 </div>
 
@@ -370,8 +421,10 @@ export default function GradeTracker() {
 
                       {/* Lista de Períodos */}
                       <div style={{ padding: '12px 20px' }}>
-                        {subj.periods.map(p => (
-                          <div key={p.number} className="flex-between" style={{ padding: '8px 0', borderBottom: '1px dashed var(--border)' }}>
+                        {subj.periods
+                          .filter(p => !filterPeriod || Number(p.number) === Number(filterPeriod))
+                          .map(p => (
+                            <div key={p.number} className="flex-between" style={{ padding: '8px 0', borderBottom: '1px dashed var(--border)' }}>
                             <div>
                               <div style={{ fontSize: '0.85rem', fontWeight: 600 }}>{p.label}</div>
                               <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
@@ -592,8 +645,38 @@ export default function GradeTracker() {
                 </div>
                 <div className="form-group">
                   <label className="form-label">{t('subject')} *</label>
-                  <input className="form-input" list="subj-list" value={form.subject} onChange={(e) => setForm((p) => ({ ...p, subject: e.target.value }))} placeholder="Selecione ou digite..." required />
-                  <datalist id="subj-list">{subjectOptions.map((s) => <option key={s} value={s} />)}</datalist>
+                  <select
+                    className="form-select"
+                    value={isNewSubject ? '__new__' : form.subject}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val === '__new__') {
+                        setIsNewSubject(true);
+                        setForm((p) => ({ ...p, subject: '' }));
+                      } else {
+                        setIsNewSubject(false);
+                        setForm((p) => ({ ...p, subject: val }));
+                      }
+                    }}
+                    required
+                  >
+                    <option value="">-- Selecione a Matéria --</option>
+                    {subjectOptions.map((s) => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                    <option value="__new__">➕ Adicionar nova matéria...</option>
+                  </select>
+                  {isNewSubject && (
+                    <input
+                      className="form-input"
+                      style={{ marginTop: 8 }}
+                      type="text"
+                      placeholder="Digite o nome da nova matéria..."
+                      value={form.subject}
+                      onChange={(e) => setForm((p) => ({ ...p, subject: e.target.value }))}
+                      required
+                    />
+                  )}
                 </div>
               </div>
               <div className="grid grid-3">
