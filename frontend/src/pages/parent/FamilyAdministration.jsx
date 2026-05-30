@@ -1549,7 +1549,7 @@ function GuardianUserModal({ initial, onClose, onSaved, t, toast, familyPrimary,
 function ChildModalForm({ initial, t, toast, onClose, onSaved }) {
   const isEdit = !!initial.id;
   const hasLogin = !!(initial.user_id || initial.user_email);
-  const [form, setForm] = useState({
+  const buildForm = () => ({
     name: initial.name || '',
     nickname: initial.nickname || '',
     age: initial.age ?? '',
@@ -1560,15 +1560,20 @@ function ChildModalForm({ initial, t, toast, onClose, onSaved }) {
     notes: initial.notes || '',
     must_change_password: false,
   });
+  const [form, setForm] = useState(buildForm);
+
+  useEffect(() => {
+    setForm(buildForm());
+  }, [initial.id]);
 
   const submit = async (e) => {
     e.preventDefault();
     const emailTrim = String(form.email || '').trim().toLowerCase();
+    if (!emailTrim) {
+      toast.error(t('fam_admin_child_email_required'));
+      return;
+    }
     if (!isEdit || !hasLogin) {
-      if (!emailTrim) {
-        toast.error(t('fam_admin_child_email_required'));
-        return;
-      }
       if (!form.password || String(form.password).length < 6) {
         toast.error(t('fam_admin_child_password_rule'));
         return;
@@ -1580,7 +1585,7 @@ function ChildModalForm({ initial, t, toast, onClose, onSaved }) {
           name: form.name,
           nickname: form.nickname,
           age: form.age === '' ? null : Number(form.age),
-          email: emailTrim || undefined,
+          email: emailTrim,
           password: !hasLogin ? form.password : undefined,
           color: form.color,
           emoji: form.emoji,
@@ -1632,18 +1637,13 @@ function ChildModalForm({ initial, t, toast, onClose, onSaved }) {
             </div>
           </div>
           <div className="form-group">
-            <label className="form-label">
-              {t('email')}
-              {(!isEdit || !hasLogin) ? ` *` : ''}
-            </label>
+            <label className="form-label">{t('email')} *</label>
             <input
               className="form-input"
               type="email"
               autoComplete="off"
               value={form.email}
               onChange={(e) => setForm((p) => ({ ...p, email: e.target.value }))}
-              readOnly={isEdit && hasLogin}
-              title={isEdit && hasLogin ? t('fam_admin_child_email_locked_hint') : undefined}
             />
             {(!isEdit || !hasLogin) && (
               <p style={{ fontSize: '0.82rem', color: 'var(--text-light)', marginTop: 6 }}>{t('fam_admin_child_login_hint')}</p>

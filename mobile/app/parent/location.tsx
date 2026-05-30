@@ -36,6 +36,7 @@ export default function ParentLocationScreen() {
   const [zonesLoading, setZonesLoading] = useState(true);
   const [isSharing, setIsSharing] = useState(true);
   const [selectedUser, setSelectedUser] = useState<string | null>(null);
+  const [isDrawingMode, setIsDrawingMode] = useState(false);
 
   const [showZoneModal, setShowZoneModal] = useState(false);
   const [zoneForm, setZoneForm] = useState({ name: '', type: 'home', radius_meters: '200', latitude: '', longitude: '' });
@@ -202,7 +203,33 @@ export default function ParentLocationScreen() {
                 userPosition={position ? { lat: position.lat, lng: position.lng } : null}
                 onSelectUser={focusMember}
                 mapPaddingBottom={100}
+                isDrawingMode={isDrawingMode}
+                onMapClick={(lat, lng) => {
+                  setZoneForm({
+                    name: '',
+                    type: 'home',
+                    radius_meters: '200',
+                    latitude: String(lat),
+                    longitude: String(lng),
+                  });
+                  setIsDrawingMode(false);
+                  setShowZoneModal(true);
+                }}
+                draftZone={showZoneModal && zoneForm.latitude && zoneForm.longitude ? {
+                  latitude: parseFloat(zoneForm.latitude),
+                  longitude: parseFloat(zoneForm.longitude),
+                  radius_meters: parseInt(zoneForm.radius_meters, 10) || 200
+                } : null}
               />
+
+              {isDrawingMode && (
+                <View style={s.drawingBanner}>
+                  <Text style={s.drawingBannerText}>🎯 Toque no mapa para definir o local seguro</Text>
+                  <TouchableOpacity style={s.cancelDrawingBtn} onPress={() => setIsDrawingMode(false)}>
+                    <Text style={s.cancelDrawingText}>Cancelar</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
 
               {(locsLoading || zonesLoading) && (
                 <View style={s.mapLoadingBadge}>
@@ -235,12 +262,31 @@ export default function ParentLocationScreen() {
       ) : (
         <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, gap: 12 }}>
           <TouchableOpacity style={s.addZoneBtn} onPress={() => {
-            setZoneForm({
-              name: '', type: 'home', radius_meters: '200',
-              latitude: myLoc ? String(myLoc.latitude) : '',
-              longitude: myLoc ? String(myLoc.longitude) : '',
-            });
-            setShowZoneModal(true);
+            Alert.alert(
+              '🛡️ Nova Zona Segura',
+              'Como deseja definir a localização da nova zona?',
+              [
+                {
+                  text: 'Marcar no Mapa 🗺️',
+                  onPress: () => {
+                    setTab('map');
+                    setIsDrawingMode(true);
+                  }
+                },
+                {
+                  text: 'Usar minha localização atual 📍',
+                  onPress: () => {
+                    setZoneForm({
+                      name: '', type: 'home', radius_meters: '200',
+                      latitude: myLoc ? String(myLoc.latitude) : '',
+                      longitude: myLoc ? String(myLoc.longitude) : '',
+                    });
+                    setShowZoneModal(true);
+                  }
+                },
+                { text: 'Cancelar', style: 'cancel' }
+              ]
+            );
           }}>
             <Text style={s.addZoneBtnText}>＋ Adicionar Zona Segura</Text>
           </TouchableOpacity>
@@ -369,4 +415,36 @@ const s = StyleSheet.create({
     borderRadius: Radii.full, ...Shadow.sm,
   },
   mapLoadingText: { fontSize: 11, color: Colors.textSecondary, fontWeight: '600' },
+  drawingBanner: {
+    position: 'absolute',
+    top: 12,
+    left: 16,
+    right: 16,
+    backgroundColor: 'rgba(15, 23, 42, 0.92)',
+    borderRadius: Radii.lg,
+    padding: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    ...Shadow.md,
+    zIndex: 999,
+  },
+  drawingBannerText: {
+    color: Colors.white,
+    fontSize: FontSize.xs,
+    fontWeight: '700',
+    flex: 1,
+  },
+  cancelDrawingBtn: {
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: Radii.full,
+  },
+  cancelDrawingText: {
+    color: Colors.white,
+    fontSize: FontSize.xs - 1,
+    fontWeight: '800',
+  },
 }) as any;

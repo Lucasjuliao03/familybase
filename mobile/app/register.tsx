@@ -10,6 +10,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { useAuth } from '../src/contexts/AuthContext';
 import { Colors, Radii, Shadow, FontSize } from '../src/theme';
 import { PrimaryButton } from '../src/components/ui/PrimaryButton';
+import { AppLogo } from '../src/components/ui/AppLogo';
 import {
   isBiometricSupported,
   getBiometricLabel,
@@ -193,9 +194,7 @@ export default function RegisterScreen() {
           <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
             <Text style={styles.backBtnText}>‹</Text>
           </TouchableOpacity>
-          <View style={styles.logoCircle}>
-            <Text style={styles.logoEmoji}>🏠</Text>
-          </View>
+          <AppLogo size={100} containerStyle={{ marginBottom: 8 }} />
           <Text style={styles.heroTitle}>Nova Família</Text>
           <Text style={styles.heroSub}>Crie a conta do responsável e ganhe 7 dias grátis 🎁</Text>
         </LinearGradient>
@@ -351,13 +350,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center', alignItems: 'center',
   },
   backBtnText: { color: '#fff', fontSize: 28, fontWeight: '800', marginTop: -4 },
-  logoCircle: {
-    width: 66, height: 66, borderRadius: 33,
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    justifyContent: 'center', alignItems: 'center', marginBottom: 12,
-    ...Shadow.md,
-  },
-  logoEmoji: { fontSize: 34 },
   heroTitle: { fontSize: FontSize.xl, fontWeight: '900', color: '#fff' },
   heroSub: {
     fontSize: FontSize.sm, color: 'rgba(255,255,255,0.9)',

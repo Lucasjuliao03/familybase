@@ -1,10 +1,10 @@
 {
   "expo": {
-    "name": "FamilyBase",
+    "name": "Tudo de Família",
     "slug": "familybase-mobile",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./icon/logo.png",
     "userInterfaceStyle": "automatic",
     "scheme": "familybase",
     "ios": {
@@ -22,12 +22,11 @@
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
-        "monochromeImage": "./assets/android-icon-monochrome.png"
+        "backgroundColor": "#1E3A8A",
+        "foregroundImage": "./icon/logo.png"
       },
       "package": "com.familybase.mobile",
+      "versionCode": 1,
       "predictiveBackGestureEnabled": false,
       "permissions": [
         "ACCESS_COARSE_LOCATION",
@@ -40,7 +39,7 @@
     "web": {
       "bundler": "metro",
       "output": "static",
-      "favicon": "./assets/favicon.png"
+      "favicon": "./icon/logo.png"
     },
     "plugins": [
       "expo-router",

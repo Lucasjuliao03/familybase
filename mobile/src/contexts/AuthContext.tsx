@@ -223,10 +223,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [actingChild, setActingChild] = useState<any | null>(null);
 
-  const isGestor = useMemo(
-    () => user?.role === 'parent' && (user?.access_profile ?? 'gestor') === 'gestor',
-    [user],
-  );
+  const isGestor = useMemo(() => {
+    if (!user || user.role !== 'parent') return false;
+    if (family?.gestor_user_id && user.id === family.gestor_user_id) return true;
+    return (user.access_profile ?? 'gestor') === 'gestor';
+  }, [user, family]);
 
   const mustChangePassword = useMemo(() => {
     if (!user) return false;

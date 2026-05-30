@@ -1,6 +1,7 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Stack, useRouter, useSegments, useRootNavigationState } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import {
   AuthProvider,
   useAuth,
@@ -9,14 +10,17 @@ import {
 } from '../src/contexts/AuthContext';
 import '../src/lib/locationBackgroundTask';
 import { FirstAccessPasswordModal } from '../src/components/auth/FirstAccessPasswordModal';
+import { IntroVideo } from '../src/components/auth/IntroVideo';
 
 function RootLayoutNav() {
+  const [introFinished, setIntroFinished] = useState(false);
   const { user, family, effectiveSubscription, loading, isChildProxy } = useAuth();
   const segments = useSegments();
   const router = useRouter();
   const navigationState = useRootNavigationState();
 
   useEffect(() => {
+    if (!introFinished) return;
     if (loading || !navigationState?.key) return;
 
     const currentSegment = segments[0] as string | undefined;
@@ -87,6 +91,10 @@ function RootLayoutNav() {
     }
   }, [user, family, effectiveSubscription, loading, isChildProxy, segments, router, navigationState?.key]);
 
+  if (!introFinished) {
+    return <IntroVideo onFinish={() => setIntroFinished(true)} />;
+  }
+
   return (
     <>
       <Stack
@@ -102,9 +110,11 @@ function RootLayoutNav() {
 
 export default function RootLayout() {
   return (
-    <AuthProvider>
-      <StatusBar style="light" />
-      <RootLayoutNav />
-    </AuthProvider>
+    <SafeAreaProvider>
+      <AuthProvider>
+        <StatusBar style="light" />
+        <RootLayoutNav />
+      </AuthProvider>
+    </SafeAreaProvider>
   );
 }

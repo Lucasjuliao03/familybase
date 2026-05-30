@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -104,14 +104,26 @@ export function PasswordResetModal({ visible, target, onClose, onSaved }: {
   if (!visible || !target) return null;
 
   const submit = async () => {
-    if (password.length < 4) return Alert.alert('Senha', 'Mínimo 4 caracteres.');
+    const minLen = target.isChildUser ? 6 : 4;
+    if (password.length < minLen) {
+      return Alert.alert('Senha', target.isChildUser ? 'Mínimo 6 caracteres para contas de filho.' : 'Mínimo 4 caracteres.');
+    }
     setSaving(true);
     try {
-      if (target.isChildUser && target.childId) await api.put(`/families/children/${target.childId}/password`, { password, must_change_password: mustChange });
-      else await api.put(`/families/members/${target.id}/password`, { password, must_change_password: mustChange });
-      setPassword(''); onSaved(); onClose();
-    } catch (err: any) { Alert.alert('Erro', err?.message || 'Falha ao alterar senha.'); }
-    finally { setSaving(false); }
+      if (target.isChildUser && target.childId) {
+        await api.put(`/families/children/${target.childId}/password`, { password, must_change_password: mustChange });
+      } else {
+        await api.put(`/families/members/${target.id}/password`, { password, must_change_password: mustChange });
+      }
+      setPassword('');
+      Alert.alert('Sucesso', `Senha de ${target.name || 'membro'} atualizada com sucesso.`);
+      onSaved();
+      onClose();
+    } catch (err: any) {
+      Alert.alert('Erro', err?.message || 'Falha ao alterar senha.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -181,20 +193,40 @@ export function GuardianModal({ visible, initial, onClose, onSaved, familyPrimar
   );
 }
 
+function buildChildForm(initial: any) {
+  return {
+    name: initial?.name || '',
+    nickname: initial?.nickname || '',
+    age: initial?.age != null && initial?.age !== '' ? String(initial.age) : '',
+    email: initial?.user_email || '',
+    password: '',
+    color: initial?.color || '#6C5CE7',
+    emoji: initial?.emoji || '',
+    notes: initial?.notes || '',
+    must_change_password: false,
+  };
+}
+
 export function ChildAdminModal({ visible, initial, onClose, onSaved }: any) {
   const isEdit = !!initial?.id;
   const hasLogin = !!(initial?.user_id || initial?.user_email);
   const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState({ name: initial?.name || '', nickname: initial?.nickname || '', age: initial?.age != null ? String(initial.age) : '', email: initial?.user_email || '', password: '', color: initial?.color || '#6C5CE7', emoji: initial?.emoji || '', notes: initial?.notes || '', must_change_password: false });
+  const [form, setForm] = useState(() => buildChildForm(initial));
+
+  useEffect(() => {
+    if (visible) setForm(buildChildForm(initial));
+  }, [visible, initial?.id]);
+
   if (!visible) return null;
 
   const submit = async () => {
     const emailTrim = form.email.trim().toLowerCase();
-    if ((!isEdit || !hasLogin) && (!emailTrim || form.password.length < 6)) return Alert.alert('Dados incompletos', 'E-mail e senha (mín. 6) são obrigatórios.');
+    if (!emailTrim) return Alert.alert('Dados incompletos', 'E-mail é obrigatório.');
+    if ((!isEdit || !hasLogin) && form.password.length < 6) return Alert.alert('Dados incompletos', 'Senha (mín. 6 caracteres) é obrigatória.');
     setSaving(true);
     try {
       const payload = { name: form.name, nickname: form.nickname, age: form.age === '' ? null : Number(form.age), color: form.color, emoji: form.emoji, notes: form.notes };
-      if (isEdit) await api.put(`/families/children/${initial.id}`, { ...payload, email: emailTrim || undefined, password: !hasLogin ? form.password : undefined, must_change_password: !hasLogin ? form.must_change_password : undefined });
+      if (isEdit) await api.put(`/families/children/${initial.id}`, { ...payload, email: emailTrim, password: !hasLogin ? form.password : undefined, must_change_password: !hasLogin ? form.must_change_password : undefined });
       else await api.post('/families/children', { ...payload, email: emailTrim, password: form.password, must_change_password: form.must_change_password });
       onSaved(); onClose();
     } catch (err: any) { Alert.alert('Erro', err?.message || 'Falha ao salvar.'); }
@@ -206,7 +238,7 @@ export function ChildAdminModal({ visible, initial, onClose, onSaved }: any) {
       <Field label="Nome *" value={form.name} onChangeText={(v) => setForm((p) => ({ ...p, name: v }))} />
       <Field label="Apelido" value={form.nickname} onChangeText={(v) => setForm((p) => ({ ...p, nickname: v }))} />
       <Field label="Idade" value={form.age} onChangeText={(v) => setForm((p) => ({ ...p, age: v }))} keyboardType="numeric" />
-      <Field label={`E-mail${(!isEdit || !hasLogin) ? ' *' : ''}`} value={form.email} onChangeText={(v) => setForm((p) => ({ ...p, email: v }))} editable={!isEdit || !hasLogin} keyboardType="email-address" />
+      <Field label="E-mail *" value={form.email} onChangeText={(v) => setForm((p) => ({ ...p, email: v }))} keyboardType="email-address" />
       {(!isEdit || !hasLogin) && (<><Field label="Senha *" value={form.password} onChangeText={(v) => setForm((p) => ({ ...p, password: v }))} secureTextEntry /><View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}><Switch value={form.must_change_password} onValueChange={(v) => setForm((p) => ({ ...p, must_change_password: v }))} /><Text style={{ fontSize: FontSize.sm }}>Exigir troca de senha</Text></View></>)}
       <View style={[f.chipRow, { marginBottom: 12 }]}>{COLOR_PRESETS.map((c) => (<TouchableOpacity key={c} onPress={() => setForm((p) => ({ ...p, color: c }))} style={[f.swatch, { backgroundColor: c, borderWidth: form.color === c ? 3 : 0, borderColor: Colors.text }]} />))}</View>
       <Field label="Emoji" value={form.emoji} onChangeText={(v) => setForm((p) => ({ ...p, emoji: v }))} />
@@ -243,6 +275,15 @@ export function RelativeAdminModal({ visible, initial, childrenList, onClose, on
       <UserDisplayColorPicker value={form.display_color} onChange={(hex) => setForm((p) => ({ ...p, display_color: hex }))} primaryColor={familyPrimary} secondaryColor={familySecondary} excludeUserId={initial?.id} adultMembers={adultMembers} />
       <Text style={f.label}>Filhos vinculados</Text>
       <View style={[f.chipRow, { marginBottom: 12 }]}>{childrenList.map((c: any) => (<TouchableOpacity key={c.id} style={[f.chip, form.linked_child_ids.includes(c.id) && f.chipActive]} onPress={() => setForm((p) => ({ ...p, linked_child_ids: p.linked_child_ids.includes(c.id) ? p.linked_child_ids.filter((x) => x !== c.id) : [...p.linked_child_ids, c.id] }))}><Text style={[f.chipText, form.linked_child_ids.includes(c.id) && f.chipTextActive]}>{c.name}</Text></TouchableOpacity>))}</View>
+      {!isEdit && (
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+          <Switch
+            value={form.must_change_password}
+            onValueChange={(v) => setForm((p) => ({ ...p, must_change_password: v }))}
+          />
+          <Text style={{ fontSize: FontSize.sm }}>Exigir troca de senha no próximo login</Text>
+        </View>
+      )}
       <Footer saving={saving} onClose={onClose} onSave={submit} />
     </ModalShell>
   );

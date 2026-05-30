@@ -268,6 +268,7 @@ const TASK_INSERT_COLUMNS = [
   'visible_on_calendar',
   'generate_notification',
   'template_catalog_key',
+  'icon',
 ];
 
 /** Apenas campos físicos da tabela `tasks` (UI/API podem incluir bonus_amount, ícones ou JSON aninhados). */
@@ -452,6 +453,103 @@ async function hydrateRedemptionsListRows(supabase, familyId, rows) {
 
 /** Senha mínima para contas de criança criadas pelo gestor (login próprio). */
 const CHILD_LOGIN_PASSWORD_MIN = 6;
+
+/** Altera a senha do utilizador autenticado (Auth API + flag must_change_password). */
+async function changeOwnPassword(newPassword, userId) {
+  const pwd = String(newPassword || '');
+  if (pwd.length < 4) throw new Error('Senha inválida');
+  const { error } = await supabase.auth.updateUser({ password: pwd });
+  if (error) throw new Error(error.message);
+  const { error: rpcErr } = await supabase.rpc('change_own_password', { p_new_password: pwd });
+  if (rpcErr && userId) {
+    await supabase.from('users').update({ must_change_password: false }).eq('id', userId);
+  }
+}
+
+/** Gestor altera e-mail de membro/filho (Edge Function + fallback RPC). */
+async function updateMemberEmail(targetUserId, newEmail, childId = null) {
+  const email = String(newEmail || '').trim().toLowerCase();
+  if (!email) throw new Error('E-mail inválido.');
+
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) throw new Error('Not authenticated');
+
+  if (BASE_URL && ANON_KEY) {
+    const res = await fetch(`${BASE_URL}/functions/v1/update-family-member-email`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+        apikey: ANON_KEY,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        target_user_id: targetUserId,
+        child_id: childId || undefined,
+        new_email: email,
+      }),
+    });
+    const payload = await res.json().catch(() => ({}));
+    if (res.ok && payload?.ok) return;
+    if (res.status !== 404 && res.status !== 502) {
+      const errMsg = payload?.error || '';
+      if (/email_already_in_use/i.test(errMsg)) throw new Error('Este e-mail já está em uso.');
+      throw new Error(errMsg || `Falha ao alterar e-mail (${res.status})`);
+    }
+    // 404/502: função ainda não publicada — fallback RPC abaixo
+  }
+
+  const { data, error: rpcErr } = await supabase.rpc('change_member_email', {
+    p_target_user_id: targetUserId,
+    p_new_email: email,
+  });
+  if (rpcErr) {
+    const msg = rpcErr.message || '';
+    if (/email_already_in_use/i.test(msg)) throw new Error('Este e-mail já está em uso.');
+    if (/invalid_email/i.test(msg)) throw new Error('E-mail inválido.');
+    throw new Error(rpcErr.message);
+  }
+  if (data && data.ok === false) throw new Error('Não foi possível alterar o e-mail.');
+}
+
+/** Gestor altera senha de outro membro da família (Edge Function + fallback RPC). */
+async function changeMemberPassword(targetUserId, newPassword, mustChangePassword, childId = null) {
+  const pwd = String(newPassword || '').trim();
+  if (pwd.length < 4) throw new Error('Senha inválida');
+
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) throw new Error('Not authenticated');
+
+  if (BASE_URL && ANON_KEY) {
+    const res = await fetch(`${BASE_URL}/functions/v1/reset-family-member-password`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+        apikey: ANON_KEY,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        target_user_id: targetUserId,
+        child_id: childId || undefined,
+        new_password: pwd,
+        must_change_password: !!mustChangePassword,
+      }),
+    });
+    const payload = await res.json().catch(() => ({}));
+    if (res.ok && payload?.ok) return;
+    if (res.status !== 404 && res.status !== 502) {
+      throw new Error(payload?.error || `Falha ao alterar senha (${res.status})`);
+    }
+    // 404/502: função ainda não publicada — fallback RPC abaixo
+  }
+
+  const { data, error: rpcErr } = await supabase.rpc('change_member_password', {
+    p_target_user_id: targetUserId,
+    p_new_password: pwd,
+    p_must_change_password: !!mustChangePassword,
+  });
+  if (rpcErr) throw new Error(rpcErr.message);
+  if (data && data.ok === false) throw new Error('Não foi possível alterar a senha.');
+}
 
 /**
  * Cria utilizador Auth + associa à família como role child (RPC).
@@ -1976,6 +2074,7 @@ const api = {
           affects_allowance: !!t.affects_allowance || !!r?.affects_allowance,
           bonus_amount: r?.bonus_amount ?? null,
           discount_amount: r?.discount_amount ?? null,
+          icon: t.icon || null,
         };
       };
       const seenIds = new Set();
@@ -3839,11 +3938,7 @@ const api = {
     }
 
     if (path.startsWith('/auth/password')) {
-      const newPassword = body?.newPassword;
-      if (!newPassword || String(newPassword).length < 4) throw new Error('Senha inválida');
-      const { error } = await supabase.auth.updateUser({ password: newPassword });
-      if (error) throw new Error(error.message);
-      if (userId) await supabase.from('users').update({ must_change_password: false }).eq('id', userId);
+      await changeOwnPassword(body?.newPassword, userId);
       return { data: { ok: true } };
     }
 
@@ -3970,19 +4065,18 @@ const api = {
       const must = !!body?.must_change_password;
       if (pwd && String(pwd).length >= 4) {
         if (targetUid === userId) {
-          const { error } = await supabase.auth.updateUser({ password: String(pwd) });
-          if (error) throw new Error(error.message);
+          await changeOwnPassword(pwd, userId);
         } else {
-          // Usa RPC com SECURITY DEFINER para alterar senha de outro utilizador
-          const { error: rpcErr } = await supabase.rpc('change_member_password', {
-            p_target_user_id: targetUid,
-            p_new_password: String(pwd),
-          });
-          if (rpcErr) throw new Error(rpcErr.message);
+          await changeMemberPassword(targetUid, pwd, must, childId);
         }
+      } else if (must) {
+        const { error: uErr } = await supabase
+          .from('users')
+          .update({ must_change_password: must })
+          .eq('id', targetUid)
+          .eq('family_id', familyId);
+        if (uErr) throw new Error(uErr.message);
       }
-      const { error: uErr } = await supabase.from('users').update({ must_change_password: must }).eq('id', targetUid).eq('family_id', familyId);
-      if (uErr) throw new Error(uErr.message);
       return { data: { ok: true } };
     }
 
@@ -3995,18 +4089,18 @@ const api = {
       if (!tgt) throw new Error('Membro não encontrado.');
       if (pwd && String(pwd).length >= 4) {
         if (targetUid === userId) {
-          const { error } = await supabase.auth.updateUser({ password: String(pwd) });
-          if (error) throw new Error(error.message);
+          await changeOwnPassword(pwd, userId);
         } else {
-          const { error: rpcErr } = await supabase.rpc('change_member_password', {
-            p_target_user_id: targetUid,
-            p_new_password: String(pwd),
-          });
-          if (rpcErr) throw new Error(rpcErr.message);
+          await changeMemberPassword(targetUid, pwd, must);
         }
+      } else if (must) {
+        const { error: uErr } = await supabase
+          .from('users')
+          .update({ must_change_password: must })
+          .eq('id', targetUid)
+          .eq('family_id', familyId);
+        if (uErr) throw new Error(uErr.message);
       }
-      const { error: uErr } = await supabase.from('users').update({ must_change_password: must }).eq('id', targetUid).eq('family_id', familyId);
-      if (uErr) throw new Error(uErr.message);
       return { data: { ok: true } };
     }
 
@@ -4032,6 +4126,15 @@ const api = {
           familyId,
           mustChangePassword: !!body.must_change_password,
         });
+      } else if (linkedUserId && emailRaw) {
+        const { data: uRow } = await supabase.from('users').select('email').eq('id', linkedUserId).maybeSingle();
+        const currentEmail = String(uRow?.email || '').trim().toLowerCase();
+        if (emailRaw !== currentEmail) {
+          await updateMemberEmail(linkedUserId, emailRaw, childId);
+        }
+        if (body.name) {
+          await supabase.from('users').update({ name: body.name }).eq('id', linkedUserId).eq('family_id', familyId);
+        }
       }
 
       const patch = omitUndefined({
@@ -4747,6 +4850,24 @@ const api = {
 
     const table = parts[0];
     const id = parts[1];
+
+    if (parts[0] === 'families' && parts[1] === 'members' && parts[2]) {
+      const { error } = await supabase.rpc('delete_family_member', { p_target_user_id: parts[2] });
+      if (error) throw new Error(error.message);
+      return { data: { success: true } };
+    }
+
+    if (parts[0] === 'families' && parts[1] === 'relatives' && parts[2]) {
+      const { error } = await supabase.rpc('delete_family_member', { p_target_user_id: parts[2] });
+      if (error) throw new Error(error.message);
+      return { data: { success: true } };
+    }
+
+    if (parts[0] === 'families' && parts[1] === 'children' && parts[2]) {
+      const { error } = await supabase.rpc('delete_family_child', { p_child_id: parts[2] });
+      if (error) throw new Error(error.message);
+      return { data: { success: true } };
+    }
 
     if (path === '/families/logo') {
       await supabase.from('families').update({ logo_url: null }).eq('id', familyId);

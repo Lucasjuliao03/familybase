@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -6,16 +6,47 @@ import {
   ScrollView,
   StatusBar,
   TouchableOpacity,
+  Modal,
+  TextInput,
+  ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { Colors, Shadow, Radii, FontSize } from '../../src/theme';
 import { AvatarPicker } from '../../src/components/profile/AvatarPicker';
 import { useAuth, userCanManageFamilyBilling } from '../../src/contexts/AuthContext';
 import { useRouter } from 'expo-router';
+import api from '../../src/services/api';
 
 export default function ParentProfileScreen() {
   const { user, family, isGestor, effectiveSubscription, logout, refreshProfile } = useAuth();
   const canBilling = userCanManageFamilyBilling(user, effectiveSubscription);
   const router = useRouter();
+
+  const [pwModalVisible, setPwModalVisible] = useState(false);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [pwLoading, setPwLoading] = useState(false);
+
+  const handleUpdatePassword = async () => {
+    if (newPassword.length < 4) {
+      return Alert.alert('Erro', 'A senha deve ter pelo menos 4 caracteres.');
+    }
+    if (newPassword !== confirmPassword) {
+      return Alert.alert('Erro', 'As senhas não coincidem.');
+    }
+    setPwLoading(true);
+    try {
+      await api.put('/auth/password', { newPassword });
+      Alert.alert('Sucesso', 'Senha atualizada com sucesso!');
+      setPwModalVisible(false);
+      setNewPassword('');
+      setConfirmPassword('');
+    } catch (err: any) {
+      Alert.alert('Erro', err?.message || 'Falha ao atualizar senha.');
+    } finally {
+      setPwLoading(false);
+    }
+  };
 
   const accessLabel = user?.access_profile === 'gestor' ? 'Gestor' : (user?.access_profile || 'Responsável');
 
@@ -78,6 +109,20 @@ export default function ParentProfileScreen() {
           </>
         )}
 
+        <Text style={styles.sectionTitle}>Ajuda</Text>
+        <TouchableOpacity
+          style={styles.adminBtn}
+          onPress={() => router.push('/parent/onboarding?mode=review')}
+          activeOpacity={0.85}
+        >
+          <Text style={styles.adminBtnIcon}>📖</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.adminBtnTitle}>Guia de início</Text>
+            <Text style={styles.adminBtnSub}>Rever o tutorial e cadastrar filhos, responsáveis e tarefas</Text>
+          </View>
+          <Text style={styles.adminChevron}>›</Text>
+        </TouchableOpacity>
+
         <Text style={styles.sectionTitle}>Minha Família</Text>
         <View style={styles.infoCard}>
           <View style={styles.infoRow}>
@@ -92,10 +137,65 @@ export default function ParentProfileScreen() {
           </View>
         </View>
 
+        <Text style={styles.sectionTitle}>Segurança</Text>
+        <TouchableOpacity
+          style={styles.adminBtn}
+          onPress={() => setPwModalVisible(true)}
+          activeOpacity={0.85}
+        >
+          <Text style={styles.adminBtnIcon}>🔒</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.adminBtnTitle}>Alterar minha senha</Text>
+            <Text style={styles.adminBtnSub}>Mantenha sua conta segura redefinindo sua senha</Text>
+          </View>
+          <Text style={styles.adminChevron}>›</Text>
+        </TouchableOpacity>
+
         <TouchableOpacity style={styles.logoutBtn} onPress={logout} activeOpacity={0.8}>
           <Text style={styles.logoutText}>Sair da conta</Text>
         </TouchableOpacity>
       </ScrollView>
+
+      <Modal visible={pwModalVisible} transparent animationType="fade" onRequestClose={() => setPwModalVisible(false)}>
+        <View style={modalStyles.backdrop}>
+          <View style={modalStyles.sheet}>
+            <View style={modalStyles.header}>
+              <Text style={modalStyles.title}>Alterar Senha</Text>
+              <TouchableOpacity onPress={() => setPwModalVisible(false)}>
+                <Text style={modalStyles.close}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            <ScrollView contentContainerStyle={modalStyles.body}>
+              <Text style={modalStyles.label}>Nova Senha</Text>
+              <TextInput
+                style={modalStyles.input}
+                secureTextEntry
+                value={newPassword}
+                onChangeText={setNewPassword}
+                placeholder="Digite a nova senha"
+                placeholderTextColor={Colors.textMuted}
+              />
+              <Text style={modalStyles.label}>Confirmar Nova Senha</Text>
+              <TextInput
+                style={modalStyles.input}
+                secureTextEntry
+                value={confirmPassword}
+                onChangeText={setConfirmPassword}
+                placeholder="Confirme a nova senha"
+                placeholderTextColor={Colors.textMuted}
+              />
+              <View style={modalStyles.row}>
+                <TouchableOpacity style={[modalStyles.btn, modalStyles.btnGhost]} onPress={() => setPwModalVisible(false)}>
+                  <Text style={modalStyles.btnGhostText}>Cancelar</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[modalStyles.btn, modalStyles.btnPrimary]} onPress={handleUpdatePassword} disabled={pwLoading}>
+                  {pwLoading ? <ActivityIndicator color="#fff" /> : <Text style={modalStyles.btnText}>Salvar</Text>}
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -148,4 +248,21 @@ const styles = StyleSheet.create({
     alignItems: 'center', borderWidth: 1, borderColor: Colors.danger, ...Shadow.sm,
   },
   logoutText: { color: Colors.danger, fontSize: FontSize.base, fontWeight: '800' },
+});
+
+const modalStyles = StyleSheet.create({
+  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' },
+  sheet: { backgroundColor: Colors.surface, borderTopLeftRadius: Radii.lg, borderTopRightRadius: Radii.lg, maxHeight: '90%' },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 16, borderBottomWidth: 1, borderBottomColor: Colors.border },
+  title: { fontSize: FontSize.md, fontWeight: '800', color: Colors.text, flex: 1 },
+  close: { fontSize: 20, color: Colors.textSecondary, padding: 4 },
+  body: { padding: 16, paddingBottom: 28 },
+  label: { fontSize: FontSize.sm, fontWeight: '700', color: Colors.text, marginBottom: 6 },
+  input: { borderWidth: 1, borderColor: Colors.border, borderRadius: Radii.sm, paddingHorizontal: 12, paddingVertical: 10, fontSize: FontSize.sm, backgroundColor: Colors.bg, marginBottom: 12 },
+  row: { flexDirection: 'row', gap: 10, marginTop: 8 },
+  btn: { flex: 1, paddingVertical: 12, borderRadius: Radii.md, alignItems: 'center' },
+  btnGhost: { backgroundColor: Colors.bg, borderWidth: 1, borderColor: Colors.border },
+  btnPrimary: { backgroundColor: Colors.primary },
+  btnText: { fontWeight: '800', color: Colors.white },
+  btnGhostText: { fontWeight: '700', color: Colors.textSecondary },
 });

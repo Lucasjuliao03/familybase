@@ -15,6 +15,7 @@ import { useRouter, usePathname } from 'expo-router';
 import { useAuth } from '../src/contexts/AuthContext';
 import { supabase } from '../src/lib/supabase';
 import { Colors, Radii, FontSize, Shadow } from '../src/theme';
+import { AppLogo } from '../src/components/ui/AppLogo';
 
 const PLANS = [
   {
@@ -198,8 +199,8 @@ export default function SubscribeScreen() {
     <View style={s.screen}>
       <StatusBar barStyle="light-content" />
       <ScrollView contentContainerStyle={s.content} showsVerticalScrollIndicator={false}>
-        <Text style={s.icon}>{expired ? '⛔' : '💳'}</Text>
-        <Text style={s.title}>{isGestorContext ? 'Assinatura e Pagamento' : expired ? 'Renove sua assinatura' : 'Planos Tudo de Casa'}</Text>
+        <AppLogo size={96} containerStyle={{ alignSelf: 'center', marginBottom: 12 }} />
+        <Text style={s.title}>{isGestorContext ? 'Assinatura e Pagamento' : expired ? 'Renove sua assinatura' : 'Planos Tudo de Família'}</Text>
         
         <Text style={s.desc}>
           {isGestorContext 

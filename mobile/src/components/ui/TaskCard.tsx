@@ -14,6 +14,7 @@ interface Props {
   avatarBg?: string;
   done?: boolean;
   later?: boolean;
+  dueTime?: string;
   onToggle?: () => void;
   onPress?: () => void;
 }
@@ -29,6 +30,7 @@ export function TaskCard({
   avatarBg = '#DBEAFE',
   done = false,
   later = false,
+  dueTime,
   onToggle,
   onPress,
 }: Props) {
@@ -48,7 +50,9 @@ export function TaskCard({
         <Text style={[styles.title, done && styles.titleDone]} numberOfLines={1}>
           {title}
         </Text>
-        <Text style={styles.category}>{categoryIcon} {category}</Text>
+        <Text style={styles.category}>
+          {categoryIcon} {category} {dueTime ? ` · 🕐 ${dueTime.slice(0, 5)}` : ''}
+        </Text>
       </View>
 
       {/* Points */}

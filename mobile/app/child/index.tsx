@@ -70,7 +70,7 @@ function wasTakenToday(medId: string, logs: any[], todayStr: string): boolean {
 }
 
 export default function ChildHomeScreen() {
-  const { user, family, childProfile, logout, refreshProfile, modules } = useAuth();
+  const { user, family, childProfile, logout, refreshProfile, modules, isChildProxy } = useAuth();
   const router = useRouter();
 
   const [loading, setLoading] = useState<boolean>(true);
@@ -277,7 +277,7 @@ export default function ChildHomeScreen() {
         colors={[Colors.gradStart, Colors.gradMid, Colors.gradEnd]}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
-        style={styles.header}
+        style={[styles.header, isChildProxy && styles.headerWithProxy]}
       >
         <TouchableOpacity
           style={styles.headerAvatar}
@@ -536,6 +536,12 @@ const styles = StyleSheet.create({
     borderBottomRightRadius: 24,
     overflow: 'hidden',
     position: 'relative',
+  },
+  headerWithProxy: {
+    paddingTop: 10,
+    marginTop: -10,
+    borderTopLeftRadius: 0,
+    borderTopRightRadius: 0,
   },
   headerAvatar: {
     position: 'absolute',

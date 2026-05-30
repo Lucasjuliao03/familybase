@@ -60,6 +60,8 @@ interface TaskTemplate {
   affects_allowance: boolean;
   bonus_amount?: number;
   discount_amount?: number;
+  due_time?: string;
+  icon?: string;
 }
 
 interface TaskOccurrence {
@@ -77,6 +79,8 @@ interface TaskOccurrence {
   discount_amount?: number;
   rejection_reason?: string;
   is_recurring?: boolean;
+  due_time?: string;
+  icon?: string;
 }
 
 export default function TasksScreen() {
@@ -108,6 +112,8 @@ export default function TasksScreen() {
   const [formAffectsAllowance, setFormAffectsAllowance] = useState(false);
   const [formBonusAmount, setFormBonusAmount] = useState('0');
   const [formDiscountAmount, setFormDiscountAmount] = useState('0');
+  const [formDueTime, setFormDueTime] = useState('20:00');
+  const [formIcon, setFormIcon] = useState('🧹');
 
   const todayStr = useMemo(() => {
     const d = new Date();
@@ -198,6 +204,8 @@ export default function TasksScreen() {
     setFormAffectsAllowance(false);
     setFormBonusAmount('0');
     setFormDiscountAmount('0');
+    setFormDueTime('20:00');
+    setFormIcon('🧹');
     setModalVisible(true);
   };
 
@@ -220,6 +228,8 @@ export default function TasksScreen() {
     setFormAffectsAllowance(!!task.affects_allowance);
     setFormBonusAmount(String(task.bonus_amount || '0'));
     setFormDiscountAmount(String(task.discount_amount || '0'));
+    setFormDueTime(task.due_time ? task.due_time.slice(0, 5) : '20:00');
+    setFormIcon(task.icon || '🧹');
     setModalVisible(true);
   };
 
@@ -234,6 +244,22 @@ export default function TasksScreen() {
   const handleSubmitTask = async () => {
     if (!formTitle.trim()) {
       Alert.alert('Erro', 'O título da tarefa é obrigatório.');
+      return;
+    }
+
+    if (!formIcon) {
+      Alert.alert('Erro', 'Selecione um ícone para a tarefa.');
+      return;
+    }
+
+    if (!formDueTime.trim()) {
+      Alert.alert('Erro', 'O horário limite é obrigatório.');
+      return;
+    }
+
+    const timeRegex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
+    if (!timeRegex.test(formDueTime.trim())) {
+      Alert.alert('Erro', 'O horário limite deve estar no formato de 24 horas HH:MM (ex: 18:30 ou 20:00).');
       return;
     }
 
@@ -257,6 +283,8 @@ export default function TasksScreen() {
       requires_approval: formRequiresApproval,
       affects_allowance: formAffectsAllowance,
       start_date: todayStr,
+      due_time: formDueTime.trim(),
+      icon: formIcon,
       allowance_rule: formAffectsAllowance
         ? {
             affects_allowance: true,
@@ -435,7 +463,8 @@ export default function TasksScreen() {
                     avatarName={child?.name}
                     avatarBg={child?.color ? `${child.color}20` : '#DBEAFE'}
                     done={occ.status === 'approved' || occ.status === 'completed'}
-                    categoryIcon={occ.category === 'Estudos' ? '📚' : occ.category === 'Saúde' ? '❤️' : occ.category === 'Exercícios' ? '🏃' : '📋'}
+                    categoryIcon={occ.icon || (occ.category === 'Estudos' ? '📚' : occ.category === 'Saúde' ? '❤️' : occ.category === 'Exercícios' ? '🏃' : '📋')}
+                    dueTime={occ.due_time}
                     onToggle={() => {
                       if (occ.status === 'waiting_approval') {
                         handleApproveOccurrence(occ.id, true);
@@ -561,9 +590,9 @@ export default function TasksScreen() {
                   <Card key={tpl.id} style={styles.templateCard}>
                     <View style={styles.templateHeader}>
                       <View style={{ flex: 1 }}>
-                        <Text style={styles.templateTitle}>{tpl.title}</Text>
+                        <Text style={styles.templateTitle}>{tpl.icon || '📋'} {tpl.title}</Text>
                         <Text style={styles.templateMeta}>
-                          {tpl.category} · {tpl.frequency === 'daily' ? 'Diária' : tpl.frequency === 'weekly' ? 'Semanal' : 'Única'}
+                          {tpl.category} · {tpl.frequency === 'daily' ? 'Diária' : tpl.frequency === 'weekly' ? 'Semanal' : 'Única'}{tpl.due_time ? ` · Limite: ${tpl.due_time.slice(0, 5)}` : ''}
                         </Text>
                         {child && (
                           <Text style={[styles.templateMeta, { color: child.color || Colors.primary, fontWeight: '700' }]}>
@@ -758,6 +787,30 @@ export default function TasksScreen() {
                   </Text>
                 </View>
               )}
+
+              {/* Horário Limite */}
+              <Text style={styles.modalLabel}>Horário Limite (HH:MM)</Text>
+              <TextInput
+                style={styles.modalInput}
+                placeholder="Ex: 20:00"
+                placeholderTextColor="#94A3B8"
+                value={formDueTime}
+                onChangeText={setFormDueTime}
+              />
+
+              {/* Seleção de Ícone */}
+              <Text style={styles.modalLabel}>Ícone da Tarefa</Text>
+              <View style={styles.iconsContainer}>
+                {['🧹', '📚', '🏃', '❤️', '🧼', '🐕', '🗑️', '🍽️', '🛏️', '🦷', '🌱', '🎒', '🍎', '🧸', '🚿', '💻'].map(emoji => (
+                  <TouchableOpacity
+                    key={emoji}
+                    style={[styles.iconButton, formIcon === emoji && styles.iconButtonActive]}
+                    onPress={() => setFormIcon(emoji)}
+                  >
+                    <Text style={styles.iconButtonText}>{emoji}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
 
               <View style={{ height: 40 }} />
             </ScrollView>
@@ -1139,5 +1192,29 @@ const styles = StyleSheet.create({
     color: Colors.white,
     fontSize: FontSize.base,
     fontWeight: '800',
+  },
+  iconsContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 6,
+    marginBottom: 4,
+  },
+  iconButton: {
+    width: 44,
+    height: 44,
+    borderRadius: Radii.sm,
+    backgroundColor: Colors.bg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  iconButtonActive: {
+    backgroundColor: Colors.primaryLight,
+    borderColor: Colors.primary,
+  },
+  iconButtonText: {
+    fontSize: FontSize.lg,
   },
 });

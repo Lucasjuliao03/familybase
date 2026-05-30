@@ -421,7 +421,7 @@ export default function ChildTasksScreen() {
             const isOpen = ['pending', 'in_progress', 'delayed'].includes(occ.status) || occ.isDelayed;
             // Não concluída = status salvo OR rejected automático pelo sistema
             const isNotCompleted = occ.status === 'not_completed' || (occ.status === 'rejected' && isAutoRejected(occ));
-            const icon = taskIcon(occ.title, occ.type);
+            const icon = occ.icon || taskIcon(occ.title, occ.type);
             const isDelayed = occ.status === 'delayed' || occ.isDelayed;
             const minsLeft = minutesToDeadline(occ, now);
             const discount = Number(occ.discount_amount) || 0;

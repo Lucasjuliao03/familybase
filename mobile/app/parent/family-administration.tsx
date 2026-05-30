@@ -42,6 +42,7 @@ import {
 import { publicAssetUrl } from '../../src/lib/api';
 import { supabase } from '../../src/lib/supabase';
 import api from '../../src/services/api';
+import { AppLogo } from '../../src/components/ui/AppLogo';
 
 export default function FamilyAdministrationScreen() {
   const router = useRouter();
@@ -209,6 +210,75 @@ export default function FamilyAdministrationScreen() {
     }
   };
 
+  const deleteMember = (id: string, name: string) => {
+    Alert.alert(
+      'Excluir Responsável',
+      `Tem certeza que deseja excluir ${name}? Esta ação não pode ser desfeita e removerá o acesso dele ao aplicativo.`,
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Excluir',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await api.delete(`/families/members/${id}`);
+              await loadAll(true);
+              Alert.alert('Excluído', 'Responsável excluído com sucesso.');
+            } catch (err: any) {
+              Alert.alert('Erro', err?.message || 'Falha ao excluir responsável.');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const deleteRelative = (id: string, name: string) => {
+    Alert.alert(
+      'Excluir Parente',
+      `Tem certeza que deseja excluir ${name}? Esta ação não pode ser desfeita.`,
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Excluir',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await api.delete(`/families/relatives/${id}`);
+              await loadAll(true);
+              Alert.alert('Excluído', 'Parente excluído com sucesso.');
+            } catch (err: any) {
+              Alert.alert('Erro', err?.message || 'Falha ao excluir parente.');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const deleteChild = (id: string, name: string) => {
+    Alert.alert(
+      'Excluir Filho(a)',
+      `ATENÇÃO: Deseja realmente excluir ${name}? Esta ação é permanente e apagará todas as tarefas, mesadas e histórico associados.`,
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Excluir',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await api.delete(`/families/children/${id}`);
+              await loadAll(true);
+              Alert.alert('Excluído', 'Filho(a) excluído(a) com sucesso.');
+            } catch (err: any) {
+              Alert.alert('Erro', err?.message || 'Falha ao excluir filho(a).');
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const canEditMemberAvatar = (memberId: string) => {
     if (!user?.id) return false;
     if (String(user.id) === String(memberId)) return true;
@@ -261,7 +331,13 @@ export default function FamilyAdministrationScreen() {
               <FormField label="Emoji" value={familyForm.emoji || ''} onChangeText={(v) => setFamilyForm((p: any) => ({ ...p, emoji: v }))} />
               <Text style={s.fieldLabel}>Logo</Text>
               <View style={s.logoRow}>
-                <View style={s.logoBox}>{logoSrc ? <Image source={{ uri: logoSrc }} style={s.logoImg} /> : <Text style={{ fontSize: 28 }}>{familyForm.emoji || '🏠'}</Text>}</View>
+                <View style={s.logoBox}>
+                  {logoSrc ? (
+                    <Image source={{ uri: logoSrc }} style={s.logoImg} />
+                  ) : (
+                    <AppLogo size="sm" />
+                  )}
+                </View>
                 <TouchableOpacity style={s.secondaryBtn} onPress={uploadLogo} disabled={logoUploading}><Text style={s.secondaryBtnText}>{logoUploading ? '…' : 'Enviar logo'}</Text></TouchableOpacity>
                 {familyForm.logo_url ? <TouchableOpacity onPress={removeLogo}><Text style={s.linkDanger}>Remover</Text></TouchableOpacity> : null}
               </View>
@@ -278,11 +354,29 @@ export default function FamilyAdministrationScreen() {
               </View>
               <SectionTitle title="Responsáveis" />
               {parentsList.map((m) => (
-                <MemberRow key={m.id} member={m} canEditAvatar={canEditMemberAvatar(m.id)} onRefresh={() => loadAll(true)} onEdit={() => setUserModal({ ...m, kind: 'parent' })} onPassword={() => setPwModal({ id: m.id, name: m.name, isChildUser: false })} subtitle={m.access_profile === 'auxiliar' ? 'Auxiliar' : 'Gestor'} />
+                <MemberRow
+                  key={m.id}
+                  member={m}
+                  canEditAvatar={canEditMemberAvatar(m.id)}
+                  onRefresh={() => loadAll(true)}
+                  onEdit={() => setUserModal({ ...m, kind: 'parent' })}
+                  onPassword={() => setPwModal({ id: m.id, name: m.name, isChildUser: false })}
+                  onDelete={m.id !== familyForm.gestor_user_id ? () => deleteMember(m.id, m.name) : undefined}
+                  subtitle={m.access_profile === 'auxiliar' ? 'Auxiliar' : 'Gestor'}
+                />
               ))}
               <SectionTitle title="Parentes" />
               {relatives.map((r) => (
-                <MemberRow key={r.id} member={r} canEditAvatar={canEditMemberAvatar(r.id)} onRefresh={() => loadAll(true)} onEdit={() => setRelModal({ ...r, linked_child_ids: r.linked_child_ids || [] })} onPassword={() => setPwModal({ id: r.id, name: r.name, isChildUser: false })} subtitle={r.relationship || 'Parente'} />
+                <MemberRow
+                  key={r.id}
+                  member={r}
+                  canEditAvatar={canEditMemberAvatar(r.id)}
+                  onRefresh={() => loadAll(true)}
+                  onEdit={() => setRelModal({ ...r, linked_child_ids: r.linked_child_ids || [] })}
+                  onPassword={() => setPwModal({ id: r.id, name: r.name, isChildUser: false })}
+                  onDelete={r.id !== familyForm.gestor_user_id ? () => deleteRelative(r.id, r.name) : undefined}
+                  subtitle={r.relationship || 'Parente'}
+                />
               ))}
               <SectionTitle title="Filhos" />
               {children.map((c) => (
@@ -292,8 +386,13 @@ export default function FamilyAdministrationScreen() {
                     <Text style={s.memberName}>{c.emoji ? `${c.emoji} ` : ''}{c.name}</Text>
                     <Text style={s.memberMeta}>{c.user_email || 'Sem login'} · Nível {c.level ?? 1}</Text>
                   </View>
-                  <TouchableOpacity onPress={() => setChildModal(c)}><Text style={s.link}>Editar</Text></TouchableOpacity>
-                  <TouchableOpacity disabled={!c.user_id} onPress={() => setPwModal({ id: c.user_id, childId: c.id, name: c.name, isChildUser: true })}><Text style={[s.link, !c.user_id && { opacity: 0.4 }]}>Senha</Text></TouchableOpacity>
+                  <View style={{ flexDirection: 'row', gap: 10, alignItems: 'center' }}>
+                    <TouchableOpacity onPress={() => setChildModal(c)}><Text style={s.link}>Editar</Text></TouchableOpacity>
+                    <TouchableOpacity disabled={!c.user_id} onPress={() => setPwModal({ id: c.user_id, childId: c.id, name: c.name, isChildUser: true })}><Text style={[s.link, !c.user_id && { opacity: 0.4 }]}>Senha</Text></TouchableOpacity>
+                    {c.user_id !== familyForm.gestor_user_id && (
+                      <TouchableOpacity onPress={() => deleteChild(c.id, c.name)}><Text style={s.linkDanger}>Excluir</Text></TouchableOpacity>
+                    )}
+                  </View>
                 </View>
               ))}
             </>
@@ -397,7 +496,7 @@ function SectionTitle({ title }: { title: string }) {
   return <Text style={s.sectionTitle}>{title}</Text>;
 }
 
-function MemberRow({ member, canEditAvatar, onRefresh, onEdit, onPassword, subtitle }: any) {
+function MemberRow({ member, canEditAvatar, onRefresh, onEdit, onPassword, onDelete, subtitle }: any) {
   return (
     <View style={s.memberCard}>
       {canEditAvatar ? (
@@ -409,8 +508,11 @@ function MemberRow({ member, canEditAvatar, onRefresh, onEdit, onPassword, subti
         <Text style={s.memberName}>{member.name}</Text>
         <Text style={s.memberMeta}>{member.email || '—'} · {subtitle}</Text>
       </View>
-      <TouchableOpacity onPress={onEdit}><Text style={s.link}>Editar</Text></TouchableOpacity>
-      <TouchableOpacity onPress={onPassword}><Text style={s.link}>Senha</Text></TouchableOpacity>
+      <View style={{ flexDirection: 'row', gap: 10, alignItems: 'center' }}>
+        <TouchableOpacity onPress={onEdit}><Text style={s.link}>Editar</Text></TouchableOpacity>
+        <TouchableOpacity onPress={onPassword}><Text style={s.link}>Senha</Text></TouchableOpacity>
+        {onDelete && <TouchableOpacity onPress={onDelete}><Text style={s.linkDanger}>Excluir</Text></TouchableOpacity>}
+      </View>
     </View>
   );
 }

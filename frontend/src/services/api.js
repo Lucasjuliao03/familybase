@@ -434,6 +434,51 @@ async function hydrateRedemptionsListRows(supabase, familyId, rows) {
 /** Senha mínima para contas de criança criadas pelo gestor (login próprio). */
 const CHILD_LOGIN_PASSWORD_MIN = 6;
 
+/** Gestor altera e-mail de membro/filho (Edge Function + fallback RPC). */
+async function updateMemberEmail(targetUserId, newEmail, childId = null) {
+  const email = String(newEmail || '').trim().toLowerCase();
+  if (!email) throw new Error('E-mail inválido.');
+
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) throw new Error('Not authenticated');
+
+  if (BASE_URL && ANON_KEY) {
+    const res = await fetch(`${BASE_URL}/functions/v1/update-family-member-email`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+        apikey: ANON_KEY,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        target_user_id: targetUserId,
+        child_id: childId || undefined,
+        new_email: email,
+      }),
+    });
+    const payload = await res.json().catch(() => ({}));
+    if (res.ok && payload?.ok) return;
+    if (res.status !== 404 && res.status !== 502) {
+      const errMsg = payload?.error || '';
+      if (/email_already_in_use/i.test(errMsg)) throw new Error('Este e-mail já está em uso.');
+      throw new Error(errMsg || `Falha ao alterar e-mail (${res.status})`);
+    }
+    // 404/502: função ainda não publicada — fallback RPC abaixo
+  }
+
+  const { data, error: rpcErr } = await supabase.rpc('change_member_email', {
+    p_target_user_id: targetUserId,
+    p_new_email: email,
+  });
+  if (rpcErr) {
+    const msg = rpcErr.message || '';
+    if (/email_already_in_use/i.test(msg)) throw new Error('Este e-mail já está em uso.');
+    if (/invalid_email/i.test(msg)) throw new Error('E-mail inválido.');
+    throw new Error(rpcErr.message);
+  }
+  if (data && data.ok === false) throw new Error('Não foi possível alterar o e-mail.');
+}
+
 /**
  * Cria utilizador Auth + associa à família como role child (RPC).
  * Retorna o novo auth user id.
@@ -3860,6 +3905,15 @@ const api = {
           familyId,
           mustChangePassword: !!body.must_change_password,
         });
+      } else if (linkedUserId && emailRaw) {
+        const { data: uRow } = await supabase.from('users').select('email').eq('id', linkedUserId).maybeSingle();
+        const currentEmail = String(uRow?.email || '').trim().toLowerCase();
+        if (emailRaw !== currentEmail) {
+          await updateMemberEmail(linkedUserId, emailRaw, childId);
+        }
+        if (body.name) {
+          await supabase.from('users').update({ name: body.name }).eq('id', linkedUserId).eq('family_id', familyId);
+        }
       }
 
       const patch = omitUndefined({

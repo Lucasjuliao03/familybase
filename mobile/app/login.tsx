@@ -2,13 +2,14 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity,
   StyleSheet, KeyboardAvoidingView, Platform,
-  Alert, ScrollView, StatusBar,
+  Alert, ScrollView, StatusBar, ImageBackground,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { useAuth } from '../src/contexts/AuthContext';
 import { Colors, Radii, Shadow, FontSize } from '../src/theme';
 import { PrimaryButton } from '../src/components/ui/PrimaryButton';
+import { AppLogo } from '../src/components/ui/AppLogo';
 import {
   isBiometricSupported,
   isBiometricEnabled,
@@ -170,32 +171,30 @@ export default function LoginScreen() {
   const locked = lockMs > 0;
 
   return (
-    <KeyboardAvoidingView
-      style={styles.root}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+    <ImageBackground
+      source={require('../icon/fundo.png')}
+      style={styles.backgroundImage}
+      resizeMode="cover"
     >
-      <StatusBar barStyle="light-content" />
-      <ScrollView bounces={false} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-
-        {/* ── HERO GRADIENTE ───────────────────────────── */}
-        <LinearGradient
-          colors={[Colors.gradStart, Colors.gradMid, Colors.gradEnd]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={styles.hero}
+      <KeyboardAvoidingView
+        style={styles.root}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      >
+        <StatusBar barStyle="light-content" />
+        <ScrollView
+          bounces={false}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={styles.scrollContent}
         >
-          <View style={styles.logoCircle}>
-            <Text style={styles.logoEmoji}>🏠</Text>
-            <View style={styles.heartBadge}>
-              <Text style={{ fontSize: 10 }}>❤️</Text>
-            </View>
+          {/* Logo */}
+          <View style={styles.logoContainer}>
+            <AppLogo size="lg" />
+            <Text style={styles.heroSub}>Organizar sua família ficou mais fácil e divertido! 💛</Text>
           </View>
-          <Text style={styles.heroTitle}>Tudo de Casa</Text>
-          <Text style={styles.heroSub}>Organizar sua família ficou mais fácil e divertido! 💛</Text>
-        </LinearGradient>
 
-        {/* ── PAINEL BRANCO ───────────────────────────── */}
-        <View style={styles.panel}>
+          {/* PAINEL GLASSMORPHIC */}
+          <View style={styles.panel}>
 
           <Text style={styles.welcome}>Bem-vindo de volta! 👋</Text>
           <Text style={styles.panelSub}>Faça login para continuar</Text>
@@ -295,60 +294,35 @@ export default function LoginScreen() {
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
+    </ImageBackground>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: Colors.bg },
-
-  // Hero
-  hero: {
-    paddingTop: 60,
-    paddingBottom: 48,
-    alignItems: 'center',
-    borderBottomLeftRadius: 36,
-    borderBottomRightRadius: 36,
-  },
-  logoCircle: {
-    width: 80, height: 80, borderRadius: 40,
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    justifyContent: 'center', alignItems: 'center',
-    position: 'relative',
-    marginBottom: 16,
-    ...Shadow.md,
-  },
-  logoEmoji: { fontSize: 40 },
-  heartBadge: {
-    position: 'absolute', bottom: 2, right: 2,
-    backgroundColor: '#fff', borderRadius: 10,
-    width: 20, height: 20, justifyContent: 'center', alignItems: 'center',
-  },
-  heroTitle: {
-    fontSize: FontSize.xl + 2,
-    fontWeight: '900',
-    color: '#fff',
-    textAlign: 'center',
-    lineHeight: 32,
-  },
+  backgroundImage: { flex: 1 },
+  root: { flex: 1, backgroundColor: 'transparent' },
+  scrollContent: { flexGrow: 1, justifyContent: 'center', paddingVertical: 40 },
+  logoContainer: { alignItems: 'center', marginBottom: 24, marginTop: 20, gap: 12 },
   heroSub: {
     fontSize: FontSize.sm,
-    color: 'rgba(255,255,255,0.88)',
+    color: 'rgba(255,255,255,0.92)',
     textAlign: 'center',
-    marginTop: 8,
+    marginTop: 6,
     paddingHorizontal: 24,
+    textShadowColor: 'rgba(0, 0, 0, 0.2)',
+    textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 2,
   },
 
   // Panel
   panel: {
-    marginTop: -24,
-    backgroundColor: Colors.surface,
-    borderTopLeftRadius: 32,
-    borderTopRightRadius: 32,
+    backgroundColor: 'rgba(255, 255, 255, 0.94)',
+    borderRadius: 28,
     paddingHorizontal: 24,
     paddingTop: 32,
-    paddingBottom: 48,
+    paddingBottom: 40,
+    marginHorizontal: 20,
     ...Shadow.lg,
-    shadowOffset: { width: 0, height: -4 },
   },
   welcome: { fontSize: FontSize.lg, fontWeight: '800', color: Colors.text },
   panelSub: { fontSize: FontSize.sm, color: Colors.textMuted, marginTop: 4, marginBottom: 24 },
