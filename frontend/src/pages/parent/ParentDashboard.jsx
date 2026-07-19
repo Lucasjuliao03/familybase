@@ -4,33 +4,38 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { moduleAllowed } from '../../lib/familyModules';
-import api, { publicAssetUrl } from '../../services/api';
+import api from '../../services/api';
+import UserAvatar from '../../components/profile/UserAvatar';
+import ParentNavIcon from '../../components/ui/ParentNavIcon';
 import { parentDashboardQueryKey } from '../../lib/familiaQueryKeys';
-import { PRESET_AVATARS } from '../../components/AvatarPicker';
 
 const ChildCard = memo(function ChildCard({ child, t }) {
   const xpPct = child.xp_next_level > 0 ? Math.min((child.xp / child.xp_next_level) * 100, 100) : 0;
-  const avatar = PRESET_AVATARS.find(a => a.id === child.avatar_preset);
   const allowancePrev = child.allowance_balance_preview;
   const allowanceDisplay =
     allowancePrev != null && !Number.isNaN(Number(allowancePrev))
       ? `R$ ${Number(allowancePrev).toFixed(2)}`
       : '—';
   return (
-    <div className="child-dash-card" style={{ '--c': child.color || '#6366F1' }}>
+    <div className="child-dash-card parent-member-card" style={{ '--c': child.color || '#6366F1' }}>
       <div className="child-dash-card__header">
         <div className="child-dash-card__avatar">
-          {child.avatar_url
-            ? <img src={publicAssetUrl(child.avatar_url)} alt="" />
-            : <span>{avatar?.emoji || child.name?.[0] || '👤'}</span>}
+          <UserAvatar
+            avatarUrl={child.avatar_url}
+            avatarPreset={child.avatar_preset}
+            name={child.name}
+            size={52}
+            backgroundColor={`${child.color || '#6366F1'}18`}
+          />
         </div>
         <div>
           <div className="child-dash-card__name">{child.name}</div>
-          <div className="child-dash-card__level">⭐ Nível {child.level}</div>
+          <div className="child-dash-card__level">Nível {child.level}</div>
         </div>
         {child.streak_current > 0 && (
           <div className="child-dash-card__streak" title={`${child.streak_current} dias seguidos`}>
-            🔥 {child.streak_current}
+            <ParentNavIcon name="streak" size={14} />
+            <span>{child.streak_current}</span>
           </div>
         )}
       </div>
@@ -40,21 +45,21 @@ const ChildCard = memo(function ChildCard({ child, t }) {
       <div className="child-dash-card__xplabel">{child.xp} / {child.xp_next_level} XP</div>
       <div className="child-dash-card__stats">
         <div className="child-dash-card__stat">
-          <span className="child-dash-card__stat-icon" style={{ background: 'rgba(99,102,241,0.1)', color: '#6366F1' }}>⭐</span>
+          <span className="child-dash-card__stat-icon parent-stat-icon"><ParentNavIcon name="points" size={16} /></span>
           <div>
             <div className="child-dash-card__stat-val">{child.points}</div>
             <div className="child-dash-card__stat-lbl">{t('points')}</div>
           </div>
         </div>
         <div className="child-dash-card__stat">
-          <span className="child-dash-card__stat-icon" style={{ background: 'rgba(249,115,22,0.1)', color: '#F97316' }}>💰</span>
+          <span className="child-dash-card__stat-icon parent-stat-icon"><ParentNavIcon name="allowance" size={16} /></span>
           <div>
             <div className="child-dash-card__stat-val" style={{ fontSize: 'clamp(0.82rem, 2.5vw, 1rem)' }}>{allowanceDisplay}</div>
             <div className="child-dash-card__stat-lbl">{t('allowance')}</div>
           </div>
         </div>
         <div className="child-dash-card__stat">
-          <span className="child-dash-card__stat-icon" style={{ background: 'rgba(16,185,129,0.1)', color: '#10B981' }}>✅</span>
+          <span className="child-dash-card__stat-icon parent-stat-icon"><ParentNavIcon name="completed" size={16} /></span>
           <div>
             <div className="child-dash-card__stat-val">{child.completed || 0}</div>
             <div className="child-dash-card__stat-lbl">Concluídas</div>
@@ -65,10 +70,10 @@ const ChildCard = memo(function ChildCard({ child, t }) {
   );
 });
 
-const QuickAction = memo(function QuickAction({ to, icon, label, color }) {
+const QuickAction = memo(function QuickAction({ to, iconKey, label, color }) {
   return (
-    <Link to={to} className="quick-action" style={{ '--qa-color': color }}>
-      <span className="quick-action__icon">{icon}</span>
+    <Link to={to} className="quick-action parent-quick-action" style={{ '--qa-color': color }}>
+      <span className="quick-action__icon"><ParentNavIcon name={iconKey} size={22} /></span>
       <span className="quick-action__label">{label}</span>
     </Link>
   );
@@ -183,17 +188,17 @@ export default function ParentDashboard() {
       <div className="dash-hero">
         <div className="dash-hero__left">
           <div className="dash-hero__greeting">
-            {greeting}, <strong>{user?.name?.split(' ')[0] || 'Gestor'}</strong>! 👋
+            {greeting}, <strong>{user?.name?.split(' ')[0] || 'Gestor'}</strong>
           </div>
           <p className="dash-hero__sub">
             {family?.name ? `Família ${family.name}` : 'Base Familiar'} · {now.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })}
           </p>
           <div className="dash-hero__actions">
             <button className="btn btn-primary" onClick={() => navigate('/parent/tasks')}>
-              ＋ Nova Tarefa
+              <ParentNavIcon name="add" size={16} /> Nova Tarefa
             </button>
             <button className="btn btn-ghost" onClick={() => navigate('/parent/calendar')} style={{ color: '#fff', borderColor: 'rgba(255,255,255,0.3)' }}>
-              📅 Calendário
+              <ParentNavIcon name="calendar" size={16} /> Calendário
             </button>
           </div>
         </div>
@@ -220,21 +225,21 @@ export default function ParentDashboard() {
       {/* ── KPI Cards ──────────────────────────── */}
       <div className="dash-kpis">
         <div className="stat-card grad-purple">
-          <div className="stat-icon" style={{ background: 'rgba(255,255,255,0.2)' }}>📋</div>
+          <div className="stat-icon parent-stat-icon"><ParentNavIcon name="clipboard" size={20} /></div>
           <div className="stat-info">
             <h3>{hasLoadedOnce ? (stats.pending ?? '–') : '–'}</h3>
             <p>{t('pending_tasks')}</p>
           </div>
         </div>
         <div className="stat-card grad-orange">
-          <div className="stat-icon" style={{ background: 'rgba(255,255,255,0.2)' }}>⏳</div>
+          <div className="stat-icon parent-stat-icon"><ParentNavIcon name="pending" size={20} /></div>
           <div className="stat-info">
             <h3>{hasLoadedOnce ? (stats.waitingApproval ?? stats.completed ?? '–') : '–'}</h3>
             <p>Aguardam Aprovação</p>
           </div>
         </div>
         <div className="stat-card grad-green">
-          <div className="stat-icon" style={{ background: 'rgba(255,255,255,0.2)' }}>✅</div>
+          <div className="stat-icon parent-stat-icon"><ParentNavIcon name="completed" size={20} /></div>
           <div className="stat-info">
             <h3>{hasLoadedOnce ? (stats.approved ?? '–') : '–'}</h3>
             <p>{t('tasks_completed')}</p>
@@ -242,7 +247,7 @@ export default function ParentDashboard() {
         </div>
         {moduleAllowed(modules, 'family_shop') && (
           <div className="stat-card grad-blue">
-            <div className="stat-icon" style={{ background: 'rgba(255,255,255,0.2)' }}>🛍️</div>
+            <div className="stat-icon parent-stat-icon"><ParentNavIcon name="family_shop" size={20} /></div>
             <div className="stat-info">
               <h3>{hasLoadedOnce ? (stats.pendingRedemptions ?? '–') : '–'}</h3>
               <p>Resgates Pendentes</p>
@@ -254,18 +259,18 @@ export default function ParentDashboard() {
       {/* ── Quick Actions ─────────────────────── */}
       <div className="dash-section">
         <div className="dash-section__head">
-          <h2 className="dash-section__title">⚡ Acesso Rápido</h2>
+          <h2 className="dash-section__title">Acesso Rápido</h2>
         </div>
         <div className="quick-actions-grid">
-          <QuickAction to="/parent/tasks"               icon="✅" label="Tarefas"          color="#6366F1" />
-          <QuickAction to="/parent/tasks?tab=approval"  icon="👍" label="Aprovações"       color="#F97316" />
-          <QuickAction to="/parent/grades"              icon="📚" label="Notas"            color="#3B82F6" />
-          <QuickAction to="/parent/allowance"           icon="💰" label="Mesada"           color="#10B981" />
-          {moduleAllowed(modules, 'health') && <QuickAction to="/parent/health" icon="❤️" label="Saúde"   color="#EC4899" />}
-          {moduleAllowed(modules, 'shopping') && <QuickAction to="/parent/shopping" icon="🛒" label="Compras" color="#14B8A6" />}
-          {moduleAllowed(modules, 'location') && <QuickAction to="/parent/location" icon="📍" label="Localização" color="#EF4444" />}
-          {moduleAllowed(modules, 'mural') && <QuickAction to="/parent/mural" icon="📌" label="Mural"     color="#8B5CF6" />}
-          <QuickAction to="/parent/reports"             icon="📊" label="Relatórios"       color="#6366F1" />
+          <QuickAction to="/parent/tasks"               iconKey="tasks" label="Tarefas"          color="#6366F1" />
+          <QuickAction to="/parent/tasks?tab=approval"  iconKey="approval" label="Aprovações"       color="#F97316" />
+          <QuickAction to="/parent/grades"              iconKey="grades" label="Notas"            color="#3B82F6" />
+          <QuickAction to="/parent/allowance"           iconKey="allowance" label="Mesada"           color="#10B981" />
+          {moduleAllowed(modules, 'health') && <QuickAction to="/parent/health" iconKey="health" label="Saúde"   color="#EC4899" />}
+          {moduleAllowed(modules, 'shopping') && <QuickAction to="/parent/shopping" iconKey="shopping" label="Compras" color="#14B8A6" />}
+          {moduleAllowed(modules, 'location') && <QuickAction to="/parent/location" iconKey="location" label="Localização" color="#EF4444" />}
+          {moduleAllowed(modules, 'mural') && <QuickAction to="/parent/mural" iconKey="mural" label="Mural"     color="#8B5CF6" />}
+          <QuickAction to="/parent/reports"             iconKey="reports" label="Relatórios"       color="#6366F1" />
         </div>
       </div>
 
@@ -273,7 +278,7 @@ export default function ParentDashboard() {
       {children.length > 0 && (
         <div className="dash-section">
           <div className="dash-section__head">
-            <h2 className="dash-section__title">👨‍👩‍👧‍👦 Meus Filhos</h2>
+            <h2 className="dash-section__title">Meus Filhos</h2>
             <Link to="/parent/family-administration" className="btn btn-sm btn-ghost">Gerir família</Link>
           </div>
           <div className="children-grid">
@@ -286,7 +291,7 @@ export default function ParentDashboard() {
       <div className="dash-section dash-bottom-grid">
         <div className="card">
           <div className="card-header">
-            <h3 className="card-title">📅 {t('upcoming_events')}</h3>
+            <h3 className="card-title"><ParentNavIcon name="calendar" size={18} /> {t('upcoming_events')}</h3>
             <Link to="/parent/calendar" className="btn btn-sm btn-ghost">{t('calendar')}</Link>
           </div>
           {(!hasLoadedOnce && events.length === 0) ? (
@@ -296,7 +301,7 @@ export default function ParentDashboard() {
             </div>
           ) : events.length === 0 ? (
             <div className="empty-state" style={{ padding: '28px 0' }}>
-              <div className="empty-icon">📅</div>
+              <div className="empty-icon parent-empty-icon"><ParentNavIcon name="calendar" size={28} /></div>
               <h3>Sem eventos próximos</h3>
             </div>
           ) : events.map(ev => (
@@ -316,7 +321,7 @@ export default function ParentDashboard() {
 
         <div className="card">
           <div className="card-header">
-            <h3 className="card-title">🕐 {t('recent_activity')}</h3>
+            <h3 className="card-title"><ParentNavIcon name="activity" size={18} /> {t('recent_activity')}</h3>
           </div>
           {(!hasLoadedOnce && history.length === 0) ? (
             <div className="empty-state fam-sk-card" style={{ padding: '28px 0', margin: '0 12px' }}>
@@ -325,17 +330,19 @@ export default function ParentDashboard() {
             </div>
           ) : history.length === 0 ? (
             <div className="empty-state" style={{ padding: '28px 0' }}>
-              <div className="empty-icon">📝</div>
+              <div className="empty-icon parent-empty-icon"><ParentNavIcon name="clipboard" size={28} /></div>
               <h3>Sem atividade recente</h3>
             </div>
           ) : history.map(h => (
             <div key={h.id} className="activity-row">
-              <div className="activity-row__avatar"
-                style={{ background: h.child_color ? `${h.child_color}22` : 'var(--bg)', color: h.child_color || 'var(--text)' }}>
-                {h.avatar_url
-                  ? <img src={publicAssetUrl(h.avatar_url)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                  : (PRESET_AVATARS.find(a => a.id === h.avatar_preset)?.emoji || h.child_name?.[0] || '👤')}
-              </div>
+              <UserAvatar
+                avatarUrl={h.avatar_url}
+                avatarPreset={h.avatar_preset}
+                name={h.child_name}
+                size={36}
+                backgroundColor={h.child_color ? `${h.child_color}22` : undefined}
+                className="activity-row__avatar"
+              />
               <div className="activity-row__body">
                 <div className="activity-row__event">{h.event}</div>
                 <div className="activity-row__child">{h.child_name}</div>

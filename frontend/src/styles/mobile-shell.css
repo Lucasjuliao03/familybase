@@ -1,0 +1,228 @@
+/**
+ * Visual mobile (Expo) para PWA no celular, browser estreito e Capacitor.
+ * Desktop mantém o painel web original via html.desktop-shell.
+ */
+
+html.mobile-shell {
+  --primary: #7C3AED;
+  --primary-light: #A78BFA;
+  --primary-dark: #5B21B6;
+  --primary-bg: rgba(124, 58, 237, 0.08);
+  --accent: #818CF8;
+  --accent-light: #EDE9FE;
+  --bg: #F5F4FF;
+  --bg-card: #FFFFFF;
+  --bg-hover: #F5F3FF;
+  --border: #EDE9FE;
+  --text: #1E0B4B;
+  --text-light: #6B6B8A;
+  --text-muted: #9E9EBA;
+  --grad-primary: linear-gradient(135deg, #5B21B6, #7C3AED, #818CF8);
+  --font-main: 'Poppins', 'Inter', system-ui, sans-serif;
+  --radius: 16px;
+  --shadow-sm: 0 2px 8px rgba(124, 58, 237, 0.07);
+  --shadow-md: 0 4px 16px rgba(124, 58, 237, 0.11);
+}
+
+html.mobile-shell body,
+html.mobile-shell #root {
+  background: var(--bg);
+  font-family: var(--font-main);
+}
+
+html.mobile-shell .app-layout {
+  --mbb-inner-height: 62px;
+  min-height: 100dvh;
+  background: var(--bg);
+}
+
+html.mobile-shell .app-sidebar,
+html.mobile-shell .app-header,
+html.mobile-shell .mobile-menu-btn,
+html.mobile-shell .mobile-overlay {
+  display: none !important;
+}
+
+html.mobile-shell .app-main {
+  margin-left: 0 !important;
+  margin-bottom: calc(var(--mbb-inner-height) + env(safe-area-inset-bottom, 0px)) !important;
+  min-height: 100dvh;
+  background: var(--bg);
+}
+
+html.mobile-shell .app-content {
+  padding: 16px !important;
+  padding-bottom: 8px !important;
+  background: var(--bg);
+  overflow-x: hidden;
+}
+
+/* Filho: no mobile-shell usa paleta roxa (não Fredoka quente do desktop) */
+html.mobile-shell .app-layout.child-theme,
+html.mobile-shell .child-theme {
+  background: var(--bg);
+  font-family: var(--font-main);
+}
+
+html.mobile-shell .child-theme .card {
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+}
+
+html.mobile-shell .child-theme .card:hover {
+  border-color: var(--primary-light);
+}
+
+html.mobile-shell .child-theme .btn {
+  border-radius: 14px;
+  font-family: var(--font-main);
+}
+
+html.mobile-shell .grid-4,
+html.mobile-shell .grid-3,
+html.mobile-shell .grid-2 {
+  grid-template-columns: 1fr !important;
+}
+
+html.mobile-shell .page-title {
+  font-size: 1.4rem !important;
+}
+
+html.mobile-shell .btn-primary {
+  background: var(--grad-primary);
+  border: none;
+  box-shadow: 0 6px 14px rgba(124, 58, 237, 0.35);
+}
+
+html.mobile-shell .card {
+  border-radius: var(--radius);
+  border-color: var(--border);
+  box-shadow: var(--shadow-sm);
+}
+
+html.mobile-shell .dash-hero {
+  background: var(--grad-primary);
+  border-radius: 20px;
+}
+
+html.mobile-shell .parent-dash .dash-kpis .stat-card {
+  border-radius: var(--radius);
+}
+
+/* ── Bottom bar estilo app mobile ── */
+html.mobile-shell .mobile-bottom-bar {
+  display: flex !important;
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  min-height: calc(var(--mbb-inner-height) + env(safe-area-inset-bottom, 0px));
+  padding: 8px 4px env(safe-area-inset-bottom, 0px);
+  box-sizing: border-box;
+  background: #FFFFFF;
+  border-top: 1px solid #F5F3FF;
+  box-shadow: 0 -4px 16px rgba(124, 58, 237, 0.11);
+  z-index: 500;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0;
+}
+
+html.mobile-shell .mobile-bottom-bar .mbb-item {
+  flex: 1 1 0;
+  min-width: 0;
+  border-top: none;
+  background: none;
+  color: var(--text-muted);
+  padding: 0 2px 4px;
+  gap: 3px;
+}
+
+html.mobile-shell .mobile-bottom-bar .mbb-item.active {
+  color: var(--primary);
+  background: none;
+}
+
+html.mobile-shell .mobile-bottom-bar .mbb-icon-wrap {
+  width: 32px;
+  height: 32px;
+  border-radius: 0;
+  background: transparent;
+  overflow: visible;
+  position: relative;
+}
+
+html.mobile-shell .mobile-bottom-bar .mbb-item.active .mbb-icon-wrap {
+  background: transparent;
+}
+
+html.mobile-shell .mobile-bottom-bar .mbb-icon-img {
+  display: block;
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+html.mobile-shell .mobile-bottom-bar .mbb-item.active .mbb-icon-img {
+  width: 48px;
+  height: 48px;
+  margin-top: -18px;
+}
+
+html.mobile-shell .mobile-bottom-bar .mbb-item:not(.active) .mbb-icon.parent-nav-icon {
+  color: var(--text-muted);
+}
+
+html.mobile-shell .mobile-bottom-bar .mbb-item.active .mbb-icon.parent-nav-icon {
+  color: var(--primary);
+}
+
+html.mobile-shell .mobile-bottom-bar .mbb-label {
+  font-size: 11px;
+  font-weight: 600;
+  min-height: auto;
+  max-height: none;
+  -webkit-line-clamp: 1;
+}
+
+html.mobile-shell .mobile-drawer-overlay {
+  display: block;
+  background: rgba(30, 11, 75, 0.4);
+}
+
+html.mobile-shell .mobile-drawer {
+  border-radius: 24px 24px 0 0;
+  border: none;
+  box-shadow: 0 -8px 24px rgba(91, 33, 182, 0.18);
+}
+
+html.mobile-shell .mobile-drawer-item.active {
+  color: var(--primary);
+}
+
+html.mobile-shell .mobile-drawer-icon-wrap {
+  background: var(--bg);
+  border: 1.5px solid var(--border);
+}
+
+html.mobile-shell .mobile-drawer-item.active .mobile-drawer-icon-wrap {
+  border-color: var(--primary);
+  background: var(--accent-light);
+}
+
+html.mobile-shell .mobile-drawer-icon-img {
+  width: 50px;
+  height: 50px;
+  object-fit: contain;
+}
+
+html.mobile-shell.capacitor-native .app-main,
+html.capacitor-native.mobile-shell .app-main {
+  margin-bottom: calc(var(--mbb-inner-height) + env(safe-area-inset-bottom, 0px)) !important;
+}
+
+html.mobile-shell.capacitor-native .mobile-bottom-bar,
+html.capacitor-native.mobile-shell .mobile-bottom-bar {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}

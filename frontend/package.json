@@ -6,10 +6,11 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:capacitor": "vite build --mode capacitor",
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "node --test src/lib/taskHistoryStatus.test.js src/lib/taskOccurrenceClosure.test.js",
-    "cap:sync": "npm run build && npx cap sync android",
+    "cap:sync": "npm run build:capacitor && npx cap sync android",
     "cap:open": "npx cap open android",
     "cap:run": "npm run cap:sync && npx cap run android"
   },

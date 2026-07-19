@@ -5,6 +5,7 @@ import { useLanguage } from '../../contexts/LanguageContext';
 import api, { publicAssetUrl } from '../../services/api';
 import AvatarPicker, { PRESET_AVATARS } from '../../components/AvatarPicker';
 import { anyModuleAllowed, moduleAllowed } from '../../lib/familyModules';
+import { useLayoutMode } from '../../hooks/useLayoutMode';
 import MobileNav from './MobileNav';
 import TrialBanner from '../TrialBanner';
 
@@ -34,6 +35,7 @@ const NAV_SECTIONS = [
 export default function ChildLayout() {
   const { user, childProfile, family, logout, modules, fetchMe } = useAuth();
   const { t, lang, switchLanguage } = useLanguage();
+  const { isMobileShell } = useLayoutMode();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [notifCount, setNotifCount] = useState(0);
@@ -132,8 +134,9 @@ export default function ChildLayout() {
     );
 
   return (
-    <div className="app-layout child-theme">
-      {mobileOpen && <div className="mobile-overlay show" onClick={() => setMobileOpen(false)} />}
+    <div className={`app-layout${isMobileShell ? ' mobile-shell-layout' : ' child-theme'}`}>
+      {!isMobileShell && mobileOpen && <div className="mobile-overlay show" onClick={() => setMobileOpen(false)} />}
+      {!isMobileShell && (
       <aside className={`app-sidebar ${collapsed ? 'collapsed' : ''} ${mobileOpen ? 'open' : ''}`}>
         <div className="sidebar-logo" style={{ flexDirection: collapsed ? 'row' : 'column', gap: collapsed ? 8 : 6 }}>
           {family?.logo_url ? (
@@ -223,8 +226,10 @@ export default function ChildLayout() {
           </button>
         </div>
       </aside>
+      )}
 
-      <div className={`app-main ${collapsed ? 'expanded' : ''}`}>
+      <div className={`app-main ${collapsed && !isMobileShell ? 'expanded' : ''}`}>
+        {!isMobileShell && (
         <header className="app-header">
           <div className="flex gap-12" style={{ alignItems: 'center' }}>
             <button className="mobile-menu-btn" type="button" onClick={() => setMobileOpen(true)}>
@@ -332,12 +337,13 @@ export default function ChildLayout() {
             </div>
           </div>
         </header>
+        )}
         <TrialBanner />
         <div className="app-content">
           <Outlet />
         </div>
       </div>
-      <MobileNav navItems={flatNav} pinnedCount={4} />
+      <MobileNav role="child" navItems={flatNav} />
     </div>
   );
 }

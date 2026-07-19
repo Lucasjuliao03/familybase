@@ -2,9 +2,11 @@ import { useState, useEffect, useMemo } from 'react';
 import { Outlet, NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { useLanguage } from '../../contexts/LanguageContext';
-import api, { publicAssetUrl } from '../../services/api';
-import { PRESET_AVATARS } from '../../components/AvatarPicker';
 import { anyModuleAllowed, moduleAllowed } from '../../lib/familyModules';
+import { useLayoutMode } from '../../hooks/useLayoutMode';
+import api, { publicAssetUrl } from '../../services/api';
+import ParentNavIcon from '../ui/ParentNavIcon';
+import UserAvatar from '../profile/UserAvatar';
 import MobileNav from './MobileNav';
 import TrialBanner from '../TrialBanner';
 
@@ -12,28 +14,28 @@ const NAV_SECTIONS = [
   {
     label: 'Principal',
     items: [
-      { to: '/parent', icon: '🏠', label: null, key: 'dashboard', end: true },
-      { to: '/parent/tasks', icon: '✅', label: null, key: 'tasks', module: 'tasks' },
-      { to: '/parent/grades', icon: '📚', label: null, key: 'grades', module: 'grades' },
-      { to: '/parent/allowance', icon: '💰', label: null, key: 'nav_allowance', anyOf: ['allowance', 'piggy_bank', 'goals'] },
+      { to: '/parent', iconKey: 'dashboard', label: null, key: 'dashboard', end: true },
+      { to: '/parent/tasks', iconKey: 'tasks', label: null, key: 'tasks', module: 'tasks' },
+      { to: '/parent/grades', iconKey: 'grades', label: null, key: 'grades', module: 'grades' },
+      { to: '/parent/allowance', iconKey: 'allowance', label: null, key: 'nav_allowance', anyOf: ['allowance', 'piggy_bank', 'goals'] },
     ],
   },
   {
     label: 'Módulos',
     items: [
-      { to: '/parent/family-shop', icon: '🛍️', label: null, key: 'nav_family_shop', module: 'family_shop' },
-      { to: '/parent/calendar', icon: '📅', label: null, key: 'calendar', module: 'calendar' },
-      { to: '/parent/health', icon: '❤️', label: null, key: 'nav_health', module: 'health' },
-      { to: '/parent/mural', icon: '📌', label: null, key: 'nav_mural', module: 'mural' },
-      { to: '/parent/shopping', icon: '🛒', label: null, key: 'nav_shopping', module: 'shopping' },
-      { to: '/parent/location', icon: '📍', label: null, key: 'nav_location', module: 'location' },
+      { to: '/parent/family-shop', iconKey: 'family_shop', label: null, key: 'nav_family_shop', module: 'family_shop' },
+      { to: '/parent/calendar', iconKey: 'calendar', label: null, key: 'calendar', module: 'calendar' },
+      { to: '/parent/health', iconKey: 'health', label: null, key: 'nav_health', module: 'health' },
+      { to: '/parent/mural', iconKey: 'mural', label: null, key: 'nav_mural', module: 'mural' },
+      { to: '/parent/shopping', iconKey: 'shopping', label: null, key: 'nav_shopping', module: 'shopping' },
+      { to: '/parent/location', iconKey: 'location', label: null, key: 'nav_location', module: 'location' },
     ],
   },
   {
     label: 'Gestão',
     items: [
-      { to: '/parent/reports', icon: '📈', label: null, key: 'reports', module: 'reports' },
-      { to: '/parent/family-administration', icon: '⚙️', label: null, key: 'fam_admin_nav' },
+      { to: '/parent/reports', iconKey: 'reports', label: null, key: 'reports', module: 'reports' },
+      { to: '/parent/family-administration', iconKey: 'settings', label: null, key: 'fam_admin_nav' },
     ],
   },
 ];
@@ -41,6 +43,7 @@ const NAV_SECTIONS = [
 export default function ParentLayout() {
   const { user, family, logout, modules } = useAuth();
   const { t, lang, switchLanguage } = useLanguage();
+  const { isMobileShell } = useLayoutMode();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [notifCount, setNotifCount] = useState(0);
@@ -91,15 +94,21 @@ export default function ParentLayout() {
     [filteredSections, t]
   );
 
-  const avatarContent = user?.avatar_url
-    ? <img src={publicAssetUrl(user.avatar_url)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-    : (PRESET_AVATARS.find(a => a.id === user?.avatar_preset)?.emoji || user?.name?.[0] || '👤');
+  const avatarContent = (
+    <UserAvatar
+      avatarUrl={user?.avatar_url}
+      avatarPreset={user?.avatar_preset}
+      name={user?.name}
+      size={36}
+      bordered={false}
+    />
+  );
 
   return (
-    <div className="app-layout">
-      {mobileOpen && <div className="mobile-overlay show" onClick={() => setMobileOpen(false)} />}
+    <div className={`app-layout${isMobileShell ? ' mobile-shell-layout' : ''}`}>
+      {!isMobileShell && mobileOpen && <div className="mobile-overlay show" onClick={() => setMobileOpen(false)} />}
 
-      {/* ── Sidebar ────────────────────────────── */}
+      {!isMobileShell && (
       <aside className={`app-sidebar ${collapsed ? 'collapsed' : ''} ${mobileOpen ? 'open' : ''}`}>
 
         {/* Logo area */}
@@ -127,7 +136,7 @@ export default function ParentLayout() {
               {sec.items.map(item => (
                 <NavLink key={item.to} to={item.to} end={item.end}
                   className={({ isActive }) => `sidebar-link${isActive ? ' active' : ''}`}>
-                  <span className="link-icon">{item.icon}</span>
+                  <span className="link-icon"><ParentNavIcon name={item.iconKey} size={18} /></span>
                   {!collapsed && <span className="link-text">{t(item.key)}</span>}
                 </NavLink>
               ))}
@@ -142,24 +151,26 @@ export default function ParentLayout() {
             {!collapsed && (
               <div className="user-info">
                 <div className="user-name">{user?.name}</div>
-                <div className="user-role">🏅 Gestor</div>
+                <div className="user-role">Gestor</div>
               </div>
             )}
           </div>
           <button className="sidebar-link" onClick={logout} style={{ marginTop: 4, color: 'rgba(239,68,68,0.85)' }}>
-            <span className="link-icon">🚪</span>
+            <span className="link-icon"><ParentNavIcon name="logout" size={18} /></span>
             {!collapsed && <span className="link-text">Sair</span>}
           </button>
         </div>
       </aside>
+      )}
 
-      {/* ── Main ──────────────────────────────── */}
-      <div className={`app-main ${collapsed ? 'expanded' : ''}`}>
+      <div className={`app-main ${collapsed && !isMobileShell ? 'expanded' : ''}`}>
 
-        {/* Header */}
+        {!isMobileShell && (
         <header className="app-header">
           <div className="flex gap-12" style={{ alignItems: 'center' }}>
-            <button className="mobile-menu-btn" onClick={() => setMobileOpen(true)}>☰</button>
+            <button className="mobile-menu-btn" onClick={() => setMobileOpen(true)} aria-label="Menu">
+              <ParentNavIcon name="menu" size={20} />
+            </button>
             <button
               className="btn btn-sm btn-ghost hide-mobile"
               onClick={() => setCollapsed(!collapsed)}
@@ -170,7 +181,7 @@ export default function ParentLayout() {
             </button>
             {/* Greeting */}
             <div className="hide-mobile" style={{ fontSize: '0.875rem', color: 'var(--text-light)', fontWeight: 500 }}>
-              Bem-vindo, <strong style={{ color: 'var(--text)' }}>{user?.name?.split(' ')[0]}</strong>! 👋
+              Bem-vindo, <strong style={{ color: 'var(--text)' }}>{user?.name?.split(' ')[0]}</strong>
             </div>
           </div>
 
@@ -184,8 +195,8 @@ export default function ParentLayout() {
             {/* Notifications */}
             {notificationsOn && (
               <div className="notif-bell" onClick={openNotifications} style={{ position: 'relative' }}>
-                <button className="btn btn-sm btn-ghost" style={{ padding: '7px 10px', position: 'relative' }}>
-                  🔔
+                <button className="btn btn-sm btn-ghost" style={{ padding: '7px 10px', position: 'relative' }} aria-label={t('notifications')}>
+                  <ParentNavIcon name="bell" size={18} />
                   {notifCount > 0 && <span className="notif-count">{notifCount > 9 ? '9+' : notifCount}</span>}
                 </button>
                 {notifOpen && (
@@ -235,9 +246,13 @@ export default function ParentLayout() {
                 fontSize: '0.85rem', fontWeight: 700, color: '#fff', overflow: 'hidden',
                 flexShrink: 0,
               }}>
-                {user?.avatar_url
-                  ? <img src={publicAssetUrl(user.avatar_url)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                  : (PRESET_AVATARS.find(a => a.id === user?.avatar_preset)?.emoji || user?.name?.[0] || '👤')}
+              <UserAvatar
+                avatarUrl={user?.avatar_url}
+                avatarPreset={user?.avatar_preset}
+                name={user?.name}
+                size={28}
+                bordered={false}
+              />
               </div>
               <div className="hide-mobile">
                 <div style={{ fontSize: '0.78rem', fontWeight: 600, lineHeight: 1.2 }}>{user?.name?.split(' ')[0]}</div>
@@ -246,6 +261,7 @@ export default function ParentLayout() {
             </div>
           </div>
         </header>
+        )}
 
         <TrialBanner />
         <div className="app-content">
@@ -253,7 +269,7 @@ export default function ParentLayout() {
         </div>
       </div>
 
-      <MobileNav navItems={flatNav} pinnedCount={4} />
+      <MobileNav role="parent" navItems={flatNav} />
     </div>
   );
 }

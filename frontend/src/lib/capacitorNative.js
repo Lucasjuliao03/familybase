@@ -8,7 +8,7 @@ export function isNativeApp() {
 export async function initCapacitorNative() {
   if (!isNativeApp()) return;
 
-  document.documentElement.classList.add('capacitor-native');
+  document.documentElement.classList.add('capacitor-native', 'mobile-shell');
   document.documentElement.lang = 'pt-BR';
 
   try {

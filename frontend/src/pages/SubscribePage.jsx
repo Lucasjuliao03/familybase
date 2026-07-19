@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, useRef, useCallback } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
-import { supabase } from '../lib/supabase';
+import { supabase, supabaseUrl } from '../lib/supabase';
 
 /** Valores espelho dos preços Stripe (BRL) — produtos “Base Familiar mensal / Anual”. */
 const PLANS = [
@@ -86,7 +86,7 @@ export default function SubscribePage() {
       const { data: sessionData } = await supabase.auth.getSession();
       const accessToken = sessionData?.session?.access_token;
       if (!accessToken) return;
-      const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/stripe-get-billing-summary`;
+      const url = `${supabaseUrl}/functions/v1/stripe-get-billing-summary`;
       const res = await fetch(url, {
         method: 'POST',
         headers: {
@@ -161,7 +161,7 @@ export default function SubscribePage() {
         setSubmitting(true);
         const { data: sessionData } = await supabase.auth.getSession();
         const accessToken = sessionData?.session?.access_token;
-        const syncUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/stripe-sync-checkout-session`;
+        const syncUrl = `${supabaseUrl}/functions/v1/stripe-sync-checkout-session`;
         const res = await fetch(syncUrl, {
           method: 'POST',
           headers: {
@@ -224,7 +224,7 @@ export default function SubscribePage() {
       setSubmitting(true);
       const { data: sessionData } = await supabase.auth.getSession();
       const token = sessionData?.session?.access_token;
-      const portalUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/stripe-create-portal-session`;
+      const portalUrl = `${supabaseUrl}/functions/v1/stripe-create-portal-session`;
       const origin = window.location.origin.replace(/\/$/, '');
       const returnPath = isGestorContext ? `${origin}/parent/billing` : `${origin}/parent`;
       const res = await fetch(portalUrl, {
@@ -250,7 +250,7 @@ export default function SubscribePage() {
       setSubmitting(true);
       const { data: sessionData } = await supabase.auth.getSession();
       const accessToken = sessionData?.session?.access_token;
-      const createUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/stripe-create-checkout-session`;
+      const createUrl = `${supabaseUrl}/functions/v1/stripe-create-checkout-session`;
       const checkoutReturnPath =
         typeof window !== 'undefined' && window.location.pathname === '/parent/billing'
           ? '/parent/billing'

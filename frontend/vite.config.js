@@ -3,10 +3,14 @@ import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 
 // https://vite.dev/config/
-export default defineConfig({
+export default defineConfig(({ mode }) => {
+  /** Capacitor WebView precisa de paths relativos; Vercel/browser precisa de `/`. */
+  const isCapacitorBuild = mode === 'capacitor' || process.env.CAPACITOR_BUILD === 'true';
+  const base = isCapacitorBuild ? './' : '/';
+
+  return {
   envPrefix: ['VITE_', 'NEXT_PUBLIC_'],
-  /** Caminhos relativos — necessário para Capacitor carregar assets no WebView Android. */
-  base: './',
+  base,
 
   plugins: [
     react(),
@@ -124,4 +128,5 @@ export default defineConfig({
   optimizeDeps: {
     include: ['react', 'react-dom', 'react-router-dom', '@supabase/supabase-js'],
   },
-})
+  };
+});

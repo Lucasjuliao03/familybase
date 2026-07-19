@@ -6,7 +6,7 @@
 #
 # Antes (uma vez):
 #   npx supabase@latest login
-#   npx supabase@latest link --project-ref vderyfcxzcxsazqkfzzf
+#   npx supabase@latest link --project-ref dkymtsbevkolkiuiwtju
 
 $ErrorActionPreference = "Stop"
 Set-Location (Join-Path $PSScriptRoot "..")

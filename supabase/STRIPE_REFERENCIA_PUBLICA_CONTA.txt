@@ -32,6 +32,21 @@
   Obrigatórios à parte (painel Stripe):
     STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, SITE_URL
 
-  Funções a fazer deploy (incluindo nova resumo billing):
-    supabase functions deploy stripe-get-billing-summary
+  Webhook activo (projecto basefamiliar2 / dkymtsbevkolkiuiwtju):
+    URL: https://dkymtsbevkolkiuiwtju.supabase.co/functions/v1/stripe-webhook
+    Endpoint id: we_1TumKfR0aMeJgjCFl8uYfbqA
+    Eventos: checkout.session.completed, customer.subscription.updated,
+             customer.subscription.deleted, invoice.payment_failed
+    (Webhook antigo vderyfcxzcxsazqkfzzf desactivado.)
+
+  Secrets Supabase (Edge Functions) — CONFIGURADOS em 2026-07-19:
+    STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, SITE_URL=https://familybase-three.vercel.app
+    STRIPE_LOOKUP_KEY_PREMIUM_MENSAL=basefamiliar_premium_mensal
+    STRIPE_LOOKUP_KEY_PREMIUM_ANUAL=basefamiliar_premium_anual
+    STRIPE_AUTOMATIC_TAX_ENABLED=false
+
+  Funções deployadas no basefamiliar2:
+    stripe-create-checkout-session, stripe-sync-checkout-session,
+    stripe-create-portal-session, stripe-get-billing-summary,
+    stripe-cancel-subscription, stripe-webhook
 --------------------------------------------------------------------------------

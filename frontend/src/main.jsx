@@ -5,6 +5,12 @@ import App from './App';
 import './index.css';
 import { setApplyProdPwaUpdate } from './lib/pwaUpdate';
 import { initCapacitorNative, isNativeApp } from './lib/capacitorNative';
+import { queryMobileShell } from './hooks/useLayoutMode';
+import { BootErrorBoundary, SupabaseBootNotice } from './components/BootGuard';
+
+if (queryMobileShell()) {
+  document.documentElement.classList.add('mobile-shell');
+}
 
 if (import.meta.env.PROD && !isNativeApp()) {
   const updateSW = registerSW({
@@ -16,10 +22,13 @@ if (import.meta.env.PROD && !isNativeApp()) {
   setApplyProdPwaUpdate(() => updateSW(true));
 }
 
-initCapacitorNative().finally(() => {
-  ReactDOM.createRoot(document.getElementById('root')).render(
-    <React.StrictMode>
+ReactDOM.createRoot(document.getElementById('root')).render(
+  <React.StrictMode>
+    <BootErrorBoundary>
       <App />
-    </React.StrictMode>,
-  );
-});
+      <SupabaseBootNotice />
+    </BootErrorBoundary>
+  </React.StrictMode>,
+);
+
+initCapacitorNative().catch(() => {});

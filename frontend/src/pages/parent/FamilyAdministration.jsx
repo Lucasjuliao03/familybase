@@ -6,7 +6,9 @@ import { useToast } from '../../contexts/ToastContext';
 import { useAuth } from '../../contexts/AuthContext';
 import api, { publicAssetUrl } from '../../services/api';
 import { supabase } from '../../lib/supabase';
-import AvatarPicker, { PRESET_AVATARS } from '../../components/AvatarPicker';
+import AvatarPicker from '../../components/AvatarPicker';
+import UserAvatar from '../../components/profile/UserAvatar';
+import ParentNavIcon from '../../components/ui/ParentNavIcon';
 import UserDisplayColorPicker from '../../components/UserDisplayColorPicker';
 import {
   pickFirstAvailableUserDisplayColor,
@@ -66,20 +68,20 @@ function imgUrl(path) {
 }
 
 const MODULE_ICONS = {
-  tasks: '✅',
-  routines: '🔄',
-  calendar: '📅',
-  allowance: '💰',
-  family_shop: '🛍️',
-  medals: '🏅',
-  grades: '📚',
-  piggy_bank: '🐷',
-  goals: '🎯',
-  reports: '📈',
-  notifications: '🔔',
-  shopping: '🛒',
-  health: '❤️',
-  mural: '📌',
+  tasks: 'tasks',
+  routines: 'tasks',
+  calendar: 'calendar',
+  allowance: 'allowance',
+  family_shop: 'family_shop',
+  medals: 'star',
+  grades: 'grades',
+  piggy_bank: 'allowance',
+  goals: 'star',
+  reports: 'reports',
+  notifications: 'bell',
+  shopping: 'shopping',
+  health: 'health',
+  mural: 'mural',
 };
 
 function inferMedalGroup(m) {
@@ -200,27 +202,14 @@ export default function FamilyAdministration() {
     const canEdit = canEditMemberAvatar(member.id);
     if (!canEdit) {
       return (
-        <div
-          className="user-avatar"
-          style={{
-            width: 40,
-            height: 40,
-            background: member.display_color || 'var(--bg)',
-            fontSize: '0.9rem',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            flexShrink: 0,
-          }}
-        >
-          {member.avatar_url ? (
-            <img src={imgUrl(member.avatar_url)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }} />
-          ) : member.emoji ? (
-            <span>{member.emoji}</span>
-          ) : (
-            <span>{PRESET_AVATARS.find((a) => a.id === member.avatar_preset)?.emoji || member.name?.[0] || '?'}</span>
-          )}
-        </div>
+        <UserAvatar
+          avatarUrl={member.avatar_url}
+          avatarPreset={member.avatar_preset}
+          name={member.name}
+          size={40}
+          backgroundColor={member.display_color ? `${member.display_color}22` : undefined}
+          style={member.display_color ? { boxShadow: `0 0 0 2px ${member.display_color}` } : undefined}
+        />
       );
     }
     return (
@@ -895,7 +884,7 @@ export default function FamilyAdministration() {
                 const descKey = `fam_module_${mod.module_key}_desc`;
                 const title = t(titleKey);
                 const desc = t(descKey);
-                const icon = MODULE_ICONS[mod.module_key] || '📦';
+                const iconKey = MODULE_ICONS[mod.module_key] || 'settings';
                 const premiumLabel = mod.is_premium ? t('fam_module_premium') : t('fam_module_free');
                 const locked = mod.is_premium && !moduleSettings.planAllowsPremium && !mod.is_enabled;
                 const canToggle = mod.is_enabled || mod.can_enable;
@@ -903,7 +892,7 @@ export default function FamilyAdministration() {
                 return (
                   <div key={mod.module_key} className={`card fam-module-card ${mod.is_enabled ? 'fam-module-card--on' : ''}`}>
                     <div className="fam-module-card__head">
-                      <span className="fam-module-card__icon" aria-hidden>{icon}</span>
+                      <span className="fam-module-card__icon" aria-hidden><ParentNavIcon name={iconKey} size={22} /></span>
                       <div>
                         <h3 className="fam-module-card__title">{title}</h3>
                         <span className={`badge ${mod.is_premium ? 'badge-warning' : 'badge-info'}`} style={{ marginTop: 6 }}>

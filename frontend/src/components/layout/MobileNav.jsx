@@ -1,18 +1,43 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { useLanguage } from '../../contexts/LanguageContext';
-import api, { publicAssetUrl } from '../../services/api';
-import { PRESET_AVATARS } from '../AvatarPicker';
+import { anyModuleAllowed, moduleAllowed } from '../../lib/familyModules';
+import {
+  PARENT_MOBILE_TABS,
+  CHILD_MOBILE_TABS,
+  filterMobileTabs,
+} from '../../lib/mobileNavConfig';
+import { publicAssetUrl } from '../../services/api';
+import UserAvatar from '../profile/UserAvatar';
+import ParentNavIcon from '../ui/ParentNavIcon';
+
+function NavTabIcon({ item, active }) {
+  if (active && item.png) {
+    return <img src={item.png} alt="" className="mbb-icon-img" draggable={false} />;
+  }
+  if (item.iconKey) {
+    return <ParentNavIcon name={item.iconKey} size={22} className="mbb-icon" />;
+  }
+  return <span className="mbb-icon">{item.icon}</span>;
+}
+
+function DrawerTabIcon({ item, active }) {
+  if (active && item.png) {
+    return <img src={item.png} alt="" className="mobile-drawer-icon-img" draggable={false} />;
+  }
+  if (item.iconKey) {
+    return <ParentNavIcon name={item.iconKey} size={24} />;
+  }
+  return <span className="mdi-icon">{item.icon}</span>;
+}
 
 /**
- * MobileNav — bottom bar + drawer for mobile screens.
- * Props:
- *   navItems: [{to, icon, label}]
- *   pinnedCount: how many items appear directly in the bottom bar (default 4)
+ * Bottom bar + drawer — visual alinhado ao app Expo.
+ * `role`: 'parent' | 'child' usa abas do mobile; `navItems` é fallback legado.
  */
-export default function MobileNav({ navItems = [], pinnedCount: pinnedProp = 4 }) {
-  const { user, family, logout } = useAuth();
+export default function MobileNav({ role, navItems = [], pinnedCount: pinnedProp = 4 }) {
+  const { user, family, logout, modules } = useAuth();
   const { t, lang, switchLanguage } = useLanguage();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [narrowBar, setNarrowBar] = useState(false);
@@ -26,46 +51,83 @@ export default function MobileNav({ navItems = [], pinnedCount: pinnedProp = 4 }
     return () => mq.removeEventListener('change', apply);
   }, []);
 
+  useEffect(() => {
+    setDrawerOpen(false);
+  }, [location.pathname]);
+
   const pinnedCount = narrowBar ? Math.min(pinnedProp, 3) : pinnedProp;
 
-  // Close drawer on navigation
-  useEffect(() => { setDrawerOpen(false); }, [location.pathname]);
+  const tabs = useMemo(() => {
+    if (role === 'parent') {
+      return filterMobileTabs(PARENT_MOBILE_TABS, modules, moduleAllowed, anyModuleAllowed);
+    }
+    if (role === 'child') {
+      return filterMobileTabs(CHILD_MOBILE_TABS, modules, moduleAllowed, anyModuleAllowed);
+    }
+    return navItems;
+  }, [role, modules, navItems, t]);
 
-  // Determine which items go in the bar vs drawer
-  // Always include the current active route in the bar
-  const currentIdx = navItems.findIndex(it => {
+  const resolvedTabs = useMemo(() => {
+    if (role) {
+      return tabs.map((tab) => ({
+        ...tab,
+        label: tab.key ? t(tab.key) : tab.label,
+      }));
+    }
+    return tabs;
+  }, [role, tabs, t]);
+
+  const currentIdx = resolvedTabs.findIndex((it) => {
     if (it.end) return location.pathname === it.to;
-    return location.pathname.startsWith(it.to);
+    return location.pathname === it.to || location.pathname.startsWith(`${it.to}/`);
   });
 
-  // Build pinned items: first pinnedCount, but swap one for the current if not included
-  let pinnedItems = navItems.slice(0, pinnedCount);
-  if (currentIdx >= pinnedCount) {
-    // Replace last pinned with the active item
-    pinnedItems = [...navItems.slice(0, pinnedCount - 1), navItems[currentIdx]];
+  let pinnedItems = [];
+  let drawerItems = [];
+
+  if (resolvedTabs.length > pinnedCount + 1) {
+    if (currentIdx >= pinnedCount - 1 && currentIdx >= 0) {
+      pinnedItems = [...resolvedTabs.slice(0, pinnedCount - 1), resolvedTabs[currentIdx]];
+      drawerItems = resolvedTabs.filter((it) => !pinnedItems.includes(it));
+    } else {
+      pinnedItems = resolvedTabs.slice(0, pinnedCount);
+      drawerItems = resolvedTabs.slice(pinnedCount);
+    }
+  } else {
+    pinnedItems = resolvedTabs;
+    drawerItems = [];
   }
-  const drawerItems = navItems.filter(it => !pinnedItems.includes(it));
+
   const hasMore = drawerItems.length > 0;
 
-  const userAvatar = user?.avatar_url
-    ? <img src={publicAssetUrl(user.avatar_url)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }} />
-    : PRESET_AVATARS.find(a => a.id === user?.avatar_preset)?.emoji || user?.name?.[0] || '👤';
+  const userAvatar = (
+    <UserAvatar
+      avatarUrl={user?.avatar_url}
+      avatarPreset={user?.avatar_preset}
+      name={user?.name}
+      size={36}
+      bordered={false}
+    />
+  );
 
   return (
     <>
-      {/* ── Bottom Bar ────────────────────────────────── */}
-      <nav className="mobile-bottom-bar">
-        {pinnedItems.map(item => (
+      <nav className="mobile-bottom-bar" aria-label="Navegação principal">
+        {pinnedItems.map((item) => (
           <NavLink
             key={item.to}
             to={item.to}
             end={item.end}
             className={({ isActive }) => `mbb-item${isActive ? ' active' : ''}`}
           >
-            <span className="mbb-icon-wrap" aria-hidden>
-              <span className="mbb-icon">{item.icon}</span>
-            </span>
-            <span className="mbb-label">{item.label}</span>
+            {({ isActive }) => (
+              <>
+                <span className="mbb-icon-wrap" aria-hidden>
+                  <NavTabIcon item={item} active={isActive} />
+                </span>
+                <span className="mbb-label">{item.label}</span>
+              </>
+            )}
           </NavLink>
         ))}
 
@@ -73,7 +135,7 @@ export default function MobileNav({ navItems = [], pinnedCount: pinnedProp = 4 }
           <button
             type="button"
             className={`mbb-item mbb-more${drawerOpen ? ' open' : ''}`}
-            onClick={() => setDrawerOpen(v => !v)}
+            onClick={() => setDrawerOpen((v) => !v)}
             aria-label="Mais opções"
           >
             <span className="mbb-icon-wrap" aria-hidden>
@@ -89,37 +151,46 @@ export default function MobileNav({ navItems = [], pinnedCount: pinnedProp = 4 }
         )}
       </nav>
 
-      {/* ── Drawer Overlay ───────────────────────────── */}
       {drawerOpen && (
         <div className="mobile-drawer-overlay" onClick={() => setDrawerOpen(false)}>
-          <div className="mobile-drawer" onClick={e => e.stopPropagation()}>
-            {/* Handle */}
+          <div className="mobile-drawer" onClick={(e) => e.stopPropagation()}>
             <div className="mobile-drawer-handle" />
-
-            {/* Family header */}
             <div className="mobile-drawer-header">
-              <div style={{
-                width: 40, height: 40, borderRadius: 12, overflow: 'hidden',
-                background: 'linear-gradient(135deg, var(--primary), var(--accent))',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: '1.4rem', flexShrink: 0
-              }}>
-                {family?.logo_url
-                  ? <img src={publicAssetUrl(family.logo_url)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                  : (family?.emoji || '🏠')}
+              <div
+                style={{
+                  width: 40,
+                  height: 40,
+                  borderRadius: 12,
+                  overflow: 'hidden',
+                  background: 'linear-gradient(135deg, var(--primary), var(--accent))',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: '1.4rem',
+                  flexShrink: 0,
+                }}
+              >
+                {family?.logo_url ? (
+                  <img src={publicAssetUrl(family.logo_url)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                ) : (
+                  family?.emoji || '🏠'
+                )}
               </div>
               <div>
-                <div className="mobile-drawer-family">{family?.name || 'FamilyBase'}</div>
+                <div className="mobile-drawer-family">{family?.name || 'Base Familiar'}</div>
                 <div style={{ fontSize: '0.75rem', color: 'var(--text-light)', marginTop: 1 }}>{user?.name}</div>
               </div>
             </div>
 
-            {/* All drawer items in a 4-column grid */}
+            <p style={{ textAlign: 'center', fontWeight: 800, fontSize: '1.05rem', margin: '0 0 12px', color: 'var(--text)' }}>
+              Mais Módulos 🎛️
+            </p>
+
             <div className="mobile-drawer-grid">
-              {drawerItems.map(item => {
+              {drawerItems.map((item) => {
                 const isActive = item.end
                   ? location.pathname === item.to
-                  : location.pathname.startsWith(item.to);
+                  : location.pathname === item.to || location.pathname.startsWith(`${item.to}/`);
                 return (
                   <NavLink
                     key={item.to}
@@ -129,7 +200,7 @@ export default function MobileNav({ navItems = [], pinnedCount: pinnedProp = 4 }
                     onClick={() => setDrawerOpen(false)}
                   >
                     <span className="mobile-drawer-icon-wrap" aria-hidden>
-                      <span className="mdi-icon">{item.icon}</span>
+                      <DrawerTabIcon item={item} active={isActive} />
                     </span>
                     <span className="mobile-drawer-label">{item.label}</span>
                   </NavLink>
@@ -137,32 +208,54 @@ export default function MobileNav({ navItems = [], pinnedCount: pinnedProp = 4 }
               })}
             </div>
 
-            {/* Footer: user + logout */}
             <div className="mobile-drawer-footer">
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <div style={{
-                  width: 36, height: 36, borderRadius: '50%', overflow: 'hidden',
-                  background: 'linear-gradient(135deg, var(--primary-light), var(--accent-light))',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontSize: '1.1rem', fontWeight: 700, color: '#fff', flexShrink: 0
-                }}>
+                <div
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: '50%',
+                    overflow: 'hidden',
+                    background: 'linear-gradient(135deg, var(--primary-light), var(--accent-light))',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    flexShrink: 0,
+                  }}
+                >
                   {userAvatar}
                 </div>
                 <div>
                   <div style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--text)' }}>{user?.name}</div>
                   <div style={{ fontSize: '0.72rem', color: 'var(--text-light)' }}>
-                    <button className={`lang-btn ${lang === 'pt' ? 'active' : ''}`} onClick={() => switchLanguage('pt')}>🇧🇷</button>
-                    <button className={`lang-btn ${lang === 'en' ? 'active' : ''}`} onClick={() => switchLanguage('en')}>🇺🇸</button>
+                    <button type="button" className={`lang-btn ${lang === 'pt' ? 'active' : ''}`} onClick={() => switchLanguage('pt')}>
+                      🇧🇷
+                    </button>
+                    <button type="button" className={`lang-btn ${lang === 'en' ? 'active' : ''}`} onClick={() => switchLanguage('en')}>
+                      🇺🇸
+                    </button>
                   </div>
                 </div>
               </div>
               <button
+                type="button"
                 style={{
-                  display: 'flex', alignItems: 'center', gap: 8, padding: '8px 16px',
-                  borderRadius: 12, border: '1px solid var(--border)', background: 'none',
-                  color: 'var(--danger)', fontWeight: 700, fontSize: '0.85rem', cursor: 'pointer'
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: '8px 16px',
+                  borderRadius: 12,
+                  border: '1px solid var(--border)',
+                  background: 'none',
+                  color: 'var(--danger)',
+                  fontWeight: 700,
+                  fontSize: '0.85rem',
+                  cursor: 'pointer',
                 }}
-                onClick={() => { setDrawerOpen(false); logout(); }}
+                onClick={() => {
+                  setDrawerOpen(false);
+                  logout();
+                }}
               >
                 🚪 {t('logout')}
               </button>

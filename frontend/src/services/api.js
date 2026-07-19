@@ -1,4 +1,5 @@
 import { supabase, fetchNoStore } from '../lib/supabase';
+import { resolveSupabaseConfig } from '../lib/supabaseConfig';
 import { famDiagWarn } from '../lib/famDiag';
 import { createClient } from '@supabase/supabase-js';
 import { normalizeHex } from '../lib/userDisplayColors';
@@ -21,8 +22,7 @@ import {
   shouldAutoRejectOccurrence,
 } from '../lib/taskOccurrenceClosure.js';
 
-const BASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
-const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+const { url: BASE_URL, anonKey: ANON_KEY } = resolveSupabaseConfig();
 
 // Cliente secundário para permitir registo de novos membros/crianças sem encerrar a sessão atual (master/parent)
 const supabaseSecondary = BASE_URL && ANON_KEY ? createClient(BASE_URL, ANON_KEY, {

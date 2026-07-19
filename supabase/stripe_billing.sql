@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS public.stripe_webhook_events (
 ALTER TABLE public.stripe_webhook_events ENABLE ROW LEVEL SECURITY;
 
 ALTER TABLE public.families ADD COLUMN IF NOT EXISTS stripe_customer_id TEXT;
+ALTER TABLE public.families ADD COLUMN IF NOT EXISTS subscription_id TEXT;
 
 COMMENT ON COLUMN public.families.stripe_customer_id IS 'Stripe Customer id (cus_...) para reutilizar no Checkout.';
-COMMENT ON COLUMN public.families.subscription_id IS 'Subscription id na gateway ativa (ex. sub_* Stripe ou pré-approval MP legacy).';
 

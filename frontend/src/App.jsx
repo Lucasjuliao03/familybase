@@ -1,5 +1,5 @@
 import { lazy, Suspense, useRef } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import FamiliaQueryProvider from './providers/FamiliaQueryProvider';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { useAppResume } from './hooks/useAppResume';
@@ -11,6 +11,7 @@ import PWAInstallBanner from './components/PWAInstallBanner';
 import PWAUpdateModal from './components/PWAUpdateModal';
 import FirstAccessPasswordModal from './components/FirstAccessPasswordModal';
 import PageLoader from './components/PageLoader';
+import LayoutModeSync from './components/LayoutModeSync';
 
 // ─── Layouts (carregados antecipadamente — pequenos e usados em tudo) ─────────
 import ParentLayout from './components/layout/ParentLayout';
@@ -90,7 +91,7 @@ function userCanManageFamilyBilling(user, effectiveSubscription) {
 function SubscribeGateway() {
   const { user, loading, effectiveSubscription } = useAuth();
   if (!user) return <Navigate to="/login" replace />;
-  if (loading) return <AuthLoading message="A preparar conta…" />;
+  if (loading && !user) return <AuthLoading message="A preparar conta…" />;
   if (user.role === 'master') return <Navigate to="/master" replace />;
 
   const canPay = userCanManageFamilyBilling(user, effectiveSubscription);
@@ -103,9 +104,12 @@ function SubscribeGateway() {
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+const PUBLIC_PATHS = new Set(['/login', '/register']);
+
 function ProtectedRoute({ children, allowedRoles }) {
   const { user, family, effectiveSubscription, loading } = useAuth();
-  if (loading) return <AuthLoading message="A carregar…" />;
+  if (loading && !user) return <AuthLoading message="A carregar…" />;
   if (!user) return <Navigate to="/login" replace />;
 
   if (user.role !== 'master') {
@@ -126,7 +130,7 @@ function ProtectedRoute({ children, allowedRoles }) {
 
 function GestorRoute({ children }) {
   const { user, loading } = useAuth();
-  if (loading) return <AuthLoading />;
+  if (loading && !user) return <AuthLoading />;
   if (!user) return <Navigate to="/login" replace />;
   if (user.role !== 'parent') return <Navigate to="/parent" replace />;
   const ap = user.access_profile ?? user.accessProfile ?? 'gestor';
@@ -137,7 +141,7 @@ function GestorRoute({ children }) {
 function ModuleRoute({ module: moduleKey, anyOf, children }) {
   const { user, modules, loading } = useAuth();
   const base = user?.role === 'child' ? '/child' : '/parent';
-  if (loading) return <AuthLoading />;
+  if (loading && !user) return <AuthLoading />;
   if (anyOf?.length) {
     if (!anyModuleAllowed(modules, anyOf)) return <Navigate to={base} replace />;
   } else if (moduleKey && !moduleAllowed(modules, moduleKey)) {
@@ -149,7 +153,13 @@ function ModuleRoute({ module: moduleKey, anyOf, children }) {
 // ─────────────────────────────────────────────────────────────────────────────
 function AppRoutes() {
   const { user, loading } = useAuth();
-  if (loading) return <AuthLoading message="A iniciar sessão…" />;
+  const location = useLocation();
+  const isPublic = PUBLIC_PATHS.has(location.pathname);
+
+  // Só bloqueia rotas protegidas enquanto a sessão ainda não foi verificada
+  if (loading && !user && !isPublic) {
+    return <AuthLoading message="A iniciar sessão…" />;
+  }
 
   const defaultPath = () => {
     if (!user) return '/login';
@@ -330,12 +340,20 @@ function AppResumeSync() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+function routerBasename() {
+  const base = import.meta.env.BASE_URL || '/';
+  if (base === './' || base === '.') return undefined;
+  const trimmed = base.replace(/\/$/, '');
+  return trimmed || undefined;
+}
+
 export default function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={routerBasename()}>
       <FamiliaQueryProvider>
         <LanguageProvider>
           <AuthProvider>
+          <LayoutModeSync />
           <AppResumeSync />
           <PWAProvider>
             <ToastProvider>
