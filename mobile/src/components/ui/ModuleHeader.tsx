@@ -1,38 +1,40 @@
 import React, { ReactNode } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, StatusBar, Platform } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { Colors, Radii, FontSize, Shadow } from '../../theme';
+import { ParentModuleIcon } from './ParentModuleIcon';
 
 interface ModuleHeaderProps {
-  /** Nome do módulo (ex.: "Gerenciador de Tarefas"). */
   title: string;
-  /** Emoji exibido ao lado do nome do módulo. */
+  /** @deprecated use iconName */
   emoji?: string;
+  iconName?: string;
   subtitle?: string;
-  /** Mostra o botão de voltar. */
   onBack?: () => void;
-  /** Conteúdo opcional no canto direito (ações). */
   right?: ReactNode;
 }
 
-/**
- * Cabeçalho padrão dos módulos (gestor). Visual uniforme em todos os módulos:
- * superfície branca com cantos inferiores arredondados, nome do módulo + emoji,
- * subtítulo e botão de voltar. Usado para padronizar Tarefas, Mesada, etc.
- */
-export function ModuleHeader({ title, emoji, subtitle, onBack, right }: ModuleHeaderProps) {
+export function ModuleHeader({ title, emoji, iconName, subtitle, onBack, right }: ModuleHeaderProps) {
+  const resolvedIcon = iconName || (emoji ? undefined : 'dashboard');
+
   return (
     <View style={s.header}>
       <StatusBar barStyle="dark-content" backgroundColor={Colors.bg} />
       {onBack ? (
-        <TouchableOpacity onPress={onBack} style={s.backBtn} activeOpacity={0.8}>
-          <Text style={s.backBtnText}>‹</Text>
+        <TouchableOpacity onPress={onBack} style={s.backBtn} activeOpacity={0.8} accessibilityLabel="Voltar">
+          <Ionicons name="chevron-back" size={22} color={Colors.primary} />
         </TouchableOpacity>
       ) : null}
 
       <View style={s.center}>
-        <Text style={s.title} numberOfLines={1}>
-          {title}{emoji ? ` ${emoji}` : ''}
-        </Text>
+        <View style={s.titleRow}>
+          {resolvedIcon ? (
+            <View style={s.iconBadge}>
+              <ParentModuleIcon name={resolvedIcon} size={18} color={Colors.primary} />
+            </View>
+          ) : null}
+          <Text style={s.title} numberOfLines={1}>{title}</Text>
+        </View>
         {!!subtitle && <Text style={s.subtitle} numberOfLines={1}>{subtitle}</Text>}
       </View>
 
@@ -65,9 +67,17 @@ const s = StyleSheet.create({
     borderColor: Colors.border,
     ...Shadow.sm,
   },
-  backBtnText: { fontSize: 24, color: Colors.primary, fontWeight: 'bold', marginTop: -4 },
   center: { flex: 1 },
-  title: { fontSize: FontSize.lg, fontWeight: '900', color: Colors.text },
-  subtitle: { fontSize: FontSize.xs, color: Colors.textSecondary, marginTop: 2 },
+  titleRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  iconBadge: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    backgroundColor: Colors.primaryLighter,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  title: { flex: 1, fontSize: FontSize.lg, fontWeight: '900', color: Colors.text },
+  subtitle: { fontSize: FontSize.xs, color: Colors.textSecondary, marginTop: 4, marginLeft: 44 },
   right: { marginLeft: 'auto' },
 });

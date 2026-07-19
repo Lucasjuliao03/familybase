@@ -19,6 +19,7 @@ import {
 } from '../../src/lib/api';
 import { Colors, Shadow, Radii, FontSize } from '../../src/theme';
 import { UserAvatar } from '../../src/components/profile/UserAvatar';
+import { ParentModuleIcon } from '../../src/components/ui/ParentModuleIcon';
 import { ChildProfileSwitcher } from '../../src/components/proxy/ChildProfileSwitcher';
 
 // ─── Componentes Auxiliares ──────────────────────────────────────────────────
@@ -55,12 +56,13 @@ function ChildCard({ child }: ChildCardProps) {
             />
             <View style={styles.childInfoText}>
               <Text style={styles.childName}>{child.name}</Text>
-              <Text style={styles.childLevel}>⭐ Nível {child.level}</Text>
+              <Text style={styles.childLevel}>Nível {child.level}</Text>
             </View>
           </View>
           {child.streak_current > 0 && (
             <View style={styles.streakBadge}>
-              <Text style={styles.streakText}>🔥 {child.streak_current}d</Text>
+              <ParentModuleIcon name="streak" size={14} color="#EA580C" />
+              <Text style={styles.streakText}>{child.streak_current}d</Text>
             </View>
           )}
         </View>
@@ -79,7 +81,7 @@ function ChildCard({ child }: ChildCardProps) {
         {/* Estatísticas Rápidas */}
         <View style={styles.childStatsRow}>
           <View style={styles.childStatCol}>
-            <Text style={styles.childStatIcon}>⭐</Text>
+            <View style={styles.childStatIconWrap}><ParentModuleIcon name="points" size={16} color={Colors.primary} /></View>
             <View>
               <Text style={styles.childStatVal}>{child.points}</Text>
               <Text style={styles.childStatLabel}>Pontos</Text>
@@ -87,7 +89,7 @@ function ChildCard({ child }: ChildCardProps) {
           </View>
 
           <View style={styles.childStatCol}>
-            <Text style={styles.childStatIcon}>💰</Text>
+            <View style={styles.childStatIconWrap}><ParentModuleIcon name="allowance" size={16} color="#10B981" /></View>
             <View>
               <Text style={styles.childStatVal} numberOfLines={1}>{allowanceDisplay}</Text>
               <Text style={styles.childStatLabel}>Mesada</Text>
@@ -100,13 +102,13 @@ function ChildCard({ child }: ChildCardProps) {
 }
 
 interface QuickActionProps {
-  icon: string;
+  iconKey: string;
   label: string;
   color: string;
   route: string;
 }
 
-function QuickAction({ icon, label, color, route }: QuickActionProps) {
+function QuickAction({ iconKey, label, color, route }: QuickActionProps) {
   const router = useRouter();
   return (
     <TouchableOpacity
@@ -115,7 +117,7 @@ function QuickAction({ icon, label, color, route }: QuickActionProps) {
       onPress={() => router.push(route as any)}
     >
       <View style={[styles.quickActionIconBg, { backgroundColor: `${color}12` }]}>
-        <Text style={[styles.quickActionIcon, { color }]}>{icon}</Text>
+        <ParentModuleIcon name={iconKey} size={22} color={color} />
       </View>
       <Text style={styles.quickActionLabel}>{label}</Text>
     </TouchableOpacity>
@@ -217,28 +219,33 @@ export default function ParentHomeScreen() {
         <View style={styles.header}>
           <View style={styles.headerInfo}>
             <Text style={styles.greeting}>
-              {greeting}, <Text style={styles.username}>{user?.name?.split(' ')[0] || 'Gestor'}</Text>! 👋
+              {greeting}, <Text style={styles.username}>{user?.name?.split(' ')[0] || 'Gestor'}</Text>
             </Text>
             <Text style={styles.familyName}>
               {family?.name ? `Família ${family.name}` : 'Base Familiar'} · {formattedDate}
             </Text>
           </View>
-          <TouchableOpacity style={styles.avatarBtn} activeOpacity={0.85}>
-            <Text style={styles.avatarText}>
-              {(user?.name || 'P').charAt(0).toUpperCase()}
-            </Text>
+          <TouchableOpacity style={styles.avatarBtn} activeOpacity={0.85} onPress={() => router.push('/parent/profile')}>
+            <UserAvatar
+              avatarUrl={user?.avatar_url}
+              avatarPreset={user?.avatar_preset}
+              name={user?.name}
+              size={44}
+              bordered={false}
+            />
           </TouchableOpacity>
         </View>
 
         {/* Badge de Cargo */}
         <View style={styles.roleBadge}>
-          <Text style={styles.roleBadgeText}>👨‍👩‍👧 Painel do Responsável</Text>
+          <ParentModuleIcon name="users" size={16} color={Colors.primary} />
+          <Text style={styles.roleBadgeText}>Painel do Responsável</Text>
         </View>
 
         {/* KPI Cards */}
         <View style={styles.kpiRow}>
           <View style={[styles.kpiCard, styles.kpiPurple]}>
-            <Text style={styles.kpiEmoji}>📋</Text>
+            <View style={styles.kpiIconWrap}><ParentModuleIcon name="clipboard" size={18} color={Colors.primary} /></View>
             <View style={styles.kpiValContainer}>
               <Text style={[styles.kpiValue, { color: Colors.primaryDark }]}>{stats?.pending ?? 0}</Text>
               <Text style={[styles.kpiLabel, { color: Colors.primary }]}>Tarefas Hoje</Text>
@@ -246,7 +253,7 @@ export default function ParentHomeScreen() {
           </View>
 
           <View style={[styles.kpiCard, styles.kpiOrange]}>
-            <Text style={styles.kpiEmoji}>⏳</Text>
+            <View style={styles.kpiIconWrap}><ParentModuleIcon name="pending" size={18} color="#EA580C" /></View>
             <View style={styles.kpiValContainer}>
               <Text style={[styles.kpiValue, { color: '#C2410C' }]}>{stats?.completed ?? 0}</Text>
               <Text style={[styles.kpiLabel, { color: '#EA580C' }]}>Aguardando</Text>
@@ -254,7 +261,7 @@ export default function ParentHomeScreen() {
           </View>
 
           <View style={[styles.kpiCard, styles.kpiGreen]}>
-            <Text style={styles.kpiEmoji}>✅</Text>
+            <View style={styles.kpiIconWrap}><ParentModuleIcon name="completed" size={18} color="#16A34A" /></View>
             <View style={styles.kpiValContainer}>
               <Text style={[styles.kpiValue, { color: '#15803D' }]}>{stats?.approved ?? 0}</Text>
               <Text style={[styles.kpiLabel, { color: '#16A34A' }]}>Aprovadas</Text>
@@ -263,7 +270,7 @@ export default function ParentHomeScreen() {
 
           {stats && stats.pendingRedemptions > 0 && (
             <View style={[styles.kpiCard, styles.kpiBlue]}>
-              <Text style={styles.kpiEmoji}>🛍️</Text>
+              <View style={styles.kpiIconWrap}><ParentModuleIcon name="store" size={18} color="#0284C7" /></View>
               <View style={styles.kpiValContainer}>
                 <Text style={[styles.kpiValue, { color: '#0369A1' }]}>{stats.pendingRedemptions}</Text>
                 <Text style={[styles.kpiLabel, { color: '#0284C7' }]}>Resgates</Text>
@@ -282,37 +289,37 @@ export default function ParentHomeScreen() {
         )}
 
         {/* Acesso Rápido */}
-        <Text style={styles.sectionTitle}>⚡ Acesso Rápido</Text>
+        <Text style={styles.sectionTitle}>Acesso Rápido</Text>
         <View style={styles.quickActionsGrid}>
           {moduleAllowed(modules, 'tasks') && (
             <>
-              <QuickAction icon="✅" label="Tarefas" color={Colors.primary} route="/parent/tasks" />
-              <QuickAction icon="👍" label="Aprovações" color="#F97316" route="/parent/tasks" />
+              <QuickAction iconKey="tasks" label="Tarefas" color={Colors.primary} route="/parent/tasks" />
+              <QuickAction iconKey="approval" label="Aprovações" color="#F97316" route="/parent/tasks" />
             </>
           )}
           {moduleAllowed(modules, 'grades') && (
-            <QuickAction icon="📚" label="Notas" color="#3B82F6" route="/parent/grades" />
+            <QuickAction iconKey="grades" label="Notas" color="#3B82F6" route="/parent/grades" />
           )}
           {anyModuleAllowed(modules, ['allowance', 'piggy_bank', 'goals']) && (
-            <QuickAction icon="💰" label="Mesada" color="#10B981" route="/parent/allowance" />
+            <QuickAction iconKey="allowance" label="Mesada" color="#10B981" route="/parent/allowance" />
           )}
           {moduleAllowed(modules, 'health') && (
-            <QuickAction icon="❤️" label="Saúde" color="#EC4899" route="/parent/health" />
+            <QuickAction iconKey="health" label="Saúde" color="#EC4899" route="/parent/health" />
           )}
           {moduleAllowed(modules, 'shopping') && (
-            <QuickAction icon="🛒" label="Compras" color="#14B8A6" route="/parent/shopping" />
+            <QuickAction iconKey="shopping" label="Compras" color="#14B8A6" route="/parent/shopping" />
           )}
           {moduleAllowed(modules, 'calendar') && (
-            <QuickAction icon="📅" label="Calendário" color="#818CF8" route="/parent/calendar" />
+            <QuickAction iconKey="calendar" label="Calendário" color="#818CF8" route="/parent/calendar" />
           )}
           {moduleAllowed(modules, 'mural') && (
-            <QuickAction icon="📌" label="Mural" color="#FBBF24" route="/parent/mural" />
+            <QuickAction iconKey="mural" label="Mural" color="#FBBF24" route="/parent/mural" />
           )}
           {moduleAllowed(modules, 'location') && (
-            <QuickAction icon="📍" label="Localização" color="#EF4444" route="/parent/location" />
+            <QuickAction iconKey="location" label="Localização" color="#EF4444" route="/parent/location" />
           )}
           {moduleAllowed(modules, 'family_shop') && (
-            <QuickAction icon="🛍️" label="Loja" color="#F472B6" route="/parent/store" />
+            <QuickAction iconKey="store" label="Loja" color="#F472B6" route="/parent/store" />
           )}
         </View>
 
@@ -338,7 +345,7 @@ export default function ParentHomeScreen() {
           {/* Card Eventos */}
           <View style={styles.cardContainer}>
             <View style={styles.cardHeader}>
-              <Text style={styles.cardTitle}>📅 Próximos Eventos</Text>
+              <Text style={styles.cardTitle}>Próximos Eventos</Text>
             </View>
 
             {events.length === 0 ? (
@@ -364,7 +371,7 @@ export default function ParentHomeScreen() {
           {/* Card Atividade Recente */}
           <View style={styles.cardContainer}>
             <View style={styles.cardHeader}>
-              <Text style={styles.cardTitle}>🕐 Atividade Recente</Text>
+              <Text style={styles.cardTitle}>Atividade Recente</Text>
             </View>
 
             {history.length === 0 ? (
@@ -519,6 +526,9 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   roleBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
     backgroundColor: Colors.primaryLighter,
     borderRadius: Radii.sm,
     paddingVertical: 6,
@@ -695,6 +705,9 @@ const styles = StyleSheet.create({
     marginTop: 1,
   },
   streakBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
     backgroundColor: '#FFF7ED',
     borderRadius: Radii.xs,
     paddingVertical: 3,
@@ -749,8 +762,22 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     width: '48%',
   },
-  childStatIcon: {
-    fontSize: 18,
+  kpiIconWrap: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.65)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+  childStatIconWrap: {
+    width: 30,
+    height: 30,
+    borderRadius: 8,
+    backgroundColor: Colors.bg,
+    alignItems: 'center',
+    justifyContent: 'center',
     marginRight: 8,
   },
   childStatVal: {

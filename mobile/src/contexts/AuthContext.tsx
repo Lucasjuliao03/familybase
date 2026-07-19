@@ -499,8 +499,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const { data: signInData, error: signInErr } = await supabase.auth.signInWithPassword({ email, password });
         if (signInErr) {
           throw new Error(
-            'Conta criada, mas o servidor exige confirmação por email antes do primeiro acesso. ' +
-            'Confirme o email recebido e depois faça login.',
+            'Não foi possível iniciar sessão após o cadastro. Verifique email e senha e tente entrar.',
           );
         }
         session = signInData.session;

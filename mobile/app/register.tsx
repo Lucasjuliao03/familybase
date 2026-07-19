@@ -1,10 +1,11 @@
-import { useState, ComponentProps } from 'react';
+import { useState, ComponentProps, type ReactNode } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, Image,
   StyleSheet, KeyboardAvoidingView, Platform,
   Alert, ScrollView, StatusBar,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { useAuth } from '../src/contexts/AuthContext';
@@ -26,7 +27,8 @@ interface AvatarPick {
   ext: string;
 }
 
-/** Converte "DD/MM/AAAA" → "AAAA-MM-DD" (ou null se inválida). */
+type IonName = ComponentProps<typeof Ionicons>['name'];
+
 function toISODate(masked: string): string | null {
   const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(masked.trim());
   if (!m) return null;
@@ -47,7 +49,6 @@ function yearsSince(iso: string): number {
   return age;
 }
 
-/** Máscara progressiva de data DD/MM/AAAA. */
 function maskDate(input: string): string {
   const digits = input.replace(/\D/g, '').slice(0, 8);
   const p1 = digits.slice(0, 2);
@@ -135,7 +136,7 @@ export default function RegisterScreen() {
               const ok = await runBiometricPrompt(`Ativar ${label}`);
               if (ok) {
                 await enableBiometricLogin({ email: em, password: pw });
-                Alert.alert('Pronto!', `${label} ativado para este aparelho.`);
+                Alert.alert('Pronto', `${label} ativado para este aparelho.`);
               }
             },
           },
@@ -166,9 +167,7 @@ export default function RegisterScreen() {
         avatarBase64: avatar?.base64 || null,
         avatarExt: avatar?.ext,
       });
-      // Conta criada e sessão iniciada. Oferecer biometria (best-effort).
       await offerBiometric(em, password);
-      // A navegação para /parent é tratada automaticamente pelo layout raiz.
     } catch (e) {
       Alert.alert('Erro no cadastro', (e as Error)?.message || 'Tente novamente.');
     } finally {
@@ -184,106 +183,106 @@ export default function RegisterScreen() {
       <StatusBar barStyle="light-content" />
       <ScrollView bounces={false} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
 
-        {/* Hero */}
         <LinearGradient
           colors={[Colors.gradStart, Colors.gradMid, Colors.gradEnd]}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
           style={styles.hero}
         >
-          <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
-            <Text style={styles.backBtnText}>‹</Text>
+          <TouchableOpacity style={styles.backBtn} onPress={() => router.back()} accessibilityLabel="Voltar">
+            <Ionicons name="chevron-back" size={22} color="#fff" />
           </TouchableOpacity>
-          <AppLogo size={100} containerStyle={{ marginBottom: 8 }} />
-          <Text style={styles.heroTitle}>Nova Família</Text>
-          <Text style={styles.heroSub}>Crie a conta do responsável e ganhe 7 dias grátis 🎁</Text>
+          <AppLogo size={92} containerStyle={{ marginBottom: 8 }} />
+          <Text style={styles.heroTitle}>Nova família</Text>
+          <Text style={styles.heroSub}>Cadastro do responsável principal · 7 dias grátis</Text>
         </LinearGradient>
 
-        {/* Painel */}
         <View style={styles.panel}>
-
-          {/* Avatar */}
           <TouchableOpacity style={styles.avatarPick} onPress={pickAvatar} activeOpacity={0.85}>
             {avatar ? (
               <Image source={{ uri: avatar.uri }} style={styles.avatarImg} />
             ) : (
               <View style={styles.avatarPlaceholder}>
-                <Text style={{ fontSize: 30 }}>📷</Text>
+                <Ionicons name="camera-outline" size={28} color={Colors.primary} />
               </View>
             )}
-            <Text style={styles.avatarHint}>{avatar ? 'Trocar foto' : 'Adicionar foto (opcional)'}</Text>
+            <Text style={styles.avatarHint}>{avatar ? 'Alterar foto' : 'Adicionar foto (opcional)'}</Text>
           </TouchableOpacity>
 
-          <Label text="Nome da família *" />
-          <Field icon="👪" value={familyName} onChangeText={setFamilyName} placeholder="Ex: Família Silva" editable={!submitting} />
+          <Label text="Nome da família" required />
+          <Field icon="people-outline" value={familyName} onChangeText={setFamilyName} placeholder="Ex: Família Silva" editable={!submitting} />
 
-          {/* Perfil do responsável */}
-          <Label text="Você é *" />
+          <Label text="Perfil do responsável" required />
           <View style={styles.segment}>
-            {([['pai', '👨 Pai'], ['mae', '👩 Mãe']] as const).map(([val, lbl]) => (
+            {([
+              ['pai', 'Pai', 'man-outline'],
+              ['mae', 'Mãe', 'woman-outline'],
+            ] as const).map(([val, lbl, icon]) => (
               <TouchableOpacity
                 key={val}
                 style={[styles.segmentBtn, profileType === val && styles.segmentBtnActive]}
                 onPress={() => setProfileType(val)}
                 disabled={submitting}
               >
+                <Ionicons
+                  name={icon}
+                  size={18}
+                  color={profileType === val ? Colors.primary : Colors.textSecondary}
+                />
                 <Text style={[styles.segmentText, profileType === val && styles.segmentTextActive]}>{lbl}</Text>
               </TouchableOpacity>
             ))}
           </View>
           <Text style={styles.helper}>O responsável principal é o gestor da família (financeiro e administração).</Text>
 
-          <Label text="Nome do responsável *" />
-          <Field icon="🙂" value={name} onChangeText={setName} placeholder="Seu nome completo" editable={!submitting} />
+          <Label text="Nome do responsável" required />
+          <Field icon="person-outline" value={name} onChangeText={setName} placeholder="Seu nome completo" editable={!submitting} />
 
-          <Label text="Email *" />
+          <Label text="Email" required />
           <Field
-            icon="✉️" value={email} onChangeText={setEmail} placeholder="seu@email.com"
+            icon="mail-outline" value={email} onChangeText={setEmail} placeholder="seu@email.com"
             keyboardType="email-address" autoCapitalize="none" editable={!submitting}
           />
 
-          <Label text="Senha *" />
-          <View style={styles.inputWrap}>
-            <Text style={styles.inputIcon}>🔒</Text>
-            <TextInput
-              style={styles.input}
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry={!showPass}
-              placeholder="Mínimo 6 caracteres"
-              placeholderTextColor={Colors.textMuted}
-              editable={!submitting}
-            />
-            <TouchableOpacity onPress={() => setShowPass(!showPass)}>
-              <Text style={styles.eyeIcon}>{showPass ? '🙈' : '👁️'}</Text>
-            </TouchableOpacity>
-          </View>
-
-          <Label text="Confirmar senha *" />
+          <Label text="Senha" required />
           <Field
-            icon="🔒" value={confirm} onChangeText={setConfirm} placeholder="Repita a senha"
+            icon="lock-closed-outline"
+            value={password}
+            onChangeText={setPassword}
+            placeholder="Mínimo 6 caracteres"
+            secureTextEntry={!showPass}
+            editable={!submitting}
+            trailing={
+              <TouchableOpacity onPress={() => setShowPass(!showPass)} hitSlop={8}>
+                <Ionicons name={showPass ? 'eye-off-outline' : 'eye-outline'} size={20} color={Colors.textMuted} />
+              </TouchableOpacity>
+            }
+          />
+
+          <Label text="Confirmar senha" required />
+          <Field
+            icon="lock-closed-outline" value={confirm} onChangeText={setConfirm} placeholder="Repita a senha"
             secureTextEntry={!showPass} editable={!submitting}
           />
 
-          <Label text="Telefone (opcional)" />
+          <Label text="Telefone" optional />
           <Field
-            icon="📞" value={phone} onChangeText={setPhone} placeholder="(00) 00000-0000"
+            icon="call-outline" value={phone} onChangeText={setPhone} placeholder="(00) 00000-0000"
             keyboardType="phone-pad" editable={!submitting}
           />
 
-          <Label text="Endereço (opcional)" />
-          <Field icon="📍" value={address} onChangeText={setAddress} placeholder="Rua, número, cidade" editable={!submitting} />
+          <Label text="Endereço" optional />
+          <Field icon="location-outline" value={address} onChangeText={setAddress} placeholder="Rua, número, cidade" editable={!submitting} />
 
-          <Label text="Data de nascimento *" />
+          <Label text="Data de nascimento" required />
           <Field
-            icon="🎂" value={birth} onChangeText={(t) => setBirth(maskDate(t))} placeholder="DD/MM/AAAA"
+            icon="calendar-outline" value={birth} onChangeText={(t) => setBirth(maskDate(t))} placeholder="DD/MM/AAAA"
             keyboardType="number-pad" editable={!submitting}
           />
 
-          {/* Termos */}
           <TouchableOpacity style={styles.termsRow} onPress={() => setAccepted((v) => !v)} activeOpacity={0.8}>
             <View style={[styles.checkbox, accepted && styles.checkboxOn]}>
-              {accepted && <Text style={styles.checkboxTick}>✓</Text>}
+              {accepted && <Ionicons name="checkmark" size={14} color="#fff" />}
             </View>
             <Text style={styles.termsText}>
               Li e aceito os <Text style={styles.termsLink}>Termos de Uso</Text> e a{' '}
@@ -292,10 +291,15 @@ export default function RegisterScreen() {
           </TouchableOpacity>
 
           <View style={styles.trialCallout}>
-            <Text style={styles.trialTitle}>🎁 Teste grátis de 7 dias</Text>
-            <Text style={styles.trialText}>
-              A família inteira usa o mesmo plano. As contas das crianças são criadas depois, pelo gestor, no painel da família.
-            </Text>
+            <View style={styles.trialIconWrap}>
+              <Ionicons name="sparkles-outline" size={18} color={Colors.primary} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.trialTitle}>Teste grátis de 7 dias</Text>
+              <Text style={styles.trialText}>
+                Toda a família usa o mesmo plano. Contas de crianças são criadas depois pelo gestor no painel.
+              </Text>
+            </View>
           </View>
 
           <PrimaryButton
@@ -308,27 +312,38 @@ export default function RegisterScreen() {
           <TouchableOpacity style={styles.loginLink} onPress={() => router.replace('/login')} disabled={submitting}>
             <Text style={styles.loginLinkText}>Já tem conta? <Text style={styles.loginLinkStrong}>Entrar</Text></Text>
           </TouchableOpacity>
-
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
   );
 }
 
-function Label({ text }: { text: string }) {
-  return <Text style={styles.label}>{text}</Text>;
+function Label({ text, required, optional }: { text: string; required?: boolean; optional?: boolean }) {
+  return (
+    <Text style={styles.label}>
+      {text}
+      {required ? ' *' : ''}
+      {optional ? <Text style={styles.labelOptional}> (opcional)</Text> : null}
+    </Text>
+  );
 }
 
-function Field(props: ComponentProps<typeof TextInput> & { icon: string }) {
-  const { icon, style, ...rest } = props;
+function Field(
+  props: ComponentProps<typeof TextInput> & {
+    icon: IonName;
+    trailing?: ReactNode;
+  },
+) {
+  const { icon, trailing, style, ...rest } = props;
   return (
     <View style={styles.inputWrap}>
-      <Text style={styles.inputIcon}>{icon}</Text>
+      <Ionicons name={icon} size={18} color={Colors.textMuted} />
       <TextInput
         style={[styles.input, style]}
         placeholderTextColor={Colors.textMuted}
         {...rest}
       />
+      {trailing}
     </View>
   );
 }
@@ -338,7 +353,7 @@ const styles = StyleSheet.create({
 
   hero: {
     paddingTop: 56,
-    paddingBottom: 40,
+    paddingBottom: 36,
     alignItems: 'center',
     borderBottomLeftRadius: 32,
     borderBottomRightRadius: 32,
@@ -346,18 +361,17 @@ const styles = StyleSheet.create({
   backBtn: {
     position: 'absolute', top: 52, left: 16,
     width: 38, height: 38, borderRadius: 19,
-    backgroundColor: 'rgba(255,255,255,0.22)',
+    backgroundColor: 'rgba(255,255,255,0.18)',
     justifyContent: 'center', alignItems: 'center',
   },
-  backBtnText: { color: '#fff', fontSize: 28, fontWeight: '800', marginTop: -4 },
-  heroTitle: { fontSize: FontSize.xl, fontWeight: '900', color: '#fff' },
+  heroTitle: { fontSize: FontSize.xl, fontWeight: '900', color: '#fff', letterSpacing: -0.3 },
   heroSub: {
-    fontSize: FontSize.sm, color: 'rgba(255,255,255,0.9)',
-    textAlign: 'center', marginTop: 6, paddingHorizontal: 24,
+    fontSize: FontSize.sm, color: 'rgba(255,255,255,0.92)',
+    textAlign: 'center', marginTop: 6, paddingHorizontal: 28,
   },
 
   panel: {
-    marginTop: -20,
+    marginTop: -18,
     backgroundColor: Colors.surface,
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
@@ -369,33 +383,32 @@ const styles = StyleSheet.create({
   },
 
   avatarPick: { alignItems: 'center', marginBottom: 12 },
-  avatarImg: { width: 84, height: 84, borderRadius: 42, borderWidth: 3, borderColor: Colors.primaryLighter },
+  avatarImg: { width: 84, height: 84, borderRadius: 42, borderWidth: 2, borderColor: Colors.primaryLighter },
   avatarPlaceholder: {
     width: 84, height: 84, borderRadius: 42,
-    backgroundColor: Colors.bg, borderWidth: 2, borderColor: Colors.border, borderStyle: 'dashed',
+    backgroundColor: Colors.bg, borderWidth: 1.5, borderColor: Colors.border,
     justifyContent: 'center', alignItems: 'center',
   },
   avatarHint: { marginTop: 6, fontSize: FontSize.xs, color: Colors.primary, fontWeight: '700' },
 
   label: { fontSize: FontSize.xs + 1, fontWeight: '800', color: Colors.text, marginTop: 14, marginBottom: 6 },
-  helper: { fontSize: FontSize.xs, color: Colors.textMuted, marginTop: 6 },
+  labelOptional: { fontWeight: '600', color: Colors.textMuted },
+  helper: { fontSize: FontSize.xs, color: Colors.textMuted, marginTop: 6, lineHeight: 16 },
 
   inputWrap: {
     flexDirection: 'row', alignItems: 'center',
     backgroundColor: Colors.bg, borderRadius: Radii.md,
-    borderWidth: 1.5, borderColor: Colors.border,
-    paddingHorizontal: 14, paddingVertical: Platform.OS === 'ios' ? 13 : 6,
+    borderWidth: 1, borderColor: Colors.border,
+    paddingHorizontal: 14, paddingVertical: Platform.OS === 'ios' ? 13 : 8,
     gap: 10,
   },
-  inputIcon: { fontSize: 17 },
   input: { flex: 1, fontSize: FontSize.base, color: Colors.text },
-  eyeIcon: { fontSize: 18 },
 
   segment: { flexDirection: 'row', gap: 10 },
   segmentBtn: {
-    flex: 1, paddingVertical: 13, borderRadius: Radii.md,
-    borderWidth: 1.5, borderColor: Colors.border, backgroundColor: Colors.bg,
-    alignItems: 'center',
+    flex: 1, paddingVertical: 12, borderRadius: Radii.md,
+    borderWidth: 1, borderColor: Colors.border, backgroundColor: Colors.bg,
+    alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8,
   },
   segmentBtnActive: { borderColor: Colors.primary, backgroundColor: Colors.primaryLighter },
   segmentText: { fontSize: FontSize.base, fontWeight: '700', color: Colors.textSecondary },
@@ -403,20 +416,24 @@ const styles = StyleSheet.create({
 
   termsRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, marginTop: 18 },
   checkbox: {
-    width: 24, height: 24, borderRadius: 7, borderWidth: 2, borderColor: Colors.border,
+    width: 22, height: 22, borderRadius: 6, borderWidth: 1.5, borderColor: Colors.border,
     justifyContent: 'center', alignItems: 'center', marginTop: 1,
   },
   checkboxOn: { backgroundColor: Colors.primary, borderColor: Colors.primary },
-  checkboxTick: { color: '#fff', fontSize: 14, fontWeight: '900' },
   termsText: { flex: 1, fontSize: FontSize.sm, color: Colors.textSecondary, lineHeight: 19 },
   termsLink: { color: Colors.primary, fontWeight: '700' },
 
   trialCallout: {
-    backgroundColor: Colors.tealLight, borderRadius: Radii.md,
-    borderWidth: 1, borderColor: Colors.tealMid, padding: 14, marginTop: 18, marginBottom: 4,
+    flexDirection: 'row', alignItems: 'flex-start', gap: 12,
+    backgroundColor: '#F5F3FF', borderRadius: Radii.md,
+    borderWidth: 1, borderColor: '#DDD6FE', padding: 14, marginTop: 18, marginBottom: 4,
   },
-  trialTitle: { fontSize: FontSize.sm, fontWeight: '800', color: '#0D9488' },
-  trialText: { fontSize: FontSize.xs, color: '#0F766E', marginTop: 4, lineHeight: 17 },
+  trialIconWrap: {
+    width: 34, height: 34, borderRadius: 17,
+    backgroundColor: '#EDE9FE', alignItems: 'center', justifyContent: 'center',
+  },
+  trialTitle: { fontSize: FontSize.sm, fontWeight: '800', color: Colors.primary },
+  trialText: { fontSize: FontSize.xs, color: Colors.textSecondary, marginTop: 4, lineHeight: 17 },
 
   loginLink: { alignItems: 'center', paddingVertical: 16 },
   loginLinkText: { fontSize: FontSize.sm, color: Colors.textSecondary },
