@@ -85,6 +85,8 @@ export interface AuthContextValue {
   isGestor: boolean;
   mustChangePassword: boolean;
   loading: boolean;
+  /** true enquanto família/módulos/assinatura ainda carregam em background */
+  profileLoading: boolean;
   /** Filho que o pai está a "encarnar" (modo filho), ou null. */
   actingAsChild: any | null;
   /** true quando o utilizador autenticado está a atuar como um filho. */
@@ -110,6 +112,7 @@ const DEFAULT_MODULES: ModulesMap = {
 
 const CACHE_KEY = 'familia_profile_cache';
 const CACHE_TTL_MS = 10 * 60 * 1000;
+const SESSION_CHECK_MS = 3_000;
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
@@ -221,6 +224,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [childProfile, setChildProfile] = useState<any | null>(null);
   const [effectiveSubscription, setEffectiveSubscription] = useState<EffectiveSubscription | null>(null);
   const [loading, setLoading] = useState(true);
+  const [profileLoading, setProfileLoading] = useState(false);
   const [actingChild, setActingChild] = useState<any | null>(null);
 
   const isGestor = useMemo(() => {
@@ -251,10 +255,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (isMountedRef.current) setLoading(val);
   }, []);
 
-  const loadProfile = useCallback(async (userId: string, emailHint?: string): Promise<void> => {
-    if (inflightRef.current) return inflightRef.current;
+  const loadProfile = useCallback(async (userId: string, emailHint?: string, opts: { awaitReady?: boolean; awaitFull?: boolean } = {}): Promise<void> => {
+    if (inflightRef.current) {
+      if (opts.awaitFull || opts.awaitReady) await inflightRef.current;
+      return;
+    }
+
+    let resolveReady: (() => void) | undefined;
+    let rejectReady: ((e: unknown) => void) | undefined;
+    const readyPromise = new Promise<void>((resolve, reject) => {
+      resolveReady = resolve;
+      rejectReady = reject;
+    });
 
     const promise = (async () => {
+      setProfileLoading(true);
       try {
         const { data: profileRow, error: profileErr } = await supabase
           .from('users')
@@ -267,8 +282,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (profileErr || !profileRow) {
           setUser(null); setFamily(null); setModules({}); setChildProfile(null);
           setEffectiveSubscription(null);
+          rejectReady?.(profileErr || new Error('profile_not_found'));
           return;
         }
+
+        const userObj: UserProfile = {
+          ...profileRow,
+          email: emailHint || (profileRow.email as string) || '',
+        } as UserProfile;
+
+        setUser(userObj);
+        resolveReady?.();
 
         const fid = profileRow.family_id as string | undefined;
         const wantsChildRow = profileRow.role === 'child';
@@ -296,7 +320,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         let effSub: EffectiveSubscription;
         try {
-          const rpcRes = await raceMs(supabase.rpc('get_effective_subscription') as any, 5000) as any;
+          const rpcRes = await raceMs(supabase.rpc('get_effective_subscription') as any, 2500) as any;
           const effData = rpcRes?.data;
           const effErr = rpcRes?.error;
           if (!effErr && effData != null && typeof effData === 'object') {
@@ -324,12 +348,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         ((modulesResult.data ?? []) as { module_key: string; is_enabled: boolean }[])
           .forEach((r) => { if (r.module_key) mergedMods[r.module_key] = !!r.is_enabled; });
 
-        const userObj: UserProfile = {
-          ...profileRow,
-          email: emailHint || (profileRow.email as string) || '',
-        } as UserProfile;
-
-        setUser(userObj);
         setFamily(resolvedFamily);
         setModules(mergedMods);
         setChildProfile(effectiveChildRow ?? null);
@@ -347,19 +365,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         } catch { /* storage cheio */ }
       } catch (err) {
         console.error('[Auth] loadProfile erro:', err);
+        rejectReady?.(err);
         if (isMountedRef.current) {
           setUser(null); setFamily(null); setModules({}); setChildProfile(null);
           setEffectiveSubscription(null);
         }
       } finally {
         inflightRef.current = null;
-        safeSetLoading(false);
+        if (isMountedRef.current) setProfileLoading(false);
       }
     })();
 
     inflightRef.current = promise;
-    return promise;
-  }, [safeSetLoading]);
+
+    if (opts.awaitFull) {
+      await promise;
+    } else if (opts.awaitReady) {
+      await readyPromise;
+      promise.catch((e) => console.warn('[Auth] loadProfile background:', e));
+    } else {
+      promise.catch((e) => console.warn('[Auth] loadProfile background:', e));
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -368,16 +395,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         console.warn('[Auth] Timeout de hidratação — forçando loading=false');
         setLoading(false);
       }
-    }, 8000);
+    }, SESSION_CHECK_MS + 500);
 
     async function hydrate() {
       try {
-        // Cache rápido para UI instantânea
+        let cachedUserId: string | null = null;
         try {
           const raw = await AsyncStorage.getItem(CACHE_KEY);
           if (raw) {
             const cached = JSON.parse(raw);
             if (cached?._at && Date.now() - cached._at < CACHE_TTL_MS && cached.user) {
+              cachedUserId = cached.user.id ?? null;
               setUser(cached.user);
               setFamily(cached.family ?? null);
               setModules(cached.modules ?? { ...DEFAULT_MODULES });
@@ -387,10 +415,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           }
         } catch { /* noop */ }
 
-        const { data: { session }, error } = await supabase.auth.getSession();
+        const sessWrap = await raceMs(supabase.auth.getSession(), SESSION_CHECK_MS);
         clearTimeout(hardTimeout);
 
         if (cancelled) return;
+
+        if (!sessWrap) {
+          if (cachedUserId) {
+            safeSetLoading(false);
+            return;
+          }
+          safeSetLoading(false);
+          return;
+        }
+
+        const { data: { session }, error } = sessWrap;
 
         if (error) {
           safeSetLoading(false);
@@ -399,21 +438,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         if (session?.user) {
           const em = session.user.email || (session.user.user_metadata?.email as string) || '';
-          await loadProfile(session.user.id, em);
-          // Restaura o modo filho persistido (mantém estado após reload).
-          try {
-            const restored = await hydrateChildProxy();
-            if (restored?.childProfileId && !cancelled && isMountedRef.current) {
-              const { data: childRow } = await supabase
-                .from('children')
-                .select('*')
-                .eq('id', restored.childProfileId)
-                .maybeSingle();
-              if (childRow) setActingChild(childRow);
-              else await clearChildProxy();
-            }
-          } catch { /* noop */ }
+          safeSetLoading(false);
+          loadProfile(session.user.id, em).catch(console.warn);
+          hydrateChildProxyInBackground(cancelled);
         } else {
+          setUser(null); setFamily(null); setModules({}); setChildProfile(null);
+          setEffectiveSubscription(null);
+          try { await AsyncStorage.removeItem(CACHE_KEY); } catch { /* noop */ }
           safeSetLoading(false);
         }
       } catch (e) {
@@ -421,6 +452,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         console.error('[Auth] hydrate erro:', e);
         if (!cancelled) safeSetLoading(false);
       }
+    }
+
+    async function hydrateChildProxyInBackground(isCancelled: boolean) {
+      try {
+        const restored = await hydrateChildProxy();
+        if (restored?.childProfileId && !isCancelled && isMountedRef.current) {
+          const { data: childRow } = await supabase
+            .from('children')
+            .select('*')
+            .eq('id', restored.childProfileId)
+            .maybeSingle();
+          if (childRow) setActingChild(childRow);
+          else await clearChildProxy();
+        }
+      } catch { /* noop */ }
     }
 
     hydrate();
@@ -458,16 +504,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(async (email: string, password: string): Promise<void> => {
     try {
-      safeSetLoading(true);
       const { data, error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) throw new Error(error.message);
       if (!data.user) throw new Error('Utilizador não encontrado após login.');
-      await loadProfile(data.user.id, email);
+      await loadProfile(data.user.id, email, { awaitReady: true });
     } catch (e) {
-      safeSetLoading(false);
       throw mapAuthNetworkError(e);
     }
-  }, [loadProfile, safeSetLoading]);
+  }, [loadProfile]);
 
   const register = useCallback(async (data: RegisterFamilyInput): Promise<{ family_id?: string }> => {
     const email = String(data.email || '').trim().toLowerCase();
@@ -532,7 +576,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (rpcErr) throw new Error(rpcErr.message);
 
       // 5) Carregar o perfil já com família resolvida.
-      await loadProfile(uid, email);
+      await loadProfile(uid, email, { awaitFull: true });
       return { family_id: undefined };
     } catch (e) {
       safeSetLoading(false);
@@ -612,7 +656,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   return (
     <AuthContext.Provider value={{
       user, profile: user, family, modules, childProfile: effectiveChildProfile,
-      effectiveSubscription, isGestor, mustChangePassword, loading,
+      effectiveSubscription, isGestor, mustChangePassword, loading, profileLoading,
       actingAsChild: actingChild, isChildProxy,
       login, register, logout, refreshProfile, clearMustChangePassword,
       enterChildProxy, exitChildProxy,

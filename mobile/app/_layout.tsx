@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Stack, useRouter, useSegments, useRootNavigationState } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   AuthProvider,
   useAuth,
@@ -12,15 +13,28 @@ import '../src/lib/locationBackgroundTask';
 import { FirstAccessPasswordModal } from '../src/components/auth/FirstAccessPasswordModal';
 import { IntroVideo } from '../src/components/auth/IntroVideo';
 
+const INTRO_SEEN_KEY = 'familia_intro_seen';
+
 function RootLayoutNav() {
-  const [introFinished, setIntroFinished] = useState(false);
+  const [introFinished, setIntroFinished] = useState<boolean | null>(null);
   const { user, family, effectiveSubscription, loading, isChildProxy } = useAuth();
   const segments = useSegments();
   const router = useRouter();
   const navigationState = useRootNavigationState();
 
   useEffect(() => {
-    if (!introFinished) return;
+    AsyncStorage.getItem(INTRO_SEEN_KEY)
+      .then((v) => setIntroFinished(v === '1'))
+      .catch(() => setIntroFinished(true));
+  }, []);
+
+  const finishIntro = () => {
+    AsyncStorage.setItem(INTRO_SEEN_KEY, '1').catch(() => {});
+    setIntroFinished(true);
+  };
+
+  useEffect(() => {
+    if (introFinished !== true) return;
     if (loading || !navigationState?.key) return;
 
     const currentSegment = segments[0] as string | undefined;
@@ -89,10 +103,14 @@ function RootLayoutNav() {
     if (currentSegment !== target) {
       router.replace(`/${target}` as '/parent' | '/child' | '/master');
     }
-  }, [user, family, effectiveSubscription, loading, isChildProxy, segments, router, navigationState?.key]);
+  }, [user, family, effectiveSubscription, loading, isChildProxy, segments, router, navigationState?.key, introFinished]);
+
+  if (introFinished === null) {
+    return null;
+  }
 
   if (!introFinished) {
-    return <IntroVideo onFinish={() => setIntroFinished(true)} />;
+    return <IntroVideo onFinish={finishIntro} />;
   }
 
   return (
