@@ -1,11 +1,15 @@
 import { createClient } from '@supabase/supabase-js';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { fetchNoStoreWithDeadline } from './fetchWithDeadline';
+import { resolveSupabaseConfig } from './supabaseConfig';
 
 export { fetchNoStoreWithDeadline, fetchNoStoreWithDeadline as fetchNoStore } from './fetchWithDeadline';
 
-const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL ?? '';
-const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? '';
+const { url: supabaseUrl, anonKey: supabaseAnonKey, usedFallback, reason } = resolveSupabaseConfig();
+
+if (usedFallback) {
+  console.warn(`[supabase] Fallback basefamiliar2 (${reason}). Actualize EXPO_PUBLIC_SUPABASE_* no .env.`);
+}
 
 if (!supabaseUrl || !supabaseAnonKey) {
   console.warn(

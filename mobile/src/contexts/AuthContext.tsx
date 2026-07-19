@@ -112,7 +112,8 @@ const DEFAULT_MODULES: ModulesMap = {
 
 const CACHE_KEY = 'familia_profile_cache';
 const CACHE_TTL_MS = 10 * 60 * 1000;
-const SESSION_CHECK_MS = 3_000;
+const SESSION_CHECK_MS = 2_000;
+const UI_RELEASE_MS = 400;
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
@@ -390,67 +391,61 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let cancelled = false;
-    const hardTimeout = setTimeout(() => {
-      if (!cancelled && isMountedRef.current) {
-        console.warn('[Auth] Timeout de hidratação — forçando loading=false');
-        setLoading(false);
-      }
-    }, SESSION_CHECK_MS + 500);
 
     async function hydrate() {
+      let cachedUserId: string | null = null;
       try {
-        let cachedUserId: string | null = null;
-        try {
-          const raw = await AsyncStorage.getItem(CACHE_KEY);
-          if (raw) {
-            const cached = JSON.parse(raw);
-            if (cached?._at && Date.now() - cached._at < CACHE_TTL_MS && cached.user) {
-              cachedUserId = cached.user.id ?? null;
-              setUser(cached.user);
-              setFamily(cached.family ?? null);
-              setModules(cached.modules ?? { ...DEFAULT_MODULES });
-              setChildProfile(cached.childProfile ?? null);
-              setEffectiveSubscription(cached.effectiveSubscription ?? null);
-            }
+        const raw = await AsyncStorage.getItem(CACHE_KEY);
+        if (raw) {
+          const cached = JSON.parse(raw);
+          if (cached?._at && Date.now() - cached._at < CACHE_TTL_MS && cached.user) {
+            cachedUserId = cached.user.id ?? null;
+            setUser(cached.user);
+            setFamily(cached.family ?? null);
+            setModules(cached.modules ?? { ...DEFAULT_MODULES });
+            setChildProfile(cached.childProfile ?? null);
+            setEffectiveSubscription(cached.effectiveSubscription ?? null);
           }
-        } catch { /* noop */ }
+        }
+      } catch { /* noop */ }
 
+      // Liberta a UI logo (login visível) — validação Supabase corre em paralelo
+      const releaseTimer = setTimeout(() => {
+        if (!cancelled && isMountedRef.current) safeSetLoading(false);
+      }, UI_RELEASE_MS);
+
+      try {
         const sessWrap = await raceMs(supabase.auth.getSession(), SESSION_CHECK_MS);
-        clearTimeout(hardTimeout);
+        clearTimeout(releaseTimer);
+        if (!cancelled && isMountedRef.current) safeSetLoading(false);
 
         if (cancelled) return;
 
         if (!sessWrap) {
-          if (cachedUserId) {
-            safeSetLoading(false);
-            return;
+          if (!cachedUserId) {
+            setUser(null); setFamily(null); setModules({}); setChildProfile(null);
+            setEffectiveSubscription(null);
           }
-          safeSetLoading(false);
           return;
         }
 
         const { data: { session }, error } = sessWrap;
 
-        if (error) {
-          safeSetLoading(false);
-          return;
-        }
+        if (error) return;
 
         if (session?.user) {
           const em = session.user.email || (session.user.user_metadata?.email as string) || '';
-          safeSetLoading(false);
           loadProfile(session.user.id, em).catch(console.warn);
           hydrateChildProxyInBackground(cancelled);
         } else {
           setUser(null); setFamily(null); setModules({}); setChildProfile(null);
           setEffectiveSubscription(null);
           try { await AsyncStorage.removeItem(CACHE_KEY); } catch { /* noop */ }
-          safeSetLoading(false);
         }
       } catch (e) {
-        clearTimeout(hardTimeout);
+        clearTimeout(releaseTimer);
         console.error('[Auth] hydrate erro:', e);
-        if (!cancelled) safeSetLoading(false);
+        if (!cancelled && isMountedRef.current) safeSetLoading(false);
       }
     }
 
@@ -490,14 +485,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         if (event === 'SIGNED_IN' || event === 'USER_UPDATED') {
           const em = session.user.email || (session.user.user_metadata?.email as string) || '';
-          await loadProfile(session.user.id, em);
+          loadProfile(session.user.id, em).catch(console.warn);
         }
       },
     );
 
     return () => {
       cancelled = true;
-      clearTimeout(hardTimeout);
       subscription.unsubscribe();
     };
   }, [loadProfile, safeSetLoading]);

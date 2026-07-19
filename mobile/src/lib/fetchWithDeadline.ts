@@ -1,4 +1,4 @@
-const DEFAULT_DEADLINE_MS = 38_000;
+const DEFAULT_DEADLINE_MS = 12_000;
 
 /**
  * Fetch com abort após deadline — equivalente ao PWA, adaptado para React Native.

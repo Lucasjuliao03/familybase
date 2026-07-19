@@ -14,6 +14,7 @@ import {
 import { useRouter, usePathname } from 'expo-router';
 import { useAuth } from '../src/contexts/AuthContext';
 import { supabase } from '../src/lib/supabase';
+import { resolveSupabaseConfig } from '../src/lib/supabaseConfig';
 import { Colors, Radii, FontSize, Shadow } from '../src/theme';
 import { AppLogo } from '../src/components/ui/AppLogo';
 
@@ -59,7 +60,7 @@ export default function SubscribeScreen() {
       const accessToken = sessionData?.session?.access_token;
       if (!accessToken) return;
 
-      const baseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
+      const baseUrl = resolveSupabaseConfig().url;
       if (!baseUrl) throw new Error('Configuração Supabase ausente.');
 
       const url = `${baseUrl}/functions/v1/stripe-get-billing-summary`;
@@ -108,7 +109,7 @@ export default function SubscribeScreen() {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session?.access_token) throw new Error('Sessão expirada. Faça login novamente.');
 
-      const baseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
+      const baseUrl = resolveSupabaseConfig().url;
       if (!baseUrl) throw new Error('Configuração Supabase ausente.');
 
       const checkoutReturnPath = isGestorContext ? '/parent/billing' : '/subscribe';
@@ -147,7 +148,7 @@ export default function SubscribeScreen() {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session?.access_token) throw new Error('Sessão expirada. Faça login novamente.');
 
-      const baseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
+      const baseUrl = resolveSupabaseConfig().url;
       if (!baseUrl) throw new Error('Configuração Supabase ausente.');
 
       const res = await fetch(`${baseUrl}/functions/v1/stripe-create-portal-session`, {

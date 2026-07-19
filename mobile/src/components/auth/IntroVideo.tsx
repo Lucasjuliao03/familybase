@@ -22,17 +22,27 @@ try {
 export function IntroVideo({ onFinish }: Props) {
   const videoRef = useRef<any>(null);
   const [hasError, setHasError] = useState(!expoAvAvailable);
+  const finishedRef = useRef(false);
+
+  const finishOnce = () => {
+    if (finishedRef.current) return;
+    finishedRef.current = true;
+    onFinish();
+  };
 
   useEffect(() => {
-    // Se o expo-av não estiver disponível nativamente, avança de imediato
     if (!expoAvAvailable) {
-      onFinish();
+      finishOnce();
       return;
     }
 
     if (videoRef.current) {
       videoRef.current.setVolumeAsync(1.0).catch(() => {});
     }
+
+    // Nunca bloquear o utilizador mais de 5s — login fica acessível depressa
+    const autoSkip = setTimeout(finishOnce, 5000);
+    return () => clearTimeout(autoSkip);
   }, [onFinish]);
 
   if (hasError || !Video) {
@@ -55,11 +65,11 @@ export function IntroVideo({ onFinish }: Props) {
         shouldPlay
         onError={() => {
           console.log('[IntroVideo] Erro na reprodução do vídeo. Avançando para a próxima tela...');
-          onFinish();
+          finishOnce();
         }}
         onPlaybackStatusUpdate={(status: any) => {
           if (status.isLoaded && status.didJustFinish) {
-            onFinish();
+            finishOnce();
           }
         }}
       />
@@ -67,7 +77,7 @@ export function IntroVideo({ onFinish }: Props) {
       {/* Botão de Pular no canto superior direito */}
       <TouchableOpacity 
         style={styles.skipButton} 
-        onPress={onFinish}
+        onPress={finishOnce}
         activeOpacity={0.8}
       >
         <Text style={styles.skipText}>Pular ⏭️</Text>

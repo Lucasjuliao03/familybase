@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { StyleSheet, View } from 'react-native';
 import { Stack, useRouter, useSegments, useRootNavigationState } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -16,7 +17,7 @@ import { IntroVideo } from '../src/components/auth/IntroVideo';
 const INTRO_SEEN_KEY = 'familia_intro_seen';
 
 function RootLayoutNav() {
-  const [introFinished, setIntroFinished] = useState<boolean | null>(null);
+  const [showIntro, setShowIntro] = useState(false);
   const { user, family, effectiveSubscription, loading, isChildProxy } = useAuth();
   const segments = useSegments();
   const router = useRouter();
@@ -24,31 +25,31 @@ function RootLayoutNav() {
 
   useEffect(() => {
     AsyncStorage.getItem(INTRO_SEEN_KEY)
-      .then((v) => setIntroFinished(v === '1'))
-      .catch(() => setIntroFinished(true));
+      .then((v) => {
+        if (v !== '1') setShowIntro(true);
+      })
+      .catch(() => {});
   }, []);
 
   const finishIntro = () => {
     AsyncStorage.setItem(INTRO_SEEN_KEY, '1').catch(() => {});
-    setIntroFinished(true);
+    setShowIntro(false);
   };
 
   useEffect(() => {
-    if (introFinished !== true) return;
     if (loading || !navigationState?.key) return;
 
     const currentSegment = segments[0] as string | undefined;
-    const publicRoutes = ['login', 'onboarding', 'register'];
+    const publicRoutes = ['login', 'onboarding', 'register', 'index'];
     const billingRoutes = ['subscribe', 'billing-wait-gestor'];
 
     if (!user) {
       if (!publicRoutes.includes(currentSegment || '')) {
-        router.replace('/onboarding');
+        router.replace('/login');
       }
       return;
     }
 
-    // Bloqueia rotas se não fez onboarding (apenas para responsáveis)
     if (user.role === 'parent' && !user.has_onboarded) {
       if (currentSegment !== 'parent' || segments[1] !== 'onboarding') {
         router.replace('/parent/onboarding');
@@ -56,7 +57,6 @@ function RootLayoutNav() {
       return;
     }
 
-    // Master bypass billing
     if (user.role === 'master') {
       if (currentSegment !== 'master') {
         router.replace('/master');
@@ -74,7 +74,6 @@ function RootLayoutNav() {
       return;
     }
 
-    // Modo filho: o pai mantém a própria sessão mas navega pelas telas do filho.
     if (isChildProxy && (user.role === 'parent' || user.role === 'relative')) {
       if (currentSegment !== 'child') {
         router.replace('/child');
@@ -82,7 +81,6 @@ function RootLayoutNav() {
       return;
     }
 
-    // Bloqueia rotas públicas/billing quando autenticado com acesso
     if (publicRoutes.includes(currentSegment || '') || billingRoutes.includes(currentSegment || '')) {
       const target = user.role === 'parent' || user.role === 'relative'
         ? 'parent'
@@ -103,15 +101,7 @@ function RootLayoutNav() {
     if (currentSegment !== target) {
       router.replace(`/${target}` as '/parent' | '/child' | '/master');
     }
-  }, [user, family, effectiveSubscription, loading, isChildProxy, segments, router, navigationState?.key, introFinished]);
-
-  if (introFinished === null) {
-    return null;
-  }
-
-  if (!introFinished) {
-    return <IntroVideo onFinish={finishIntro} />;
-  }
+  }, [user, family, effectiveSubscription, loading, isChildProxy, segments, router, navigationState?.key]);
 
   return (
     <>
@@ -122,6 +112,11 @@ function RootLayoutNav() {
         }}
       />
       <FirstAccessPasswordModal />
+      {showIntro ? (
+        <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+          <IntroVideo onFinish={finishIntro} />
+        </View>
+      ) : null}
     </>
   );
 }

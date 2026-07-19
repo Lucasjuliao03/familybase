@@ -1,23 +1,6 @@
-import { View, ActivityIndicator, StyleSheet } from 'react-native';
+import { Redirect } from 'expo-router';
 
-/**
- * Tela inicial — apenas spinner.
- * A navegação (para /login ou /<role>) é feita pelo RootLayoutNav
- * em app/_layout.tsx via useEffect + useSegments + useRouter.
- */
+/** Entrada directa no login — evita spinner de 1 minuto à espera da navegação. */
 export default function IndexScreen() {
-  return (
-    <View style={styles.container}>
-      <ActivityIndicator size="large" color="#6366F1" />
-    </View>
-  );
+  return <Redirect href="/login" />;
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#0F172A',
-  },
-});

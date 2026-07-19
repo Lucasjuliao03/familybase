@@ -1,6 +1,7 @@
 import { supabase } from './supabase';
+import { resolveSupabaseConfig } from './supabaseConfig';
 
-const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL ?? '';
+const { url: supabaseUrl } = resolveSupabaseConfig();
 
 export {
   AVATAR_OPTIONS as PRESET_AVATARS,
