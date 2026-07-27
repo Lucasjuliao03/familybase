@@ -59,5 +59,8 @@
     "build:apk:eas": "eas build --platform android --profile preview",
     "build:apk:eas:local": "eas build --platform android --profile preview --local"
   },
-  "private": true
+  "private": true,
+  "allowScripts": {
+    "msgpackr-extract@3.0.3": true
+  }
 }
