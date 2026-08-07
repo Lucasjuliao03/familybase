@@ -1,27 +1,25 @@
-import React, { useRef, useEffect, useState } from 'react';
-import { StyleSheet, View, Text, TouchableOpacity, StatusBar } from 'react-native';
-
+import React, { useRef, useEffect, useState } from "react";
+import {
+  StyleSheet,
+  View,
+  Text,
+  TouchableOpacity,
+  StatusBar,
+} from "react-native";
+import { useEventListener } from "expo";
+import {
+  VideoView,
+  useVideoPlayer,
+  StatusChangeEventPayload,
+} from "expo-video";
 interface Props {
   onFinish: () => void;
 }
 
-// Carregamento dinâmico e seguro de expo-av para evitar crashes nativos
-let Video: any = null;
-let ResizeMode: any = null;
-let expoAvAvailable = false;
-
-try {
-  const expoAv = require('expo-av');
-  Video = expoAv.Video;
-  ResizeMode = expoAv.ResizeMode;
-  expoAvAvailable = !!Video;
-} catch (e) {
-  console.log('[IntroVideo] Módulo expo-av não está disponível nativamente neste build. Utilizando fallback.');
-}
+const videoSource = require("../../../icon/intro.mp4");
 
 export function IntroVideo({ onFinish }: Props) {
-  const videoRef = useRef<any>(null);
-  const [hasError, setHasError] = useState(!expoAvAvailable);
+  const [hasError, setHasError] = useState(false);
   const finishedRef = useRef(false);
 
   const finishOnce = () => {
@@ -30,22 +28,41 @@ export function IntroVideo({ onFinish }: Props) {
     onFinish();
   };
 
-  useEffect(() => {
-    if (!expoAvAvailable) {
+  const player = useVideoPlayer(videoSource, (player) => {
+    try {
+      player.play();
+      player.volume = 1.0;
+      console.log("Player iniciado com sucesso");
+    } catch {
+      console.log("Erro ao iniciar o player.");
+      setHasError(true);
       finishOnce();
-      return;
     }
+  });
 
-    if (videoRef.current) {
-      videoRef.current.setVolumeAsync(1.0).catch(() => {});
+  // Listener events
+  const handleStatusChange = ({ status, error }: StatusChangeEventPayload) => {
+    if (error) {
+      console.log(
+        "[IntroVideo] Erro na reprodução do vídeo. Avançando para a próxima tela...",
+        error.message,
+        status,
+      );
+      setHasError(true);
+      finishOnce();
     }
+  };
+  useEventListener(player, "statusChange", handleStatusChange);
+  useEventListener(player, "playToEnd", finishOnce);
 
-    // Nunca bloquear o utilizador mais de 5s — login fica acessível depressa
+  // Nunca bloquear o utilizador mais de 5s — login fica acessível depressa
+  // Timeout de segurança (5s)
+  useEffect(() => {
     const autoSkip = setTimeout(finishOnce, 5000);
     return () => clearTimeout(autoSkip);
-  }, [onFinish]);
+  }, []);
 
-  if (hasError || !Video) {
+  if (hasError) {
     // Renderiza container vazio enquanto o useEffect processa o desvio para a próxima tela
     return (
       <View style={styles.container}>
@@ -57,26 +74,13 @@ export function IntroVideo({ onFinish }: Props) {
   return (
     <View style={styles.container}>
       <StatusBar hidden />
-      <Video
-        ref={videoRef}
-        source={require('../../../icon/intro.mp4')}
+      <VideoView
+        player={player}
         style={StyleSheet.absoluteFill}
-        resizeMode={ResizeMode.COVER}
-        shouldPlay
-        onError={() => {
-          console.log('[IntroVideo] Erro na reprodução do vídeo. Avançando para a próxima tela...');
-          finishOnce();
-        }}
-        onPlaybackStatusUpdate={(status: any) => {
-          if (status.isLoaded && status.didJustFinish) {
-            finishOnce();
-          }
-        }}
+        contentFit="cover"
       />
-      
-      {/* Botão de Pular no canto superior direito */}
-      <TouchableOpacity 
-        style={styles.skipButton} 
+      <TouchableOpacity
+        style={styles.skipButton}
         onPress={finishOnce}
         activeOpacity={0.8}
       >
@@ -89,23 +93,23 @@ export function IntroVideo({ onFinish }: Props) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#000000',
+    backgroundColor: "#000000",
   },
   skipButton: {
-    position: 'absolute',
+    position: "absolute",
     top: 50,
     right: 20,
-    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    backgroundColor: "rgba(0, 0, 0, 0.6)",
     paddingVertical: 8,
     paddingHorizontal: 16,
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.25)',
+    borderColor: "rgba(255, 255, 255, 0.25)",
     zIndex: 999,
   },
   skipText: {
-    color: '#ffffff',
+    color: "#ffffff",
     fontSize: 14,
-    fontWeight: '700',
+    fontWeight: "700",
   },
 });
