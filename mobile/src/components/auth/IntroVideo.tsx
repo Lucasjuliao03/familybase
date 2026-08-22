@@ -17,24 +17,28 @@ interface Props {
 }
 
 const videoSource = require("../../../icon/intro.mp4");
+const finishOnceCounter = { current: 0 };
 
 export function IntroVideo({ onFinish }: Props) {
   const [hasError, setHasError] = useState(false);
   const finishedRef = useRef(false);
+  console.info("IntroVideo");
 
   const finishOnce = () => {
     if (finishedRef.current) return;
     finishedRef.current = true;
     onFinish();
+    finishOnceCounter.current += 1;
+    console.info("finishOnce", finishOnceCounter.current);
   };
 
   const player = useVideoPlayer(videoSource, (player) => {
     try {
       player.play();
       player.volume = 1.0;
-      console.log("Player iniciado com sucesso");
+      console.info("Player iniciado com sucesso");
     } catch {
-      console.log("Erro ao iniciar o player.");
+      console.error("Erro ao iniciar o player.");
       setHasError(true);
       finishOnce();
     }
@@ -43,7 +47,7 @@ export function IntroVideo({ onFinish }: Props) {
   // Listener events
   const handleStatusChange = ({ status, error }: StatusChangeEventPayload) => {
     if (error) {
-      console.log(
+      console.error(
         "[IntroVideo] Erro na reprodução do vídeo. Avançando para a próxima tela...",
         error.message,
         status,

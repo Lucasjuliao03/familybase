@@ -45,6 +45,7 @@
     "expo-status-bar",
     "expo-font",
     "expo-video",
+    "expo-secure-store",
     [
       "expo-location",
       {
@@ -85,8 +86,7 @@
       {
         "photosPermission": "O Tudo de Família precisa acessar suas fotos para você escolher o avatar do perfil."
       }
-    ],
-    "expo-secure-store"
+    ]
   ],
   "experiments": {
     "typedRoutes": true

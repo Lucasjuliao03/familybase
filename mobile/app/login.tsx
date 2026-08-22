@@ -1,15 +1,23 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
-  View, Text, TextInput, TouchableOpacity,
-  StyleSheet, KeyboardAvoidingView, Platform,
-  Alert, ScrollView, StatusBar, ImageBackground,
-} from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { useRouter } from 'expo-router';
-import { useAuth } from '../src/contexts/AuthContext';
-import { Colors, Radii, Shadow, FontSize } from '../src/theme';
-import { PrimaryButton } from '../src/components/ui/PrimaryButton';
-import { AppLogo } from '../src/components/ui/AppLogo';
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  StyleSheet,
+  KeyboardAvoidingView,
+  Platform,
+  Alert,
+  ScrollView,
+  StatusBar,
+  ImageBackground,
+} from "react-native";
+import { LinearGradient } from "expo-linear-gradient";
+import { useRouter } from "expo-router";
+import { useAuth } from "../src/contexts/AuthContext";
+import { Colors, Radii, Shadow, FontSize } from "../src/theme";
+import { PrimaryButton } from "../src/components/ui/PrimaryButton";
+import { AppLogo } from "../src/components/ui/AppLogo";
 import {
   isBiometricSupported,
   isBiometricEnabled,
@@ -17,12 +25,12 @@ import {
   getCredentialsWithBiometric,
   enableBiometricLogin,
   runBiometricPrompt,
-} from '../src/lib/biometrics';
+} from "../src/lib/biometrics";
 import {
   getRemainingLockMs,
   registerFailedAttempt,
   resetAttempts,
-} from '../src/lib/loginAttempts';
+} from "../src/lib/loginAttempts";
 
 function fmtMs(ms: number): string {
   const total = Math.ceil(ms / 1000);
@@ -33,15 +41,15 @@ function fmtMs(ms: number): string {
 
 export default function LoginScreen() {
   const router = useRouter();
-  const { login } = useAuth();
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const { login, resendVerificationEmail } = useAuth();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [showPass, setShowPass] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   const [bioSupported, setBioSupported] = useState(false);
   const [bioEnabled, setBioEnabled] = useState(false);
-  const [bioLabel, setBioLabel] = useState('Biometria');
+  const [bioLabel, setBioLabel] = useState("Biometria");
 
   const [lockMs, setLockMs] = useState(0);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -66,14 +74,19 @@ export default function LoginScreen() {
         handleBiometricLogin();
       }
     })();
-    return () => { mounted = false; };
+    return () => {
+      mounted = false;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Contagem regressiva do bloqueio.
   useEffect(() => {
     if (lockMs <= 0) {
-      if (tickRef.current) { clearInterval(tickRef.current); tickRef.current = null; }
+      if (tickRef.current) {
+        clearInterval(tickRef.current);
+        tickRef.current = null;
+      }
       return;
     }
     if (!tickRef.current) {
@@ -83,7 +96,10 @@ export default function LoginScreen() {
       }, 1000);
     }
     return () => {
-      if (tickRef.current) { clearInterval(tickRef.current); tickRef.current = null; }
+      if (tickRef.current) {
+        clearInterval(tickRef.current);
+        tickRef.current = null;
+      }
     };
   }, [lockMs]);
 
@@ -96,9 +112,9 @@ export default function LoginScreen() {
         `Ativar ${label}?`,
         `Entre mais rápido nas próximas vezes usando o ${label}.`,
         [
-          { text: 'Agora não', style: 'cancel' },
+          { text: "Agora não", style: "cancel" },
           {
-            text: 'Ativar',
+            text: "Ativar",
             onPress: async () => {
               const ok = await runBiometricPrompt(`Ativar ${label}`);
               if (ok) await enableBiometricLogin({ email: em, password: pw });
@@ -106,79 +122,137 @@ export default function LoginScreen() {
           },
         ],
       );
-    } catch { /* noop */ }
+    } catch {
+      /* noop */
+    }
   }, []);
 
-  const doLogin = useCallback(async (em: string, pw: string) => {
-    const remaining = await getRemainingLockMs();
-    if (remaining > 0) {
-      setLockMs(remaining);
-      Alert.alert('Acesso bloqueado', `Muitas tentativas. Tente novamente em ${fmtMs(remaining)}.`);
-      return;
-    }
-    try {
-      setSubmitting(true);
-      await login(em, pw);
-      await resetAttempts();
-      setLockMs(0);
-    } catch (err) {
-      const blockedFor = await registerFailedAttempt();
-      if (blockedFor > 0) {
-        setLockMs(blockedFor);
-        Alert.alert('Acesso bloqueado', `Muitas tentativas inválidas. Aguarde ${fmtMs(blockedFor)}.`);
-      } else {
-        Alert.alert('Erro de login', (err as Error)?.message || 'Email ou senha incorretos.');
+  const handleResendVerificationEmail = useCallback(
+    async (em: string) => {
+      try {
+        await resendVerificationEmail(em);
+
+        Alert.alert(
+          "Email reenviado",
+          "Verifique sua caixa de entrada e a pasta de spam.",
+        );
+      } catch (error) {
+        console.error((error as Error)?.message);
+        Alert.alert(
+          "Erro ao reenviar email",
+          error instanceof Error
+            ? error.message
+            : "Não foi possível reenviar o email de verificação.",
+        );
       }
-      throw err;
-    } finally {
-      setSubmitting(false);
-    }
-  }, [login]);
+    },
+    [resendVerificationEmail],
+  );
+
+  const doLogin = useCallback(
+    async (em: string, pw: string) => {
+      const remaining = await getRemainingLockMs();
+      if (remaining > 0) {
+        setLockMs(remaining);
+        Alert.alert(
+          "Acesso bloqueado",
+          `Muitas tentativas. Tente novamente em ${fmtMs(remaining)}.`,
+        );
+        return;
+      }
+      try {
+        setSubmitting(true);
+        await login(em, pw);
+        await resetAttempts();
+        setLockMs(0);
+      } catch (err) {
+        const blockedFor = 0; /* await registerFailedAttempt() */
+        if (
+          err instanceof Error &&
+          err.message.includes("Email not confirmed")
+        ) {
+          Alert.alert(
+            "Email não confirmado",
+            "Por favor, confirme seu email antes de fazer login.",
+            [
+              {
+                text: "Reenviar email de verificação",
+                onPress: () => handleResendVerificationEmail(em),
+              },
+              { text: "Cancelar", style: "cancel" },
+            ],
+          );
+        } else if (blockedFor > 0) {
+          setLockMs(blockedFor);
+          Alert.alert(
+            "Acesso bloqueado",
+            `Muitas tentativas inválidas. Aguarde ${fmtMs(blockedFor)}.`,
+          );
+        } else {
+          Alert.alert(
+            "Erro de login",
+            (err as Error)?.message || "Email ou senha incorretos.",
+          );
+        }
+        throw err;
+      } finally {
+        setSubmitting(false);
+      }
+    },
+    [login],
+  );
 
   const handleLogin = useCallback(async () => {
     const em = email.trim().toLowerCase();
     if (!em || !password) {
-      Alert.alert('Campos obrigatórios', 'Preencha o email e a senha.');
+      Alert.alert("Campos obrigatórios", "Preencha o email e a senha.");
       return;
     }
     try {
       await doLogin(em, password);
       await offerEnableBiometric(em, password);
-    } catch { /* erro já tratado em doLogin */ }
+    } catch {
+      /* erro já tratado em doLogin */
+    }
   }, [email, password, doLogin, offerEnableBiometric]);
 
   const handleBiometricLogin = useCallback(async () => {
     const remaining = await getRemainingLockMs();
     if (remaining > 0) {
       setLockMs(remaining);
-      Alert.alert('Acesso bloqueado', `Aguarde ${fmtMs(remaining)} antes de tentar novamente.`);
+      Alert.alert(
+        "Acesso bloqueado",
+        `Aguarde ${fmtMs(remaining)} antes de tentar novamente.`,
+      );
       return;
     }
     if (!(await isBiometricEnabled())) {
       Alert.alert(
-        'Biometria não configurada',
-        'Faça login com email e senha uma vez e ative a biometria para usá-la nas próximas vezes.',
+        "Biometria não configurada",
+        "Faça login com email e senha uma vez e ative a biometria para usá-la nas próximas vezes.",
       );
       return;
     }
-    const creds = await getCredentialsWithBiometric('Entrar com biometria');
+    const creds = await getCredentialsWithBiometric("Entrar com biometria");
     if (!creds) return; // cancelado ou falhou
     try {
       await doLogin(creds.email, creds.password);
-    } catch { /* erro já tratado */ }
+    } catch {
+      /* erro já tratado */
+    }
   }, [doLogin]);
 
   const locked = lockMs > 0;
 
   return (
     <ImageBackground
-      source={require('../icon/fundo.png')}
+      source={require("../icon/fundo.png")}
       style={styles.backgroundImage}
       resizeMode="cover"
     >
       <KeyboardAvoidingView
         style={styles.root}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
       >
         <StatusBar barStyle="light-content" />
         <ScrollView
@@ -190,133 +264,147 @@ export default function LoginScreen() {
           {/* Logo */}
           <View style={styles.logoContainer}>
             <AppLogo size="lg" />
-            <Text style={styles.heroSub}>Organizar sua família ficou mais fácil e divertido! 💛</Text>
+            <Text style={styles.heroSub}>
+              Organizar sua família ficou mais fácil e divertido! 💛
+            </Text>
           </View>
 
           {/* PAINEL GLASSMORPHIC */}
           <View style={styles.panel}>
+            <Text style={styles.welcome}>Bem-vindo de volta! 👋</Text>
+            <Text style={styles.panelSub}>Faça login para continuar</Text>
 
-          <Text style={styles.welcome}>Bem-vindo de volta! 👋</Text>
-          <Text style={styles.panelSub}>Faça login para continuar</Text>
-
-          {/* Email */}
-          <View style={styles.inputWrap}>
-            <Text style={styles.inputIcon}>✉️</Text>
-            <TextInput
-              style={styles.input}
-              value={email}
-              onChangeText={setEmail}
-              keyboardType="email-address"
-              autoCapitalize="none"
-              placeholder="seu@email.com"
-              placeholderTextColor={Colors.textMuted}
-              returnKeyType="next"
-              editable={!submitting}
-            />
-          </View>
-
-          {/* Senha */}
-          <View style={styles.inputWrap}>
-            <Text style={styles.inputIcon}>🔒</Text>
-            <TextInput
-              style={[styles.input, { flex: 1 }]}
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry={!showPass}
-              placeholder="••••••••"
-              placeholderTextColor={Colors.textMuted}
-              returnKeyType="done"
-              onSubmitEditing={handleLogin}
-              editable={!submitting}
-            />
-            <TouchableOpacity onPress={() => setShowPass(!showPass)}>
-              <Text style={styles.eyeIcon}>{showPass ? '🙈' : '👁️'}</Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Esqueceu senha */}
-          <TouchableOpacity style={styles.forgotRow}>
-            <Text style={styles.forgotText}>Esqueceu sua senha?</Text>
-          </TouchableOpacity>
-
-          {/* Aviso de bloqueio */}
-          {locked && (
-            <View style={styles.lockBanner}>
-              <Text style={styles.lockText}>🔒 Acesso bloqueado por segurança. Aguarde {fmtMs(lockMs)}.</Text>
+            {/* Email */}
+            <View style={styles.inputWrap}>
+              <Text style={styles.inputIcon}>✉️</Text>
+              <TextInput
+                style={styles.input}
+                value={email}
+                onChangeText={setEmail}
+                keyboardType="email-address"
+                autoCapitalize="none"
+                placeholder="seu@email.com"
+                placeholderTextColor={Colors.textMuted}
+                returnKeyType="next"
+                editable={!submitting}
+              />
             </View>
-          )}
 
-          {/* Botão entrar */}
-          <PrimaryButton
-            label="Entrar"
-            onPress={handleLogin}
-            loading={submitting}
-            disabled={locked}
-            style={styles.loginBtn}
-          />
-
-          {/* Biometria (apenas se suportada) */}
-          {bioSupported && (
-            <>
-              <View style={styles.separator}>
-                <View style={styles.sepLine} />
-                <Text style={styles.sepText}>ou</Text>
-                <View style={styles.sepLine} />
-              </View>
-
-              <TouchableOpacity
-                style={[styles.bioBtn, (locked || submitting) && styles.bioBtnDisabled]}
-                activeOpacity={0.85}
-                onPress={handleBiometricLogin}
-                disabled={locked || submitting}
-              >
-                <Text style={styles.bioIcon}>🔐</Text>
-                <Text style={styles.bioBtnText}>
-                  {bioEnabled ? `Entrar com ${bioLabel}` : `Ativar ${bioLabel} após login`}
-                </Text>
+            {/* Senha */}
+            <View style={styles.inputWrap}>
+              <Text style={styles.inputIcon}>🔒</Text>
+              <TextInput
+                style={[styles.input, { flex: 1 }]}
+                value={password}
+                onChangeText={setPassword}
+                secureTextEntry={!showPass}
+                placeholder="••••••••"
+                placeholderTextColor={Colors.textMuted}
+                returnKeyType="done"
+                onSubmitEditing={handleLogin}
+                editable={!submitting}
+              />
+              <TouchableOpacity onPress={() => setShowPass(!showPass)}>
+                <Text style={styles.eyeIcon}>{showPass ? "🙈" : "👁️"}</Text>
               </TouchableOpacity>
-            </>
-          )}
+            </View>
 
-          {/* Nova família */}
-          <View style={styles.newFamilyWrap}>
-            <Text style={styles.newFamilyHint}>Ainda não tem uma família?</Text>
-            <TouchableOpacity
-              style={styles.newFamilyBtn}
-              onPress={() => router.push('/register')}
-              activeOpacity={0.85}
-              disabled={submitting}
-            >
-              <Text style={styles.newFamilyText}>+ Nova Família</Text>
+            {/* Esqueceu senha */}
+            <TouchableOpacity style={styles.forgotRow}>
+              <Text style={styles.forgotText}>Esqueceu sua senha?</Text>
             </TouchableOpacity>
-          </View>
 
-        </View>
-      </ScrollView>
-    </KeyboardAvoidingView>
+            {/* Aviso de bloqueio */}
+            {locked && (
+              <View style={styles.lockBanner}>
+                <Text style={styles.lockText}>
+                  🔒 Acesso bloqueado por segurança. Aguarde {fmtMs(lockMs)}.
+                </Text>
+              </View>
+            )}
+
+            {/* Botão entrar */}
+            <PrimaryButton
+              label="Entrar"
+              onPress={handleLogin}
+              loading={submitting}
+              disabled={locked}
+              style={styles.loginBtn}
+            />
+
+            {/* Biometria (apenas se suportada) */}
+            {bioSupported && (
+              <>
+                <View style={styles.separator}>
+                  <View style={styles.sepLine} />
+                  <Text style={styles.sepText}>ou</Text>
+                  <View style={styles.sepLine} />
+                </View>
+
+                <TouchableOpacity
+                  style={[
+                    styles.bioBtn,
+                    (locked || submitting) && styles.bioBtnDisabled,
+                  ]}
+                  activeOpacity={0.85}
+                  onPress={handleBiometricLogin}
+                  disabled={locked || submitting}
+                >
+                  <Text style={styles.bioIcon}>🔐</Text>
+                  <Text style={styles.bioBtnText}>
+                    {bioEnabled
+                      ? `Entrar com ${bioLabel}`
+                      : `Ativar ${bioLabel} após login`}
+                  </Text>
+                </TouchableOpacity>
+              </>
+            )}
+
+            {/* Nova família */}
+            <View style={styles.newFamilyWrap}>
+              <Text style={styles.newFamilyHint}>
+                Ainda não tem uma família?
+              </Text>
+              <TouchableOpacity
+                style={styles.newFamilyBtn}
+                onPress={() => router.push("/register")}
+                activeOpacity={0.85}
+                disabled={submitting}
+              >
+                <Text style={styles.newFamilyText}>+ Nova Família</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
     </ImageBackground>
   );
 }
 
 const styles = StyleSheet.create({
   backgroundImage: { flex: 1 },
-  root: { flex: 1, backgroundColor: 'transparent' },
-  scrollContent: { flexGrow: 1, justifyContent: 'center', paddingVertical: 40 },
-  logoContainer: { alignItems: 'center', marginBottom: 24, marginTop: 20, gap: 12 },
+  root: { flex: 1, backgroundColor: "transparent" },
+  scrollContent: { flexGrow: 1, justifyContent: "center", paddingVertical: 40 },
+  logoContainer: {
+    alignItems: "center",
+    marginBottom: 24,
+    marginTop: 20,
+    gap: 12,
+  },
   heroSub: {
     fontSize: FontSize.sm,
-    color: 'rgba(255,255,255,0.92)',
-    textAlign: 'center',
+    color: "rgba(255,255,255,0.92)",
+    textAlign: "center",
     marginTop: 6,
     paddingHorizontal: 24,
-    textShadowColor: 'rgba(0, 0, 0, 0.2)',
+    textShadowColor: "rgba(0, 0, 0, 0.2)",
     textShadowOffset: { width: 1, height: 1 },
     textShadowRadius: 2,
   },
 
   // Panel
   panel: {
-    backgroundColor: 'rgba(255, 255, 255, 0.94)',
+    backgroundColor: "rgba(255, 255, 255, 0.94)",
     borderRadius: 28,
     paddingHorizontal: 24,
     paddingTop: 32,
@@ -324,13 +412,18 @@ const styles = StyleSheet.create({
     marginHorizontal: 20,
     ...Shadow.lg,
   },
-  welcome: { fontSize: FontSize.lg, fontWeight: '800', color: Colors.text },
-  panelSub: { fontSize: FontSize.sm, color: Colors.textMuted, marginTop: 4, marginBottom: 24 },
+  welcome: { fontSize: FontSize.lg, fontWeight: "800", color: Colors.text },
+  panelSub: {
+    fontSize: FontSize.sm,
+    color: Colors.textMuted,
+    marginTop: 4,
+    marginBottom: 24,
+  },
 
   // Inputs
   inputWrap: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     backgroundColor: Colors.bg,
     borderRadius: Radii.md,
     borderWidth: 1.5,
@@ -344,35 +437,64 @@ const styles = StyleSheet.create({
   input: { flex: 1, fontSize: FontSize.base, color: Colors.text },
   eyeIcon: { fontSize: 18 },
 
-  forgotRow: { alignItems: 'flex-end', marginBottom: 20, marginTop: -4 },
-  forgotText: { fontSize: FontSize.sm, color: Colors.primary, fontWeight: '600' },
+  forgotRow: { alignItems: "flex-end", marginBottom: 20, marginTop: -4 },
+  forgotText: {
+    fontSize: FontSize.sm,
+    color: Colors.primary,
+    fontWeight: "600",
+  },
 
   loginBtn: { marginBottom: 20 },
 
   lockBanner: {
-    backgroundColor: '#FEF2F2', borderWidth: 1, borderColor: '#FCA5A5',
-    borderRadius: Radii.md, padding: 12, marginBottom: 16,
+    backgroundColor: "#FEF2F2",
+    borderWidth: 1,
+    borderColor: "#FCA5A5",
+    borderRadius: Radii.md,
+    padding: 12,
+    marginBottom: 16,
   },
-  lockText: { color: '#B91C1C', fontSize: FontSize.sm, fontWeight: '700', textAlign: 'center' },
+  lockText: {
+    color: "#B91C1C",
+    fontSize: FontSize.sm,
+    fontWeight: "700",
+    textAlign: "center",
+  },
 
   // Separator
-  separator: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 16 },
+  separator: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginBottom: 16,
+  },
   sepLine: { flex: 1, height: 1, backgroundColor: Colors.border },
   sepText: { fontSize: FontSize.sm, color: Colors.textMuted },
 
   // Biometria
   bioBtn: {
-    flexDirection: 'row', gap: 8, alignItems: 'center', justifyContent: 'center',
-    borderWidth: 1.5, borderColor: Colors.border, borderRadius: Radii.full,
-    paddingVertical: 14, marginBottom: 24, backgroundColor: Colors.surface,
+    flexDirection: "row",
+    gap: 8,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1.5,
+    borderColor: Colors.border,
+    borderRadius: Radii.full,
+    paddingVertical: 14,
+    marginBottom: 24,
+    backgroundColor: Colors.surface,
   },
   bioBtnDisabled: { opacity: 0.5 },
   bioIcon: { fontSize: 20 },
-  bioBtnText: { fontSize: FontSize.base, fontWeight: '600', color: Colors.text },
+  bioBtnText: {
+    fontSize: FontSize.base,
+    fontWeight: "600",
+    color: Colors.text,
+  },
 
   // Nova família
   newFamilyWrap: {
-    alignItems: 'center',
+    alignItems: "center",
     borderTopWidth: 1,
     borderTopColor: Colors.borderLight,
     paddingTop: 20,
@@ -380,8 +502,17 @@ const styles = StyleSheet.create({
   },
   newFamilyHint: { fontSize: FontSize.sm, color: Colors.textMuted },
   newFamilyBtn: {
-    borderWidth: 2, borderColor: Colors.primary, borderRadius: Radii.full,
-    paddingVertical: 14, paddingHorizontal: 28, width: '100%', alignItems: 'center',
+    borderWidth: 2,
+    borderColor: Colors.primary,
+    borderRadius: Radii.full,
+    paddingVertical: 14,
+    paddingHorizontal: 28,
+    width: "100%",
+    alignItems: "center",
   },
-  newFamilyText: { fontSize: FontSize.base, color: Colors.primary, fontWeight: '800' },
+  newFamilyText: {
+    fontSize: FontSize.base,
+    color: Colors.primary,
+    fontWeight: "800",
+  },
 });
