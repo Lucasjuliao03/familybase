@@ -1,0 +1,13 @@
+node_modules/
+.expo/
+dist/
+*.log
+.git/
+.env
+.env.*
+android/
+ios/
+.gradle-home/
+*.jks
+*.keystore
+credentials.json

@@ -1,0 +1,93 @@
+{
+  "name": "Tudo de Família",
+  "slug": "familybase-mobile",
+  "version": "1.0.1",
+  "orientation": "portrait",
+  "icon": "./icon/logo.png",
+  "userInterfaceStyle": "automatic",
+  "scheme": "familybase",
+  "ios": {
+    "supportsTablet": true,
+    "bundleIdentifier": "com.familybase.mobile",
+    "infoPlist": {
+      "NSLocationWhenInUseUsageDescription": "FamilyBase precisa da sua localização para mostrar os membros da família no mapa.",
+      "NSLocationAlwaysAndWhenInUseUsageDescription": "FamilyBase precisa rastrear sua localização em segundo plano para atualizar automaticamente sua posição para a família.",
+      "NSLocationAlwaysUsageDescription": "FamilyBase precisa da sua localização em segundo plano para manter sua posição atualizada na família.",
+      "UIBackgroundModes": [
+        "location",
+        "fetch"
+      ]
+    }
+  },
+  "android": {
+    "adaptiveIcon": {
+      "backgroundColor": "#1E3A8A",
+      "foregroundImage": "./icon/logo.png"
+    },
+    "package": "com.familybase.mobile",
+    "versionCode": 3,
+    "predictiveBackGestureEnabled": false,
+    "permissions": [
+      "ACCESS_COARSE_LOCATION",
+      "ACCESS_FINE_LOCATION",
+      "ACCESS_BACKGROUND_LOCATION",
+      "FOREGROUND_SERVICE",
+      "FOREGROUND_SERVICE_LOCATION"
+    ]
+  },
+  "web": {
+    "bundler": "metro",
+    "output": "static",
+    "favicon": "./icon/logo.png"
+  },
+  "plugins": [
+    "expo-router",
+    "expo-status-bar",
+    "expo-font",
+    "expo-video",
+    [
+      "expo-location",
+      {
+        "locationAlwaysAndWhenInUsePermission": "FamilyBase precisa da sua localização para mostrar sua posição para a família.",
+        "locationAlwaysPermission": "FamilyBase rastreia sua localização em segundo plano para manter sua posição atualizada.",
+        "locationWhenInUsePermission": "FamilyBase precisa da sua localização para mostrar no mapa da família.",
+        "isIosBackgroundLocationEnabled": true,
+        "isAndroidBackgroundLocationEnabled": true,
+        "isAndroidForegroundServiceEnabled": true
+      }
+    ],
+    [
+      "expo-build-properties",
+      {
+        "android": {
+          "proguardRuleFiles": [
+            "./proguard-rules.pro"
+          ]
+        }
+      }
+    ],
+    [
+      "expo-local-authentication",
+      {
+        "faceIDPermission": "O Tudo de Família usa o Face ID para você entrar com segurança sem digitar a senha."
+      }
+    ],
+    [
+      "expo-image-picker",
+      {
+        "photosPermission": "O Tudo de Família precisa acessar suas fotos para você escolher o avatar do perfil."
+      }
+    ],
+    "expo-secure-store"
+  ],
+  "experiments": {
+    "typedRoutes": true
+  },
+  "extra": {
+    "eas": {
+      "projectId": "a49bbe55-dc0b-42ac-a25c-732281238102"
+    },
+    "router": {}
+  },
+  "owner": "lucasjuliaosgtpm"
+}
