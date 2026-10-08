@@ -6,6 +6,7 @@ import { BottomNavBar } from '../../src/components/ui/BottomNavBar';
 import { ChildProxyBanner } from '../../src/components/proxy/ChildProxyBanner';
 import { useAuth } from '../../src/contexts/AuthContext';
 import { Colors } from '../../src/theme';
+import { ChildLocationTracker } from '../../src/components/location/ChildLocationTracker';
 
 export default function ChildLayout() {
   useRouteModuleGuard('/child');
@@ -31,6 +32,7 @@ export default function ChildLayout() {
   return (
     <View style={styles.root}>
       <Stack screenOptions={screenOptions} />
+      <ChildLocationTracker />
       <ChildProxyBanner onHeightChange={setProxyHeaderH} />
       <BottomNavBar role="child" />
     </View>

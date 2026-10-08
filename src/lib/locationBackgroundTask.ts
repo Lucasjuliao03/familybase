@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as TaskManager from 'expo-task-manager';
+import * as Location from 'expo-location';
 import { supabase } from './supabase';
 import { getDeviceId, getDeviceName, getDeviceType } from './deviceId';
 
@@ -26,6 +27,12 @@ export async function loadLocationContext(): Promise<LocationContext | null> {
   }
 }
 
+export async function stopLocationSharing(): Promise<void> {
+  await AsyncStorage.removeItem(LOCATION_CTX_KEY);
+  const started = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK).catch(() => false);
+  if (started) await Location.stopLocationUpdatesAsync(LOCATION_TASK).catch(() => {});
+}
+
 async function persistBackgroundLocation(
   latitude: number,
   longitude: number,
@@ -39,7 +46,7 @@ async function persistBackgroundLocation(
   // The foreground watcher and the background task must update the same device row.
   const deviceId = await getDeviceId();
 
-  await supabase.from('family_member_devices').upsert({
+  const { error: deviceError } = await supabase.from('family_member_devices').upsert({
     family_id: ctx.familyId,
     user_id: ctx.userId,
     device_id: deviceId,
@@ -49,8 +56,9 @@ async function persistBackgroundLocation(
     is_location_enabled: true,
     is_primary_location_device: true,
   }, { onConflict: 'family_id,user_id,device_id' });
+  if (deviceError) throw deviceError;
 
-  await supabase.from('family_locations').upsert({
+  const { error: locationError } = await supabase.from('family_locations').upsert({
     family_id: ctx.familyId,
     user_id: ctx.userId,
     device_id: deviceId,
@@ -64,6 +72,7 @@ async function persistBackgroundLocation(
     status: (speed ?? 0) > 1.5 ? 'moving' : 'home',
     updated_at: new Date().toISOString(),
   }, { onConflict: 'family_id,user_id,device_id' });
+  if (locationError) throw locationError;
 }
 
 // Registo global — importar uma vez no _layout raiz

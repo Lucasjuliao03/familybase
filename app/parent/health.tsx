@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -48,6 +48,13 @@ export default function ParentHealthScreen() {
   const [tab, setTab] = useState<'overview' | 'symptoms' | 'appointments' | 'medications' | 'history'>('overview');
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
+  const [savingRecord, setSavingRecord] = useState(false);
+  const savingRecordRef = useRef(false);
+  const hasLoaded = useRef(false);
+  const [working, setWorking] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [healthNotice, setHealthNotice] = useState<string | null>(null);
 
   // Filtros
   const [children, setChildren] = useState<any[]>([]);
@@ -101,19 +108,21 @@ export default function ParentHealthScreen() {
 
   const loadData = useCallback(async (isRefresh = false) => {
     try {
-      if (!isRefresh) setLoading(true);
+      if (!isRefresh && !hasLoaded.current) setLoading(true);
 
       const params: any = {};
       if (selectedChildId) params.child_id = selectedChildId;
 
       const [rOverview, rRecords, rAppts, rMeds, rLogs, rChildren] = await Promise.all([
-        api.get('/health/overview', { params }).catch(() => ({ data: null })),
-        api.get('/health/records', { params }).catch(() => ({ data: [] })),
-        api.get('/health/appointments', { params }).catch(() => ({ data: [] })),
-        api.get('/health/medications', { params }).catch(() => ({ data: [] })),
-        api.get('/health/medication-logs', { params }).catch(() => ({ data: [] })),
-        api.get('/families/children').catch(() => ({ data: [] })),
+        api.get('/health/overview', { params }),
+        api.get('/health/records', { params }),
+        api.get('/health/appointments', { params }),
+        api.get('/health/medications', { params }),
+        api.get('/health/medication-logs', { params }),
+        api.get('/families/children'),
       ]);
+
+      setLoadError(null);
 
       setOverview(rOverview?.data || null);
       setRecords(rRecords?.data || []);
@@ -131,7 +140,9 @@ export default function ParentHealthScreen() {
       }
     } catch (err) {
       console.error('[ParentHealth] Erro ao carregar dados:', err);
+      setLoadError((err as Error)?.message || 'Falha ao carregar dados de saúde.');
     } finally {
+      hasLoaded.current = true;
       setLoading(false);
       setRefreshing(false);
     }
@@ -164,35 +175,45 @@ export default function ParentHealthScreen() {
 
   // ── SINTOMAS ───────────────────────────────
   const handleSaveRecord = async () => {
+    if (savingRecordRef.current) return;
     if (!recordForm.symptoms.trim()) {
-      Alert.alert('Erro', 'Por favor descreva o sintoma.');
+      setFormError('Por favor descreva o sintoma.');
+      return;
+    }
+    if (!recordForm.child_id) {
+      setFormError('Selecione o filho para registrar o sintoma.');
       return;
     }
     try {
-      setLoading(true);
+      savingRecordRef.current = true;
+      setSavingRecord(true);
+      setFormError(null);
       const now = new Date();
       const payload = {
         ...recordForm,
-        record_date: now.toISOString().split('T')[0],
+        record_date: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`,
         record_time: now.toTimeString().slice(0, 5),
         status: recordForm.id ? recordForm.status : 'active',
         temperature: recordForm.temperature ? parseFloat(recordForm.temperature) : null,
       };
 
       if (recordForm.id) {
-        await api.put(`/health/records/${recordForm.id}`, payload);
-        Alert.alert('Sucesso', 'Registro de sintoma atualizado!');
+        const saved = await api.put(`/health/records/${recordForm.id}`, payload);
+        if (!saved?.data?.id) throw new Error('O registro não foi confirmado pelo servidor.');
+        setHealthNotice('Registro de sintoma atualizado.');
       } else {
-        await api.post('/health/records', payload);
-        Alert.alert('Sucesso', 'Sintoma registrado!');
+        const saved = await api.post('/health/records', payload);
+        if (!saved?.data?.id) throw new Error('O registro não foi confirmado pelo servidor.');
+        setHealthNotice('Sintoma registrado.');
       }
 
       setShowRecordModal(false);
-      loadData(true);
+      void loadData(true);
     } catch (err: any) {
-      Alert.alert('Erro', err.message || 'Erro ao salvar sintoma.');
+      setFormError(err.message || 'Erro ao salvar sintoma.');
     } finally {
-      setLoading(false);
+      savingRecordRef.current = false;
+      setSavingRecord(false);
     }
   };
 
@@ -204,14 +225,14 @@ export default function ParentHealthScreen() {
         style: 'destructive',
         onPress: async () => {
           try {
-            setLoading(true);
+            setWorking(true);
             await api.delete(`/health/records/${id}`);
             Alert.alert('Excluído', 'Registro apagado com sucesso.');
             loadData(true);
           } catch (err: any) {
             Alert.alert('Erro', err.message || 'Erro ao excluir.');
           } finally {
-            setLoading(false);
+            setWorking(false);
           }
         },
       },
@@ -221,11 +242,12 @@ export default function ParentHealthScreen() {
   // ── CONSULTAS ──────────────────────────────
   const handleSaveAppt = async () => {
     if (!apptForm.title.trim() || !apptForm.appointment_date) {
-      Alert.alert('Erro', 'Preencha o título e a data da consulta.');
+      setFormError('Preencha o título e a data da consulta.');
       return;
     }
     try {
-      setLoading(true);
+      setWorking(true);
+      setFormError(null);
       const payload = {
         ...apptForm,
         date: apptForm.appointment_date,
@@ -235,18 +257,18 @@ export default function ParentHealthScreen() {
 
       if (apptForm.id) {
         await api.put(`/health/appointments/${apptForm.id}`, payload);
-        Alert.alert('Sucesso', 'Consulta atualizada com sucesso!');
+        setHealthNotice('Consulta atualizada.');
       } else {
         await api.post('/health/appointments', payload);
-        Alert.alert('Sucesso', 'Consulta médica agendada!');
+        setHealthNotice('Consulta agendada.');
       }
 
       setShowApptModal(false);
       loadData(true);
     } catch (err: any) {
-      Alert.alert('Erro', err.message || 'Erro ao agendar consulta.');
+      setFormError(err.message || 'Erro ao agendar consulta.');
     } finally {
-      setLoading(false);
+      setWorking(false);
     }
   };
 
@@ -258,14 +280,14 @@ export default function ParentHealthScreen() {
         style: 'destructive',
         onPress: async () => {
           try {
-            setLoading(true);
+            setWorking(true);
             await api.delete(`/health/appointments/${id}`);
             Alert.alert('Sucesso', 'Consulta cancelada.');
             loadData(true);
           } catch (err: any) {
             Alert.alert('Erro', err.message || 'Erro ao deletar consulta.');
           } finally {
-            setLoading(false);
+            setWorking(false);
           }
         },
       },
@@ -275,25 +297,26 @@ export default function ParentHealthScreen() {
   // ── REMÉDIOS ───────────────────────────────
   const handleSaveMed = async () => {
     if (!medForm.name.trim() || !medForm.dosage.trim()) {
-      Alert.alert('Erro', 'Informe o nome do remédio e a dosagem.');
+      setFormError('Informe o nome do remédio e a dosagem.');
       return;
     }
     try {
-      setLoading(true);
+      setWorking(true);
+      setFormError(null);
       if (medForm.id) {
         await api.put(`/health/medications/${medForm.id}`, medForm);
-        Alert.alert('Sucesso', 'Medicamento atualizado!');
+        setHealthNotice('Medicamento atualizado.');
       } else {
         await api.post('/health/medications', medForm);
-        Alert.alert('Sucesso', 'Novo remédio cadastrado no diário!');
+        setHealthNotice('Medicamento cadastrado.');
       }
 
       setShowMedModal(false);
       loadData(true);
     } catch (err: any) {
-      Alert.alert('Erro', err.message || 'Erro ao cadastrar medicação.');
+      setFormError(err.message || 'Erro ao cadastrar medicação.');
     } finally {
-      setLoading(false);
+      setWorking(false);
     }
   };
 
@@ -305,14 +328,14 @@ export default function ParentHealthScreen() {
         style: 'destructive',
         onPress: async () => {
           try {
-            setLoading(true);
+            setWorking(true);
             await api.delete(`/health/medications/${id}`);
             Alert.alert('Sucesso', 'Medicamento removido.');
             loadData(true);
           } catch (err: any) {
             Alert.alert('Erro', err.message || 'Erro ao excluir.');
           } finally {
-            setLoading(false);
+            setWorking(false);
           }
         },
       },
@@ -328,14 +351,14 @@ export default function ParentHealthScreen() {
         style: 'destructive',
         onPress: async () => {
           try {
-            setLoading(true);
+            setWorking(true);
             await api.delete(`/health/medication-logs/${id}`);
             Alert.alert('Sucesso', 'Registro apagado.');
             loadData(true);
           } catch (err: any) {
             Alert.alert('Erro', err.message || 'Erro ao apagar log.');
           } finally {
-            setLoading(false);
+            setWorking(false);
           }
         },
       },
@@ -353,6 +376,14 @@ export default function ParentHealthScreen() {
         subtitle="Gerencie sintomas, remédios e consultas"
         onBack={() => router.back()}
       />
+
+      {healthNotice ? <Text style={styles.successBanner}>{healthNotice}</Text> : null}
+
+      {loadError && (
+        <TouchableOpacity onPress={() => { void loadData(); }} style={{ padding: 12, backgroundColor: '#FEF2F2' }}>
+          <Text style={{ color: Colors.danger, fontWeight: '700' }}>Falha ao carregar: {loadError}. Toque para tentar novamente.</Text>
+        </TouchableOpacity>
+      )}
 
       {/* Seletor de Filho (Filtro Horizontal) */}
       <View style={styles.filterContainer}>
@@ -838,8 +869,8 @@ export default function ParentHealthScreen() {
       )}
 
       {/* MODAL: SINTOMAS */}
-      <Modal visible={showRecordModal} transparent animationType="slide">
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalOverlay}>
+      {showRecordModal && <Modal visible transparent animationType={Platform.OS === 'android' ? 'none' : 'slide'} onRequestClose={() => setShowRecordModal(false)} onShow={() => setFormError(null)}>
+        <KeyboardAvoidingView enabled={Platform.OS === 'ios'} behavior="padding" style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>🤒 Registrar Sintoma</Text>
@@ -847,7 +878,8 @@ export default function ParentHealthScreen() {
                 <Text style={styles.modalCloseText}>✕</Text>
               </TouchableOpacity>
             </View>
-            <ScrollView style={styles.modalBody}>
+            <ScrollView style={styles.modalBody} keyboardShouldPersistTaps="handled">
+              {formError ? <Text style={styles.errorBanner}>{formError}</Text> : null}
               <Text style={styles.formLabel}>Filho *</Text>
               <View style={{ marginBottom: 12 }}>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
@@ -932,17 +964,17 @@ export default function ParentHealthScreen() {
                 multiline
               />
 
-              <TouchableOpacity style={styles.btnSubmit} onPress={handleSaveRecord}>
-                <Text style={styles.btnSubmitText}>Salvar Registro 💾</Text>
+              <TouchableOpacity style={styles.btnSubmit} onPress={handleSaveRecord} disabled={savingRecord}>
+                <Text style={styles.btnSubmitText}>{savingRecord ? 'Salvando...' : 'Salvar Registro 💾'}</Text>
               </TouchableOpacity>
             </ScrollView>
           </View>
         </KeyboardAvoidingView>
-      </Modal>
+      </Modal>}
 
       {/* MODAL: CONSULTAS */}
-      <Modal visible={showApptModal} transparent animationType="slide">
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalOverlay}>
+      {showApptModal && <Modal visible transparent animationType={Platform.OS === 'android' ? 'none' : 'slide'} onRequestClose={() => setShowApptModal(false)} onShow={() => setFormError(null)}>
+        <KeyboardAvoidingView enabled={Platform.OS === 'ios'} behavior="padding" style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>📅 Agendar Consulta</Text>
@@ -950,7 +982,8 @@ export default function ParentHealthScreen() {
                 <Text style={styles.modalCloseText}>✕</Text>
               </TouchableOpacity>
             </View>
-            <ScrollView style={styles.modalBody}>
+            <ScrollView style={styles.modalBody} keyboardShouldPersistTaps="handled">
+              {formError ? <Text style={styles.errorBanner}>{formError}</Text> : null}
               <Text style={styles.formLabel}>Filho *</Text>
               <View style={{ marginBottom: 12 }}>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
@@ -1039,17 +1072,17 @@ export default function ParentHealthScreen() {
                 multiline
               />
 
-              <TouchableOpacity style={styles.btnSubmit} onPress={handleSaveAppt}>
-                <Text style={styles.btnSubmitText}>Salvar Consulta 💾</Text>
+              <TouchableOpacity style={styles.btnSubmit} onPress={handleSaveAppt} disabled={working}>
+                <Text style={styles.btnSubmitText}>{working ? 'Salvando...' : 'Salvar Consulta 💾'}</Text>
               </TouchableOpacity>
             </ScrollView>
           </View>
         </KeyboardAvoidingView>
-      </Modal>
+      </Modal>}
 
       {/* MODAL: REMÉDIOS */}
-      <Modal visible={showMedModal} transparent animationType="slide">
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalOverlay}>
+      {showMedModal && <Modal visible transparent animationType={Platform.OS === 'android' ? 'none' : 'slide'} onRequestClose={() => setShowMedModal(false)} onShow={() => setFormError(null)}>
+        <KeyboardAvoidingView enabled={Platform.OS === 'ios'} behavior="padding" style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>💊 Cadastrar Medicação</Text>
@@ -1057,7 +1090,8 @@ export default function ParentHealthScreen() {
                 <Text style={styles.modalCloseText}>✕</Text>
               </TouchableOpacity>
             </View>
-            <ScrollView style={styles.modalBody}>
+            <ScrollView style={styles.modalBody} keyboardShouldPersistTaps="handled">
+              {formError ? <Text style={styles.errorBanner}>{formError}</Text> : null}
               <Text style={styles.formLabel}>Filho *</Text>
               <View style={{ marginBottom: 12 }}>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
@@ -1117,13 +1151,13 @@ export default function ParentHealthScreen() {
                 multiline
               />
 
-              <TouchableOpacity style={styles.btnSubmit} onPress={handleSaveMed}>
-                <Text style={styles.btnSubmitText}>Salvar Medicamento 💾</Text>
+              <TouchableOpacity style={styles.btnSubmit} onPress={handleSaveMed} disabled={working}>
+                <Text style={styles.btnSubmitText}>{working ? 'Salvando...' : 'Salvar Medicamento 💾'}</Text>
               </TouchableOpacity>
             </ScrollView>
           </View>
         </KeyboardAvoidingView>
-      </Modal>
+      </Modal>}
 
     </View>
   );
@@ -1131,6 +1165,8 @@ export default function ParentHealthScreen() {
 
 const styles = StyleSheet.create({
   root:      { flex: 1, backgroundColor: Colors.bg },
+  successBanner: { color: '#166534', backgroundColor: '#DCFCE7', padding: 10, fontWeight: '700' },
+  errorBanner: { color: Colors.danger, backgroundColor: '#FEE2E2', padding: 10, fontWeight: '700', marginBottom: 8 },
   filterContainer: { padding: 12, backgroundColor: Colors.surface, borderBottomWidth: 1, borderBottomColor: Colors.border, flexDirection: 'row', alignItems: 'center', gap: 8 },
   filterLabel:     { fontSize: 11, fontWeight: '800', color: Colors.textSecondary },
   filterChip:      { backgroundColor: Colors.bg, borderWidth: 1.5, borderColor: Colors.border, borderRadius: Radii.full, paddingVertical: 6, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 6 },

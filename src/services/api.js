@@ -779,7 +779,7 @@ async function ensureOpenAllowanceCycleRow(supabase, familyId, childId) {
     .select('*')
     .eq('child_id', childId)
     .maybeSingle();
-  const base = settings?.base_amount ?? 0;
+  const base = settings?.model_type === 'accumulative' ? 0 : (settings?.base_amount ?? 0);
 
   const { data: existing } = await supabase
     .from('allowance_cycles')
@@ -1581,6 +1581,7 @@ function apptExtraFromNotes(notes) {
 function apptNotesSerialize(body) {
   const extra = {
     reason: body.reason ?? null,
+    notes: body.notes ?? null,
     diagnosis_notes: body.diagnosis_notes ?? null,
     attachment_urls: body.attachment_urls ?? null,
     needs_followup: !!body.needs_followup,
@@ -1597,6 +1598,7 @@ function mapAppointmentFromDb(a, childName) {
     appointment_date: a.appointment_date ?? a.date,
     appointment_time: a.appointment_time ?? a.time ?? '',
     professional_name: a.professional_name ?? a.doctor_name ?? '',
+    notes: extra.notes ?? (typeof a.notes === 'string' && !a.notes.trim().startsWith('{') ? a.notes : ''),
     reason: extra.reason ?? '',
     diagnosis_notes: extra.diagnosis_notes ?? '',
     attachment_urls: att ?? [],
@@ -1668,7 +1670,7 @@ function buildAppointmentInsert(body, familyId) {
     family_id: familyId,
     child_id: body.child_id === '' ? undefined : body.child_id ?? undefined,
     patient_user_id: body.patient_user_id === '' ? undefined : body.patient_user_id ?? undefined,
-    title: (body.reason && String(body.reason).slice(0, 200)) || body.specialty || 'Consulta',
+    title: (body.title && String(body.title).slice(0, 200)) || (body.reason && String(body.reason).slice(0, 200)) || body.specialty || 'Consulta',
     doctor_name: body.professional_name || null,
     specialty: body.specialty || null,
     date,
@@ -1683,7 +1685,7 @@ function buildAppointmentUpdate(body) {
   return omitUndefined({
     child_id: body.child_id === '' ? null : body.child_id ?? undefined,
     patient_user_id: body.patient_user_id === '' ? null : body.patient_user_id ?? undefined,
-    title: (body.reason && String(body.reason).slice(0, 200)) || body.specialty || body.title || undefined,
+    title: (body.title && String(body.title).slice(0, 200)) || (body.reason && String(body.reason).slice(0, 200)) || body.specialty || undefined,
     doctor_name: body.professional_name ?? body.doctor_name,
     specialty: body.specialty,
     date: body.appointment_date ?? body.date,
@@ -1870,6 +1872,8 @@ const api = {
 
     const familyId = await getFamilyId();
     if (!familyId) throw new Error('Not authenticated');
+    const { data: { session: readSession } } = await supabase.auth.getSession();
+    const userId = readSession?.user?.id;
 
     if (path.startsWith('/grades/subjects')) {
       const { data: subjects, error } = await supabase
@@ -2264,12 +2268,14 @@ const api = {
     if (path.startsWith('/allowance/goals')) {
       let q = supabase.from('savings_goals').select('*').eq('family_id', familyId);
       if (config.params?.child_id) q = q.eq('child_id', config.params.child_id);
-      const { data } = await q.order('created_at', { ascending: false });
+      const { data, error } = await q.order('created_at', { ascending: false });
+      if (error) throw new Error(error.message);
       return { data: data || [] };
     }
 
     if (path === '/allowance/settings') {
-      const { data } = await supabase.from('allowance_settings').select('*').eq('family_id', familyId);
+      const { data, error } = await supabase.from('allowance_settings').select('*').eq('family_id', familyId);
+      if (error) throw new Error(error.message);
       return { data: data || [] };
     }
 
@@ -2351,12 +2357,13 @@ const api = {
     }
 
     if (path === '/allowance/cycles') {
-      const { data: cyclesRaw } = await supabase
+      const { data: cyclesRaw, error: cyclesError } = await supabase
         .from('allowance_cycles')
         .select('*')
         .eq('family_id', familyId)
         .order('year', { ascending: false })
         .order('month', { ascending: false });
+      if (cyclesError) throw new Error(cyclesError.message);
       const cycles = cyclesRaw || [];
       const cidSet = [...new Set(cycles.map((c) => c.child_id).filter(Boolean))];
       let nameByChildId = {};
@@ -2618,9 +2625,9 @@ const api = {
         .eq('family_id', familyId);
 
       const sp = url.includes('?') ? new URLSearchParams(url.split('?')[1]) : new URLSearchParams();
-      const stFilter = String(sp.get('status') || '').trim();
-      const typeFilter = String(sp.get('type') || '').trim();
-      const priFilter = String(sp.get('priority') || '').trim();
+      const stFilter = String(config.params?.status ?? sp.get('status') ?? '').trim();
+      const typeFilter = String(config.params?.type ?? sp.get('type') ?? '').trim();
+      const priFilter = String(config.params?.priority ?? sp.get('priority') ?? '').trim();
       if (stFilter) q = q.eq('status', stFilter);
       if (typeFilter) q = q.eq('type', typeFilter);
       if (priFilter) q = q.eq('priority', priFilter);
@@ -2635,22 +2642,28 @@ const api = {
     }
 
     if (path.startsWith('/families/children')) {
-      const { data } = await supabase.from('children').select('*').eq('family_id', familyId);
+      const { data, error } = await supabase.from('children').select('*').eq('family_id', familyId);
+      if (error) throw new Error(error.message);
       return { data: data || [] };
     }
 
     if (path.startsWith('/notifications/unread-count')) {
-      const { count } = await supabase.from('notifications').select('*', { count: 'exact', head: true }).eq('family_id', familyId).eq('is_read', false);
+      const { count, error } = await supabase.from('notifications').select('*', { count: 'exact', head: true }).eq('family_id', familyId).eq('user_id', userId).eq('is_read', false);
+      if (error) throw new Error(error.message);
       return { data: { count: count || 0 } };
     }
 
     if (path.startsWith('/notifications')) {
-      const { data } = await supabase.from('notifications').select('*').eq('family_id', familyId).order('created_at', { ascending: false });
+      const { data, error } = await supabase.from('notifications').select('*').eq('family_id', familyId).eq('user_id', userId).order('created_at', { ascending: false });
+      if (error) throw new Error(error.message);
       return { data: data || [] };
     }
 
     const healthPath = path.split('?')[0];
     const healthSearch = new URLSearchParams(url.includes('?') ? url.split('?')[1] : '');
+    Object.entries(config.params || {}).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && value !== '') healthSearch.set(key, String(value));
+    });
 
     if (healthPath.startsWith('/health/context')) {
       const { data: children } = await supabase.from('children').select('id, name, user_id').eq('family_id', familyId);
@@ -2670,7 +2683,8 @@ const api = {
       let recBase = supabase.from('health_records').select('*, children:child_id(name)').eq('family_id', familyId);
       if (patientUserId) recBase = recBase.eq('patient_user_id', patientUserId);
       else if (filterChildId) recBase = recBase.eq('child_id', filterChildId);
-      const { data: allRecords } = await recBase.order('record_date', { ascending: false }).limit(80);
+      const { data: allRecords, error: recordsError } = await recBase.order('record_date', { ascending: false }).limit(80);
+      if (recordsError) throw new Error(recordsError.message);
 
       const patientIds = [...new Set((allRecords || []).map((r) => r.patient_user_id).filter(Boolean))];
       let patientNames = {};
@@ -2683,12 +2697,14 @@ const api = {
       if (patientUserId) apptBase = apptBase.eq('patient_user_id', patientUserId);
       else if (filterChildId) apptBase = apptBase.eq('child_id', filterChildId);
       const today = new Date().toISOString().split('T')[0];
-      const { data: upcomingRaw } = await apptBase.gte('date', today).order('date', { ascending: true }).order('time', { ascending: true }).limit(8);
+      const { data: upcomingRaw, error: appointmentsError } = await apptBase.gte('date', today).order('date', { ascending: true }).order('time', { ascending: true }).limit(8);
+      if (appointmentsError) throw new Error(appointmentsError.message);
 
       let medBase = supabase.from('medications').select('*, children:child_id(name)').eq('family_id', familyId).eq('status', 'active');
       if (patientUserId) medBase = medBase.eq('patient_user_id', patientUserId);
       else if (filterChildId) medBase = medBase.eq('child_id', filterChildId);
-      const { data: activeMeds } = await medBase.order('name', { ascending: true }).limit(20);
+      const { data: activeMeds, error: medicationsError } = await medBase.order('name', { ascending: true }).limit(20);
+      if (medicationsError) throw new Error(medicationsError.message);
 
       const nameFor = (r) => r.children?.name || (r.patient_user_id && patientNames[r.patient_user_id]) || '—';
       const recentRecords = (allRecords || []).slice(0, 6).map((r) => ({
@@ -2717,7 +2733,8 @@ const api = {
       if (healthSearch.get('status')) q = q.eq('status', healthSearch.get('status'));
       if (healthSearch.get('from')) q = q.gte('record_date', healthSearch.get('from'));
       if (healthSearch.get('to')) q = q.lte('record_date', healthSearch.get('to'));
-      const { data } = await q.order('record_date', { ascending: false });
+      const { data, error } = await q.order('record_date', { ascending: false });
+      if (error) throw new Error(error.message);
       const rows = data || [];
       const pids = [...new Set(rows.map((r) => r.patient_user_id).filter(Boolean))];
       let patientNames = {};
@@ -2739,7 +2756,8 @@ const api = {
       if (healthSearch.get('child_id')) q = q.eq('child_id', healthSearch.get('child_id'));
       if (healthSearch.get('from')) q = q.gte('date', healthSearch.get('from'));
       if (healthSearch.get('to')) q = q.lte('date', healthSearch.get('to'));
-      const { data } = await q.order('date', { ascending: false });
+      const { data, error } = await q.order('date', { ascending: false });
+      if (error) throw new Error(error.message);
       return { data: (data || []).map((a) => mapAppointmentFromDb(a, a.children?.name)) };
     }
 
@@ -2748,7 +2766,8 @@ const api = {
       if (healthSearch.get('patient_user_id')) q = q.eq('patient_user_id', healthSearch.get('patient_user_id'));
       if (healthSearch.get('child_id')) q = q.eq('child_id', healthSearch.get('child_id'));
       if (healthSearch.get('status')) q = q.eq('status', healthSearch.get('status'));
-      const { data } = await q.order('created_at', { ascending: false });
+      const { data, error } = await q.order('created_at', { ascending: false });
+      if (error) throw new Error(error.message);
       return { data: (data || []).map((m) => ({ ...m, child_name: m.children?.name || '—' })) };
     }
 
@@ -2761,19 +2780,26 @@ const api = {
       }
       let q = supabase
         .from('health_medication_logs')
-        .select('*, medications(name, child_id, patient_user_id), children:child_id(name), logged_by_user:logged_by(name)')
+        .select('*, medications(name, child_id, patient_user_id), children:child_id(name)')
         .eq('family_id', familyId);
       if (medIds) q = q.in('medication_id', medIds);
       if (healthSearch.get('child_id')) q = q.eq('child_id', healthSearch.get('child_id'));
       if (healthSearch.get('from')) q = q.gte('taken_at', `${healthSearch.get('from')}T00:00:00`);
       if (healthSearch.get('to')) q = q.lte('taken_at', `${healthSearch.get('to')}T23:59:59`);
-      const { data } = await q.order('taken_at', { ascending: false });
+      const { data, error } = await q.order('taken_at', { ascending: false });
+      if (error) throw new Error(error.message);
+      const loggedByIds = [...new Set((data || []).map((log) => log.logged_by).filter(Boolean))];
+      const { data: logUsers, error: logUsersError } = loggedByIds.length
+        ? await supabase.from('users').select('id,name').in('id', loggedByIds)
+        : { data: [], error: null };
+      if (logUsersError) throw new Error(logUsersError.message);
+      const logUserNames = Object.fromEntries((logUsers || []).map((profile) => [profile.id, profile.name]));
       return {
         data: (data || []).map((l) => ({
           ...l,
           medication_name: l.medications?.name || '—',
           child_name: l.children?.name || '—',
-          logged_by_name: l.logged_by_user?.name || null,
+          logged_by_name: logUserNames[l.logged_by] || null,
           taken_date: l.taken_at ? String(l.taken_at).slice(0, 10) : '',
           taken_time: l.taken_at && String(l.taken_at).length > 11 ? String(l.taken_at).slice(11, 19) : '',
         })),
@@ -3622,7 +3648,11 @@ const api = {
         const statusMap = { complete: 'completed', archive: 'archived', confirm: 'active' };
         const st = statusMap[action];
         if (st) {
-          await supabase.from('family_notices').update({ status: st }).eq('id', noticeId).eq('family_id', familyId);
+          const { data, error } = await supabase.from('family_notices')
+            .update({ status: st }).eq('id', noticeId).eq('family_id', familyId)
+            .select('id').single();
+          if (error) throw new Error(error.message);
+          if (!data?.id) throw new Error('Recado não encontrado ou sem permissão.');
         }
         return { data: { ok: true } };
       }
@@ -4231,7 +4261,8 @@ const api = {
     }
 
     if (path === '/notifications/read-all') {
-      await supabase.from('notifications').update({ is_read: true }).eq('family_id', familyId);
+      const { error } = await supabase.from('notifications').update({ is_read: true }).eq('family_id', familyId).eq('user_id', userId);
+      if (error) throw new Error(error.message);
       return { data: { ok: true } };
     }
 
@@ -4646,9 +4677,18 @@ const api = {
     if (path.startsWith('/allowance/settings/')) {
       const segs = path.split('/').filter(Boolean);
       const childId = segs[2];
-      const { data, error } = await supabase.from('allowance_settings').upsert({ ...body, family_id: familyId, child_id: childId }).select().single();
+      const fields = [
+        'is_active', 'model_type', 'base_amount', 'currency', 'cycle_closing_day',
+        'payment_day', 'allow_negative_balance', 'allow_accumulation',
+        'max_bonus', 'max_discount', 'require_parent_approval',
+      ];
+      const values = { family_id: familyId, child_id: childId };
+      fields.forEach((field) => { if (body[field] !== undefined) values[field] = body[field]; });
+      const { data, error } = await supabase.from('allowance_settings')
+        .upsert(values, { onConflict: 'family_id,child_id' }).select().single();
       if (error) throw new Error(error.message);
-      return { data: data || {} };
+      if (!data?.id) throw new Error('Os parâmetros de mesada não foram confirmados pelo servidor.');
+      return { data };
     }
 
     if (path.startsWith('/allowance/piggy-requests/') && path.endsWith('/review')) {
@@ -4905,7 +4945,9 @@ const api = {
 
     const healthDel = parseHealthSubResource(path);
     if (healthDel) {
-      await supabase.from(healthDel.table).delete().eq('id', healthDel.id).eq('family_id', familyId);
+      const { data, error } = await supabase.from(healthDel.table).delete().eq('id', healthDel.id).eq('family_id', familyId).select('id');
+      if (error) throw new Error(error.message);
+      if (!data?.length) throw new Error('Registro não encontrado ou sem permissão para excluir.');
       return { data: { success: true } };
     }
 
@@ -4918,13 +4960,15 @@ const api = {
         .eq('family_id', familyId)
         .maybeSingle();
       if (!row?.id) throw new Error('Aviso não encontrado ou sem permissão.');
-      await supabase.from('notice_reads').delete().eq('notice_id', noticeId);
-      const { error: delNoticeErr } = await supabase
+      // notice_reads is removed by the database FK ON DELETE CASCADE.
+      const { data: deletedNotice, error: delNoticeErr } = await supabase
         .from('family_notices')
         .delete()
         .eq('id', noticeId)
-        .eq('family_id', familyId);
+        .eq('family_id', familyId)
+        .select('id').single();
       if (delNoticeErr) throw new Error(delNoticeErr.message);
+      if (!deletedNotice?.id) throw new Error('O recado não foi excluído.');
       return { data: { success: true } };
     }
 
@@ -4948,7 +4992,9 @@ const api = {
       return { data: { success: true, deactivated: true } };
     }
 
-    await supabase.from(targetTable).delete().eq('id', id).eq('family_id', familyId);
+    const { data, error } = await supabase.from(targetTable).delete().eq('id', id).eq('family_id', familyId).select('id');
+    if (error) throw new Error(error.message);
+    if (!data?.length) throw new Error('Registro não encontrado ou sem permissão para excluir.');
     return { data: { success: true } };
   }
 };

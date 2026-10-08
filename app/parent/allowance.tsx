@@ -42,6 +42,7 @@ export default function ParentAllowanceScreen() {
   const [tab, setTab] = useState<'allowance' | 'settings' | 'piggy'>('allowance');
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // Estados dos dados
   const [children, setChildren] = useState<any[]>([]);
@@ -53,6 +54,9 @@ export default function ParentAllowanceScreen() {
   // Estados dos Modais
   const [showSettingsModal, setShowSettingsModal] = useState<boolean>(false);
   const [settingsForm, setSettingsForm] = useState<any>({});
+  const [savingSettings, setSavingSettings] = useState(false);
+  const [settingsError, setSettingsError] = useState<string | null>(null);
+  const [settingsNotice, setSettingsNotice] = useState<string | null>(null);
 
   const [showAdjustModal, setShowAdjustModal] = useState<boolean>(false);
   const [adjustForm, setAdjustForm] = useState({
@@ -95,9 +99,9 @@ export default function ParentAllowanceScreen() {
       if (!isRefresh) setLoading(true);
 
       const [rSets, rCycles, rCh, rTrans, rPiggy] = await Promise.all([
-        api.get('/allowance/settings').catch(() => ({ data: [] })),
-        api.get('/allowance/cycles').catch(() => ({ data: [] })),
-        api.get('/families/children').catch(() => ({ data: [] })),
+        api.get('/allowance/settings'),
+        api.get('/allowance/cycles'),
+        api.get('/families/children'),
         api.get('/allowance/transactions').catch(() => ({ data: [] })),
         api.get('/allowance/piggy-requests').catch(() => ({ data: [] })),
       ]);
@@ -107,8 +111,10 @@ export default function ParentAllowanceScreen() {
       setChildren(rCh?.data || []);
       setTransactions(rTrans?.data || []);
       setPiggyRequests(rPiggy?.data || []);
+      setLoadError(null);
     } catch (err) {
       console.error('[ParentAllowance] Erro ao carregar dados:', err);
+      setLoadError((err as Error)?.message || 'Não foi possível carregar as mesadas.');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -165,12 +171,20 @@ export default function ParentAllowanceScreen() {
 
   // Salvar Configurações de Mesada do Filho
   const handleSaveSettings = async () => {
-    if (!settingsForm.child_id) return;
+    if (savingSettings) return;
+    if (!settingsForm.child_id) {
+      setSettingsError('Selecione o filho para configurar a mesada.');
+      return;
+    }
 
     // Converte os valores de string para número antes de enviar à API
-    const baseAmountClean = parseFloat(String(settingsForm.base_amount || '0').replace(',', '.')) || 0;
-    const maxBonusClean = parseFloat(String(settingsForm.max_bonus || '0').replace(',', '.')) || 0;
-    const maxDiscountClean = parseFloat(String(settingsForm.max_discount || '0').replace(',', '.')) || 0;
+    const baseAmountClean = Number(String(settingsForm.base_amount ?? '0').replace(',', '.'));
+    const maxBonusClean = Number(String(settingsForm.max_bonus ?? '0').replace(',', '.'));
+    const maxDiscountClean = Number(String(settingsForm.max_discount ?? '0').replace(',', '.'));
+    if ([baseAmountClean, maxBonusClean, maxDiscountClean].some((value) => !Number.isFinite(value) || value < 0)) {
+      setSettingsError('Informe valores numéricos válidos, maiores ou iguais a zero.');
+      return;
+    }
 
     const payload = {
       ...settingsForm,
@@ -184,18 +198,20 @@ export default function ParentAllowanceScreen() {
     };
 
     try {
-      setLoading(true);
-      await api.put(`/allowance/settings/${settingsForm.child_id}`, payload);
+      setSavingSettings(true);
+      setSettingsError(null);
+      const saved = await api.put(`/allowance/settings/${settingsForm.child_id}`, payload);
+      if (!saved?.data?.id) throw new Error('A configuração não foi confirmada pelo servidor.');
       // Garante ou abre o ciclo corrente para o filho
       await api.post('/allowance/cycles/current', { child_id: settingsForm.child_id });
       
-      Alert.alert('Sucesso!', 'Configurações de mesada salvas com sucesso! ⚙️');
       setShowSettingsModal(false);
-      loadData(true);
+      setSettingsNotice('Parâmetros de mesada salvos.');
+      void loadData(true);
     } catch (err: any) {
-      Alert.alert('Erro', err.message || 'Não foi possível salvar as configurações.');
+      setSettingsError(err.message || 'Não foi possível salvar as configurações.');
     } finally {
-      setLoading(false);
+      setSavingSettings(false);
     }
   };
 
@@ -369,6 +385,9 @@ export default function ParentAllowanceScreen() {
         subtitle="Gerencie saldos, metas e resgates"
         onBack={() => router.back()}
       />
+
+      {settingsNotice ? <Text style={{ color: '#166534', backgroundColor: '#DCFCE7', padding: 10, fontWeight: '700' }}>{settingsNotice}</Text> : null}
+      {loadError ? <TouchableOpacity onPress={() => { void loadData(); }}><Text style={{ color: Colors.danger, backgroundColor: '#FEE2E2', padding: 10, fontWeight: '700' }}>{loadError} Toque para tentar novamente.</Text></TouchableOpacity> : null}
 
       {/* Abas */}
       <View style={styles.tabsContainer}>
@@ -891,14 +910,16 @@ export default function ParentAllowanceScreen() {
       </Modal>
 
       {/* ── MODAL EDITAR CONFIGURAÇÕES DE MESADA ── */}
-      <Modal
-        visible={showSettingsModal}
+      {showSettingsModal && <Modal
+        visible
         transparent
-        animationType="slide"
+        animationType={Platform.OS === 'android' ? 'none' : 'slide'}
         onRequestClose={() => setShowSettingsModal(false)}
+        onShow={() => setSettingsError(null)}
       >
         <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          enabled={Platform.OS === 'ios'}
+          behavior="padding"
           style={styles.modalOverlay}
         >
           <View style={[styles.modalContent, { maxHeight: '90%' }]}>
@@ -909,7 +930,8 @@ export default function ParentAllowanceScreen() {
               </TouchableOpacity>
             </View>
 
-            <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
+            <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+              {settingsError ? <Text style={{ color: Colors.danger, backgroundColor: '#FEE2E2', padding: 10, fontWeight: '700' }}>{settingsError}</Text> : null}
               <Text style={styles.label}>Modelo de Mesada *</Text>
               <View style={{ gap: 10, marginBottom: 16 }}>
                 <TouchableOpacity
@@ -1034,14 +1056,15 @@ export default function ParentAllowanceScreen() {
               <TouchableOpacity 
                 style={[styles.btnSubmitModal, { marginTop: 16 }]}
                 onPress={handleSaveSettings}
+                disabled={savingSettings}
                 activeOpacity={0.8}
               >
-                <Text style={styles.btnSubmitModalText}>Salvar Parâmetros ⚙️</Text>
+                <Text style={styles.btnSubmitModalText}>{savingSettings ? 'Salvando...' : 'Salvar Parâmetros ⚙️'}</Text>
               </TouchableOpacity>
             </ScrollView>
           </View>
         </KeyboardAvoidingView>
-      </Modal>
+      </Modal>}
 
       {/* ── MODAL DECISÃO DE RESGATE (PIGGY REVIEW) ── */}
       <Modal

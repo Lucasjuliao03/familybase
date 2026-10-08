@@ -1,5 +1,7 @@
 node_modules/
 .expo/
+.expo-temp/
+.expo-export-check/
 dist/
 *.log
 .git/

@@ -34,16 +34,37 @@ async function fetchLocationsFromDb(familyId: string): Promise<Map<string, Famil
 
   const { data, error: qErr } = await supabase
     .from('family_locations')
-    .select('*, users:user_id(id, name, email, avatar_url, avatar_preset, role, display_color)')
+    .select('*')
     .eq('family_id', familyId);
 
   if (qErr) throw new Error(qErr.message);
 
+  // family_locations.user_id references auth.users, not public.users. PostgREST
+  // cannot join the profile through that FK; fetch it explicitly.
+  const [{ data: profiles, error: profileError }, { data: children, error: childError }] = await Promise.all([
+    supabase.from('users').select('id, name, role, display_color, avatar_url, avatar_preset').eq('family_id', familyId),
+    supabase.from('children').select('user_id, name, avatar_url, avatar_preset').eq('family_id', familyId),
+  ]);
+  if (profileError) throw new Error(profileError.message);
+  if (childError) throw new Error(childError.message);
+  const profileMap = new Map((profiles || []).map((profile: any) => [profile.id, profile]));
+  const childMap = new Map((children || []).filter((child: any) => child.user_id).map((child: any) => [child.user_id, child]));
+
   const locMap = new Map<string, FamilyLocationRow>();
   (data || []).forEach((row: any) => {
     const devInfo = devMap.get(row.device_id);
-    if (devInfo && devInfo.is_location_enabled === false) return;
-    locMap.set(row.device_id || row.user_id, { ...row, device: devInfo });
+    const profile: any = profileMap.get(row.user_id);
+    const child: any = childMap.get(row.user_id);
+    locMap.set(row.device_id || row.user_id, {
+      ...row,
+      device: devInfo,
+      users: profile ? {
+        ...profile,
+        name: child?.name || profile.name,
+        avatar_url: child?.avatar_url || profile.avatar_url,
+        avatar_preset: child?.avatar_url ? null : (child?.avatar_preset || profile.avatar_preset),
+      } : undefined,
+    });
   });
 
   return locMap;
@@ -65,7 +86,17 @@ export function useFamilyLocations({
 
   const applyLocMap = useCallback((locMap: Map<string, FamilyLocationRow>) => {
     if (mountedRef.current) {
-      setLocationsMap(locMap);
+      setLocationsMap((previous) => {
+        if (previous.size !== locMap.size) return locMap;
+        for (const [key, next] of locMap) {
+          const old = previous.get(key);
+          if (!old || old.updated_at !== next.updated_at || old.latitude !== next.latitude
+            || old.longitude !== next.longitude || old.users?.name !== next.users?.name
+            || old.users?.avatar_url !== next.users?.avatar_url
+            || old.users?.avatar_preset !== next.users?.avatar_preset) return locMap;
+        }
+        return previous;
+      });
       setError(null);
     }
   }, []);
@@ -127,7 +158,10 @@ export function useFamilyLocations({
         (payload) => {
           if (!mountedRef.current) return;
           const row = payload.new as FamilyLocationRow;
-          if (!row?.user_id) return;
+          if (!row?.user_id) {
+            void loadOnce(familyId, false);
+            return;
+          }
           setLocationsMap((prev) => {
             const next = new Map(prev);
             const key = row.device_id || row.user_id;
@@ -139,6 +173,8 @@ export function useFamilyLocations({
             });
             return next;
           });
+          // Rehydrate avatar/name for a member appearing for the first time.
+          void loadOnce(familyId, false);
         },
       );
 
@@ -167,9 +203,13 @@ export function useFamilyLocations({
         byUser.set(loc.user_id, loc);
         return;
       }
-      if (loc.device?.is_primary_location_device) {
+      const newer = new Date(loc.updated_at).getTime() > new Date(existing.updated_at).getTime();
+      const sameTime = loc.updated_at === existing.updated_at;
+      if (newer) {
         byUser.set(loc.user_id, loc);
-      } else if (loc.device?.device_type === 'mobile' && existing.device?.device_type !== 'mobile') {
+      } else if (sameTime && loc.device?.is_primary_location_device && !existing.device?.is_primary_location_device) {
+        byUser.set(loc.user_id, loc);
+      } else if (sameTime && loc.device?.device_type === 'mobile' && existing.device?.device_type !== 'mobile') {
         byUser.set(loc.user_id, loc);
       }
     });

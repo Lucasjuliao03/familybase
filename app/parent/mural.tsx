@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -52,6 +52,13 @@ export default function ParentMuralScreen() {
 
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
+  const [savingNotice, setSavingNotice] = useState(false);
+  const [workingNotice, setWorkingNotice] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [noticeMessage, setNoticeMessage] = useState<string | null>(null);
+  const hasLoaded = useRef(false);
+  const saveInFlight = useRef(false);
   const [notices, setNotices] = useState<any[]>([]);
 
   // Filtros
@@ -84,7 +91,7 @@ export default function ParentMuralScreen() {
 
   const loadData = useCallback(async (isRefresh = false) => {
     try {
-      if (!isRefresh) setLoading(true);
+      if (!isRefresh && !hasLoaded.current) setLoading(true);
 
       const params: any = {};
       if (filterStatus) params.status = filterStatus;
@@ -99,9 +106,12 @@ export default function ParentMuralScreen() {
       const sorted = [...(rNotices?.data || [])].sort((a, b) => (b.is_pinned ? 1 : 0) - (a.is_pinned ? 1 : 0));
       setNotices(sorted);
       setFamilyData(rFamily?.data || null);
+      setLoadError(null);
     } catch (err) {
       console.error('[ParentMural] Erro ao carregar dados:', err);
+      setLoadError((err as Error)?.message || 'Não foi possível carregar o mural.');
     } finally {
+      hasLoaded.current = true;
       setLoading(false);
       setRefreshing(false);
     }
@@ -118,13 +128,16 @@ export default function ParentMuralScreen() {
 
   // Salvar aviso
   const handleSaveNotice = async () => {
+    if (saveInFlight.current) return;
     if (!form.title.trim()) {
-      Alert.alert('Erro', 'Informe o título do recado.');
+      setFormError('Informe o título do recado.');
       return;
     }
 
     try {
-      setLoading(true);
+      saveInFlight.current = true;
+      setSavingNotice(true);
+      setFormError(null);
       const payload = {
         title: form.title,
         description: form.description || null,
@@ -143,19 +156,21 @@ export default function ParentMuralScreen() {
       };
 
       if (form.id) {
-        await api.put(`/mural/notices/${form.id}`, payload);
-        Alert.alert('Sucesso', 'Recado atualizado com sucesso!');
+        const saved = await api.put(`/mural/notices/${form.id}`, payload);
+        if (!saved?.data?.id) throw new Error('O recado não foi confirmado pelo servidor.');
       } else {
-        await api.post('/mural/notices', payload);
-        Alert.alert('Sucesso', 'Comunicado publicado no mural!');
+        const saved = await api.post('/mural/notices', payload);
+        if (!saved?.data?.id) throw new Error('A publicação não foi confirmada pelo servidor.');
       }
 
       setShowModal(false);
-      loadData(true);
+      setNoticeMessage(form.id ? 'Recado atualizado.' : 'Comunicado publicado.');
+      void loadData(true);
     } catch (err: any) {
-      Alert.alert('Erro', err.message || 'Não foi possível salvar o comunicado.');
+      setFormError(err.message || 'Não foi possível salvar o comunicado.');
     } finally {
-      setLoading(false);
+      saveInFlight.current = false;
+      setSavingNotice(false);
     }
   };
 
@@ -167,14 +182,14 @@ export default function ParentMuralScreen() {
         text: 'Arquivar',
         onPress: async () => {
           try {
-            setLoading(true);
+            setWorkingNotice(true);
             await api.post(`/mural/notices/${id}/archive`);
-            Alert.alert('Sucesso', 'Recado arquivado.');
-            loadData(true);
+            setNoticeMessage('Recado arquivado.');
+            void loadData(true);
           } catch (err: any) {
-            Alert.alert('Erro', err.message || 'Erro ao arquivar.');
+            setLoadError(err.message || 'Erro ao arquivar.');
           } finally {
-            setLoading(false);
+            setWorkingNotice(false);
           }
         },
       },
@@ -190,14 +205,14 @@ export default function ParentMuralScreen() {
         style: 'destructive',
         onPress: async () => {
           try {
-            setLoading(true);
+            setWorkingNotice(true);
             await api.delete(`/mural/notices/${id}`);
-            Alert.alert('Sucesso', 'Recado excluído do mural.');
-            loadData(true);
+            setNoticeMessage('Recado excluído do mural.');
+            void loadData(true);
           } catch (err: any) {
-            Alert.alert('Erro', err.message || 'Erro ao excluir.');
+            setLoadError(err.message || 'Erro ao excluir.');
           } finally {
-            setLoading(false);
+            setWorkingNotice(false);
           }
         },
       },
@@ -267,6 +282,8 @@ export default function ParentMuralScreen() {
       />
 
       {/* Filtros */}
+      {noticeMessage ? <Text style={styles.successBanner}>{noticeMessage}</Text> : null}
+      {loadError ? <Text style={styles.errorBanner}>{loadError}</Text> : null}
       <View style={styles.filterBar}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
           {/* Status */}
@@ -385,11 +402,11 @@ export default function ParentMuralScreen() {
                       <Text style={styles.btnActionText}>✏️ Editar</Text>
                     </TouchableOpacity>
                     {n.status === 'active' && (
-                      <TouchableOpacity style={styles.btnAction} onPress={() => handleArchive(n.id)}>
+                      <TouchableOpacity style={styles.btnAction} onPress={() => handleArchive(n.id)} disabled={workingNotice}>
                         <Text style={styles.btnActionText}>📥 Arquivar</Text>
                       </TouchableOpacity>
                     )}
-                    <TouchableOpacity style={[styles.btnAction, { borderColor: Colors.danger + '33' }]} onPress={() => handleDelete(n.id)}>
+                    <TouchableOpacity style={[styles.btnAction, { borderColor: Colors.danger + '33' }]} onPress={() => handleDelete(n.id)} disabled={workingNotice}>
                       <Text style={[styles.btnActionText, { color: Colors.danger }]}>🗑️ Excluir</Text>
                     </TouchableOpacity>
                   </View>
@@ -403,8 +420,8 @@ export default function ParentMuralScreen() {
       )}
 
       {/* MODAL: NOVO/EDITAR AVISO */}
-      <Modal visible={showModal} transparent animationType="slide">
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalOverlay}>
+      {showModal && <Modal visible transparent animationType={Platform.OS === 'android' ? 'none' : 'slide'} onRequestClose={() => setShowModal(false)}>
+        <KeyboardAvoidingView enabled={Platform.OS === 'ios'} behavior="padding" style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>{form.id ? '✏️ Editar Recado' : '📢 Publicar no Mural'}</Text>
@@ -413,7 +430,8 @@ export default function ParentMuralScreen() {
               </TouchableOpacity>
             </View>
 
-            <ScrollView style={styles.modalBody}>
+            <ScrollView style={styles.modalBody} keyboardShouldPersistTaps="handled">
+              {formError ? <Text style={styles.errorBanner}>{formError}</Text> : null}
               <Text style={styles.formLabel}>Título do Comunicado *</Text>
               <TextInput
                 style={styles.input}
@@ -547,13 +565,13 @@ export default function ParentMuralScreen() {
                 />
               </View>
 
-              <TouchableOpacity style={styles.btnSubmit} onPress={handleSaveNotice}>
-                <Text style={styles.btnSubmitText}>Publicar Comunicado 🚀</Text>
+              <TouchableOpacity style={styles.btnSubmit} onPress={handleSaveNotice} disabled={savingNotice}>
+                <Text style={styles.btnSubmitText}>{savingNotice ? 'Salvando...' : form.id ? 'Salvar Alterações' : 'Publicar Comunicado 🚀'}</Text>
               </TouchableOpacity>
             </ScrollView>
           </View>
         </KeyboardAvoidingView>
-      </Modal>
+      </Modal>}
 
     </View>
   );
@@ -575,6 +593,8 @@ const styles = StyleSheet.create({
   content:  { padding: 16, paddingBottom: 110 },
   centerContainer: { padding: 40, alignItems: 'center' },
   loadingText: { marginTop: 12, color: Colors.textSecondary, fontSize: FontSize.sm, fontWeight: '600' },
+  successBanner: { color: '#166534', backgroundColor: '#DCFCE7', padding: 10, fontWeight: '700' },
+  errorBanner: { color: Colors.danger, backgroundColor: '#FEE2E2', padding: 10, fontWeight: '700' },
 
   sectionTitle: { fontSize: FontSize.md, fontWeight: '800', color: Colors.text, marginBottom: 12 },
   emptyState: { backgroundColor: Colors.surface, borderRadius: Radii.lg, padding: 32, alignItems: 'center', borderWidth: 1, borderColor: Colors.border, marginBottom: 20 },

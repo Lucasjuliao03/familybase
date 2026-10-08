@@ -3,6 +3,7 @@ import { View, StyleSheet, ActivityIndicator, Text, TouchableOpacity } from 'rea
 import { WebView } from 'react-native-webview';
 import { publicAssetUrl } from '../../lib/api';
 import { leafletCss, leafletJs } from '../../lib/leafletAssets.generated';
+import { AVATAR_DATA_URIS } from '../../lib/avatarDataUris.generated';
 import { Colors } from '../../theme';
 
 export interface MapLocation {
@@ -298,6 +299,8 @@ const mapHtmlSource = `
             let avatarHtml = '';
             if (loc.avatar_url && String(loc.avatar_url).startsWith('https://')) {
               avatarHtml = '<img src="' + escapeHtml(loc.avatar_url) + '" alt="" />';
+            } else if (loc.avatar_data_uri) {
+              avatarHtml = '<img src="' + loc.avatar_data_uri + '" alt="" />';
             } else {
               const emoji = PRESET_EMOJIS[loc.avatar_preset] || (loc.name || '👤').charAt(0).toUpperCase();
               avatarHtml = '<span>' + escapeHtml(emoji) + '</span>';
@@ -314,7 +317,7 @@ const mapHtmlSource = `
                   avatarHtml +
                   '<div class="location-marker-device">' + deviceIcon + '</div>' +
                 '</div>' +
-                '<div class="location-marker-name">' + escapeHtml((loc.name || 'Membro').split(' ')[0]) + '</div>' +
+                '<div class="location-marker-name">' + escapeHtml(loc.name || 'Membro') + '</div>' +
               '</div>';
             
             const icon = L.divIcon({
@@ -327,6 +330,12 @@ const mapHtmlSource = `
             const m = L.marker([lat, lng], { icon: icon }).addTo(map);
             markers['user-' + loc.user_id] = m;
             points.push([lat, lng]);
+
+            const seen = loc.updated_at ? new Date(loc.updated_at) : null;
+            const seenLabel = seen && !isNaN(seen.getTime())
+              ? seen.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })
+              : 'Sem horário registrado';
+            m.bindPopup('<strong>' + escapeHtml(loc.name || 'Membro') + '</strong><br>Última posição: ' + escapeHtml(seenLabel));
 
             m.on('click', function() {
               window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'click_user', userId: loc.user_id }));
@@ -450,6 +459,8 @@ export function FamilyMapView({
         name,
         avatar_url: avatar_url ? publicAssetUrl(avatar_url) : null,
         avatar_preset,
+        avatar_data_uri: avatar_preset ? AVATAR_DATA_URIS[avatar_preset] || null : null,
+        updated_at: loc.updated_at || null,
         device_type: loc.device?.device_type || 'mobile',
         color,
       };
@@ -465,6 +476,8 @@ export function FamilyMapView({
         name: currentUser.name || 'Eu',
         avatar_url: currentUser.avatar_url ? publicAssetUrl(currentUser.avatar_url) : null,
         avatar_preset: currentUser.avatar_preset || null,
+        avatar_data_uri: currentUser.avatar_preset ? AVATAR_DATA_URIS[currentUser.avatar_preset] || null : null,
+        updated_at: new Date().toISOString(),
         device_type: 'mobile',
         color: currentUser.display_color || accentColor,
       });
@@ -555,7 +568,7 @@ export function FamilyMapView({
         ref={webViewRef}
         originWhitelist={['*']}
         source={{ html: mapHtmlSource, baseUrl: 'https://www.openstreetmap.org/' }}
-        applicationNameForUserAgent="TudoDeFamilia/1.0.5 (com.familybase.mobile)"
+        applicationNameForUserAgent="TudoDeFamilia/1.0.7 (com.familybase.mobile)"
         cacheEnabled
         style={[s.map, { marginBottom: mapPaddingBottom }]}
         onError={() => setMapError('load')}

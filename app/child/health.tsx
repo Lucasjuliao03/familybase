@@ -46,6 +46,9 @@ export default function ChildHealthScreen() {
   const [tab, setTab] = useState<'medications' | 'symptoms' | 'appointments'>('medications');
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
+  const [savingSymptom, setSavingSymptom] = useState(false);
+  const [savingDose, setSavingDose] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // Dados da API
   const [medications, setMedications] = useState<any[]>([]);
@@ -78,8 +81,10 @@ export default function ChildHealthScreen() {
       setMedications(rMeds?.data || []);
       setAppointments(rAppts?.data || []);
       setLogs(rLogs?.data || []);
+      setLoadError(null);
     } catch (err) {
       console.error('[ChildHealth] Erro ao carregar dados de saúde:', err);
+      setLoadError((err as Error)?.message || 'Falha ao carregar o diário de saúde.');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -106,12 +111,12 @@ export default function ChildHealthScreen() {
           text: 'Sim, já tomei!',
           onPress: async () => {
             try {
-              setLoading(true);
+              setSavingDose(true);
               const now = new Date();
               await api.post('/health/medication-logs', {
                 medication_id: medId,
                 child_id: childProfile?.id,
-                taken_date: now.toISOString().split('T')[0],
+                taken_date: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`,
                 taken_time: now.toTimeString().slice(0, 5),
                 status: 'taken',
                 notes: 'Registrado pelo próprio filho no celular',
@@ -122,7 +127,7 @@ export default function ChildHealthScreen() {
             } catch (err: any) {
               Alert.alert('Erro', err.message || 'Não foi possível registrar a dose.');
             } finally {
-              setLoading(false);
+              setSavingDose(false);
             }
           },
         },
@@ -132,22 +137,28 @@ export default function ChildHealthScreen() {
 
   // Enviar Sintoma
   const handleReportSymptom = async () => {
+    if (savingSymptom) return;
+    if (!childProfile?.id) {
+      Alert.alert('Erro', 'Perfil do filho ainda não carregou. Tente novamente.');
+      return;
+    }
     if (!symptomForm.symptoms.trim()) {
       Alert.alert('Aviso', 'Descreva brevemente o que você está sentindo.');
       return;
     }
 
     try {
-      setLoading(true);
+      setSavingSymptom(true);
       const now = new Date();
-      await api.post('/health/records', {
+      const saved = await api.post('/health/records', {
         ...symptomForm,
         child_id: childProfile?.id,
-        record_date: now.toISOString().split('T')[0],
+        record_date: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`,
         record_time: now.toTimeString().slice(0, 5),
         status: 'active',
         temperature: symptomForm.temperature ? parseFloat(symptomForm.temperature) : null,
       });
+      if (!saved?.data?.id) throw new Error('O registro não foi confirmado pelo servidor.');
 
       Alert.alert(
         'Sintoma Reportado! ❤️',
@@ -163,11 +174,11 @@ export default function ChildHealthScreen() {
         medication_given: '',
       });
       setTab('medications');
-      loadData(true);
+      void loadData(true);
     } catch (err: any) {
       Alert.alert('Erro', err.message || 'Não foi possível enviar o sintoma.');
     } finally {
-      setLoading(false);
+      setSavingSymptom(false);
     }
   };
 
@@ -199,6 +210,12 @@ export default function ChildHealthScreen() {
           <View style={{ width: 36 }} />
         </View>
       </LinearGradient>
+
+      {loadError && (
+        <TouchableOpacity onPress={() => { void loadData(); }} style={{ padding: 12, backgroundColor: '#FEF2F2' }}>
+          <Text style={{ color: Colors.danger, fontWeight: '700' }}>Falha ao carregar: {loadError}. Toque para tentar novamente.</Text>
+        </TouchableOpacity>
+      )}
 
       {/* Abas */}
       <View style={styles.tabsContainer}>
@@ -263,6 +280,7 @@ export default function ChildHealthScreen() {
                         <TouchableOpacity
                           style={styles.btnDose}
                           onPress={() => handleLogDose(m.id, m.name)}
+                          disabled={savingDose}
                           activeOpacity={0.8}
                         >
                           <Text style={styles.btnDoseText}>Já tomei! 👍</Text>
@@ -374,9 +392,10 @@ export default function ChildHealthScreen() {
               <TouchableOpacity
                 style={styles.btnSubmit}
                 onPress={handleReportSymptom}
+                disabled={savingSymptom}
                 activeOpacity={0.8}
               >
-                <Text style={styles.btnSubmitText}>Reportar Sintoma 📤</Text>
+                <Text style={styles.btnSubmitText}>{savingSymptom ? 'Salvando sintoma...' : 'Reportar Sintoma 📤'}</Text>
               </TouchableOpacity>
             </Card>
           )}

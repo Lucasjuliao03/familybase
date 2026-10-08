@@ -19,6 +19,7 @@ import {
 import { makeProxySession, canActAsChild } from '../lib/proxyAudit';
 import { uploadAvatarBase64 } from '../lib/uploadAvatar';
 import { BILLING_ENABLED } from '../lib/features';
+import { stopLocationSharing } from '../lib/locationBackgroundTask';
 
 // ─── Tipos ──────────────────────────────────────────────────────────────────
 
@@ -607,6 +608,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [loadProfile, safeSetLoading]);
 
   const logout = useCallback(async (): Promise<void> => {
+    try { await stopLocationSharing(); } catch { /* noop */ }
     try { await clearChildProxy(); } catch { /* noop */ }
     try {
       await supabase.auth.signOut({ scope: 'local' });

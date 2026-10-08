@@ -31,14 +31,16 @@ export default function ParentLocationScreen() {
   const { family, user } = useAuth();
   const familyId = family?.id || user?.family_id;
 
-  const [tab, setTab] = useState<'map' | 'zones'>('map');
+  const [tab, setTab] = useState<'map' | 'zones' | 'alerts'>('map');
   const [zones, setZones] = useState<SafeZone[]>([]);
+  const [zoneAlerts, setZoneAlerts] = useState<any[]>([]);
   const [zonesLoading, setZonesLoading] = useState(true);
   const [isSharing, setIsSharing] = useState(true);
   const [selectedUser, setSelectedUser] = useState<string | null>(null);
   const [isDrawingMode, setIsDrawingMode] = useState(false);
 
   const [showZoneModal, setShowZoneModal] = useState(false);
+  const [editingZoneId, setEditingZoneId] = useState<string | null>(null);
   const [zoneForm, setZoneForm] = useState({ name: '', type: 'home', radius_meters: '200', latitude: '', longitude: '' });
   const [savingZone, setSavingZone] = useState(false);
 
@@ -68,12 +70,13 @@ export default function ParentLocationScreen() {
     if (!familyId) return;
     setZonesLoading(true);
     try {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('safe_zones')
         .select('*')
         .eq('family_id', familyId)
         .eq('is_active', true)
         .order('created_at');
+      if (error) throw error;
       setZones(data || []);
       const myLoc = locations.find((l) => l.user_id === user?.id);
       if (myLoc && myLoc.share_with_children === false) setIsSharing(false);
@@ -86,11 +89,28 @@ export default function ParentLocationScreen() {
 
   useEffect(() => { loadZones(); }, [loadZones]);
 
+  const loadAlerts = useCallback(async () => {
+    if (!familyId || !user?.id) return;
+    const { data, error } = await supabase.from('notifications')
+      .select('id,title,message,type,is_read,created_at,data')
+      .eq('family_id', familyId).eq('user_id', user.id)
+      .in('type', ['zone_enter', 'zone_exit'])
+      .order('created_at', { ascending: false }).limit(50);
+    if (!error) setZoneAlerts(data || []);
+  }, [familyId, user?.id]);
+
+  useEffect(() => {
+    void loadAlerts();
+    const interval = setInterval(() => { void loadAlerts(); }, 20_000);
+    return () => clearInterval(interval);
+  }, [loadAlerts]);
+
   const handleRefresh = async () => {
     try {
       await forceRefresh();
       await refreshLocs();
       await loadZones();
+      await loadAlerts();
     } catch {
       Alert.alert('Erro', 'Não foi possível atualizar a localização.');
     }
@@ -110,25 +130,42 @@ export default function ParentLocationScreen() {
     }
   };
 
+  const selectedLocation = locations.find((loc) => loc.user_id === selectedUser);
+
+  const openEditZone = (zone: SafeZone) => {
+    setEditingZoneId(zone.id);
+    setZoneForm({ name: zone.name, type: zone.type, radius_meters: String(zone.radius_meters), latitude: String(zone.latitude), longitude: String(zone.longitude) });
+    setShowZoneModal(true);
+  };
+
   const handleCreateZone = async () => {
-    if (!zoneForm.name.trim() || !zoneForm.latitude || !zoneForm.longitude) {
-      return Alert.alert('Erro', 'Preencha todos os campos da zona.');
+    const latitude = Number(zoneForm.latitude.replace(',', '.'));
+    const longitude = Number(zoneForm.longitude.replace(',', '.'));
+    const radius = Number(zoneForm.radius_meters.replace(',', '.'));
+    if (!zoneForm.name.trim() || !Number.isFinite(latitude) || Math.abs(latitude) > 90
+      || !Number.isFinite(longitude) || Math.abs(longitude) > 180
+      || !Number.isFinite(radius) || radius < 30 || radius > 5000) {
+      return Alert.alert('Dados inválidos', 'Informe nome, coordenadas válidas e raio entre 30 e 5000 metros.');
     }
     setSavingZone(true);
     try {
-      const { data, error } = await supabase.from('safe_zones').insert({
-        family_id: familyId, name: zoneForm.name.trim(),
+      const values = {
+        name: zoneForm.name.trim(),
         type: zoneForm.type, icon: ZONE_ICONS[zoneForm.type],
-        latitude: parseFloat(zoneForm.latitude), longitude: parseFloat(zoneForm.longitude),
-        radius_meters: parseInt(zoneForm.radius_meters, 10) || 200,
-        color: ZONE_COLORS[zoneForm.type], created_by: user?.id,
-      }).select().single();
+        latitude, longitude, radius_meters: radius,
+        color: ZONE_COLORS[zoneForm.type],
+      };
+      const query = editingZoneId
+        ? supabase.from('safe_zones').update(values).eq('id', editingZoneId).eq('family_id', familyId)
+        : supabase.from('safe_zones').insert({ ...values, family_id: familyId, user_id: user?.id, created_by: user?.id });
+      const { data, error } = await query.select().single();
       if (error) throw error;
-      setZones((z) => [...z, data]);
+      setZones((z) => editingZoneId ? z.map((item) => item.id === editingZoneId ? data : item) : [...z, data]);
       setShowZoneModal(false);
+      setEditingZoneId(null);
       setZoneForm({ name: '', type: 'home', radius_meters: '200', latitude: '', longitude: '' });
-    } catch {
-      Alert.alert('Erro', 'Não foi possível criar a zona.');
+    } catch (error: any) {
+      Alert.alert('Erro', error?.message || 'Não foi possível salvar a zona.');
     } finally {
       setSavingZone(false);
     }
@@ -137,7 +174,8 @@ export default function ParentLocationScreen() {
   const deleteZone = (zoneId: string) => Alert.alert('Excluir Zona', 'Remover esta zona segura?', [
     { text: 'Cancelar', style: 'cancel' },
     { text: 'Excluir', style: 'destructive', onPress: async () => {
-      await supabase.from('safe_zones').delete().eq('id', zoneId).eq('family_id', familyId);
+      const { error } = await supabase.from('safe_zones').delete().eq('id', zoneId).eq('family_id', familyId);
+      if (error) return Alert.alert('Erro', error.message);
       setZones((z) => z.filter((z2) => z2.id !== zoneId));
     }},
   ]);
@@ -175,26 +213,13 @@ export default function ParentLocationScreen() {
         <TouchableOpacity style={[s.tabBtn, tab === 'zones' && s.tabBtnActive]} onPress={() => setTab('zones')}>
           <Text style={[s.tabText, tab === 'zones' && s.tabTextActive]}>🛡️ Zonas Seguras</Text>
         </TouchableOpacity>
+        <TouchableOpacity style={[s.tabBtn, tab === 'alerts' && s.tabBtnActive]} onPress={() => { setTab('alerts'); void loadAlerts(); }}>
+          <Text style={[s.tabText, tab === 'alerts' && s.tabTextActive]}>🔔 Alertas{zoneAlerts.some((alert) => !alert.is_read) ? ' •' : ''}</Text>
+        </TouchableOpacity>
       </View>
 
       {tab === 'map' ? (
         <View style={s.mapArea}>
-          {!permissionReady ? (
-            <View style={s.centered}>
-              <ActivityIndicator size="large" color={Colors.primary} />
-              <Text style={[s.permDesc, { marginTop: 12 }]}>A pedir permissão de localização...</Text>
-            </View>
-          ) : permissionDenied ? (
-            <View style={s.centered}>
-              <Text style={{ fontSize: 48, marginBottom: 12 }}>📍</Text>
-              <Text style={s.permTitle}>Permissão de Localização</Text>
-              <Text style={s.permDesc}>Para ver o mapa da família, permita o acesso à localização.</Text>
-              <TouchableOpacity style={s.permBtn} onPress={requestPermissions}>
-                <Text style={s.permBtnText}>Permitir Localização</Text>
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <>
               <FamilyMapView
                 locations={locations}
                 zones={zones}
@@ -227,6 +252,12 @@ export default function ParentLocationScreen() {
                 } : null}
               />
 
+              {permissionDenied && (
+                <TouchableOpacity style={s.permissionNotice} onPress={requestPermissions}>
+                  <Text style={s.positionText}>Permita o GPS para transmitir sua posição. As últimas posições da família continuam visíveis. Toque para permitir.</Text>
+                </TouchableOpacity>
+              )}
+
               {isDrawingMode && (
                 <View style={s.drawingBanner}>
                   <Text style={s.drawingBannerText}>🎯 Toque no mapa para definir o local seguro</Text>
@@ -240,6 +271,15 @@ export default function ParentLocationScreen() {
                 <View style={s.mapLoadingBadge}>
                   <ActivityIndicator size="small" color={Colors.primary} />
                   <Text style={s.mapLoadingText}>A actualizar posições...</Text>
+                </View>
+              )}
+
+              {selectedLocation && (
+                <View style={s.positionCard}>
+                  <Text style={s.positionTitle}>{selectedLocation.users?.name || 'Membro'}</Text>
+                  <Text style={s.positionText}>Última posição: {new Date(selectedLocation.updated_at).toLocaleString('pt-BR')}</Text>
+                  <Text style={s.positionText}>Se o aparelho estiver sem sinal, esta posição permanece até chegar uma nova atualização.</Text>
+                  <TouchableOpacity onPress={() => setSelectedUser(null)}><Text style={{ color: Colors.primary, fontWeight: '700' }}>Fechar</Text></TouchableOpacity>
                 </View>
               )}
 
@@ -261,12 +301,11 @@ export default function ParentLocationScreen() {
                   </TouchableOpacity>
                 ))}
               </ScrollView>
-            </>
-          )}
         </View>
-      ) : (
+      ) : tab === 'zones' ? (
         <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, gap: 12 }}>
           <TouchableOpacity style={s.addZoneBtn} onPress={() => {
+            setEditingZoneId(null);
             Alert.alert(
               '🛡️ Nova Zona Segura',
               'Como deseja definir a localização da nova zona?',
@@ -310,6 +349,9 @@ export default function ParentLocationScreen() {
                 <Text style={s.zoneName}>{zone.name}</Text>
                 <Text style={s.zoneMeta}>📏 {zone.radius_meters}m · 📍 {zone.latitude.toFixed(4)}, {zone.longitude.toFixed(4)}</Text>
               </View>
+              <TouchableOpacity onPress={() => openEditZone(zone)} style={{ padding: 8 }}>
+                <Text style={{ fontSize: 18 }}>✏️</Text>
+              </TouchableOpacity>
               <TouchableOpacity onPress={() => deleteZone(zone.id)}>
                 <Text style={{ fontSize: 18 }}>🗑️</Text>
               </TouchableOpacity>
@@ -317,13 +359,31 @@ export default function ParentLocationScreen() {
           ))}
           <View style={{ height: 100 }} />
         </ScrollView>
+      ) : (
+        <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16, gap: 10, paddingBottom: 110 }}>
+          {zoneAlerts.length === 0 ? <Text style={s.emptyDesc}>Nenhum alerta de zona segura ainda.</Text> : zoneAlerts.map((item) => (
+            <TouchableOpacity key={item.id} style={[s.zoneCard, !item.is_read && { borderWidth: 1, borderColor: Colors.primary }]}
+              onPress={async () => {
+                if (!item.is_read) {
+                  const { error } = await supabase.from('notifications').update({ is_read: true }).eq('id', item.id).eq('user_id', user?.id);
+                  if (!error) setZoneAlerts((items) => items.map((entry) => entry.id === item.id ? { ...entry, is_read: true } : entry));
+                }
+              }}>
+              <Text style={{ fontSize: 24 }}>{item.type === 'zone_enter' ? '🏠' : '🚶'}</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={s.zoneName}>{item.message}</Text>
+                <Text style={s.zoneMeta}>{new Date(item.created_at).toLocaleString('pt-BR')}</Text>
+              </View>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
       )}
 
       <Modal visible={showZoneModal} animationType="slide" transparent onRequestClose={() => setShowZoneModal(false)}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={s.modalOverlay}>
           <View style={s.sheet}>
             <View style={s.handle} />
-            <Text style={s.sheetTitle}>🛡️ Nova Zona Segura</Text>
+            <Text style={s.sheetTitle}>{editingZoneId ? '✏️ Editar Zona Segura' : '🛡️ Nova Zona Segura'}</Text>
             <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
               <Text style={s.fieldLabel}>Nome da Zona</Text>
               <TextInput style={[s.input, { marginBottom: 14 }]} value={zoneForm.name} onChangeText={(t) => setZoneForm((f) => ({ ...f, name: t }))} placeholder="Ex: Casa, Escola..." placeholderTextColor={Colors.textMuted} />
@@ -345,6 +405,10 @@ export default function ParentLocationScreen() {
                   <TextInput style={s.input} value={zoneForm.longitude} onChangeText={(t) => setZoneForm((f) => ({ ...f, longitude: t }))} keyboardType="decimal-pad" placeholderTextColor={Colors.textMuted} />
                 </View>
               </View>
+              <Text style={s.fieldLabel}>Raio da zona (metros)</Text>
+              <TextInput style={[s.input, { marginBottom: 14 }]} value={zoneForm.radius_meters}
+                onChangeText={(t) => setZoneForm((f) => ({ ...f, radius_meters: t }))}
+                keyboardType="number-pad" placeholder="200" placeholderTextColor={Colors.textMuted} />
               {myLoc && (
                 <TouchableOpacity style={s.useMyLocBtn} onPress={() => setZoneForm((f) => ({ ...f, latitude: String(myLoc.latitude), longitude: String(myLoc.longitude) }))}>
                   <Text style={s.useMyLocText}>📍 Usar minha localização atual</Text>
@@ -353,7 +417,7 @@ export default function ParentLocationScreen() {
               <View style={s.modalFooter}>
                 <TouchableOpacity style={s.cancelBtn} onPress={() => setShowZoneModal(false)}><Text style={s.cancelText}>Cancelar</Text></TouchableOpacity>
                 <TouchableOpacity style={s.saveBtn} onPress={handleCreateZone} disabled={savingZone}>
-                  {savingZone ? <ActivityIndicator size="small" color={Colors.white} /> : <Text style={s.saveText}>Criar Zona</Text>}
+                  {savingZone ? <ActivityIndicator size="small" color={Colors.white} /> : <Text style={s.saveText}>{editingZoneId ? 'Salvar' : 'Criar Zona'}</Text>}
                 </TouchableOpacity>
               </View>
               <View style={{ height: 32 }} />
@@ -452,4 +516,12 @@ const s = StyleSheet.create({
     fontSize: FontSize.xs - 1,
     fontWeight: '800',
   },
+  positionCard: {
+    position: 'absolute', top: 12, left: 16, right: 16,
+    backgroundColor: Colors.surface, borderRadius: Radii.lg,
+    padding: 14, gap: 4, ...Shadow.md,
+  },
+  positionTitle: { color: Colors.text, fontSize: FontSize.sm, fontWeight: '800' },
+  positionText: { color: Colors.textSecondary, fontSize: FontSize.xs },
+  permissionNotice: { position: 'absolute', top: 12, left: 16, right: 16, backgroundColor: Colors.surface, borderRadius: Radii.lg, padding: 12, ...Shadow.sm },
 }) as any;

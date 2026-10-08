@@ -78,6 +78,7 @@ export default function ChildLocationScreen() {
       sendLocationForceUpdate(familyId, userId);
     }
   };
+  const selectedLocation = locations.find((loc) => loc.user_id === selectedUser);
 
   return (
     <View style={s.screen}>
@@ -97,21 +98,6 @@ export default function ChildLocationScreen() {
         <Text style={s.infoText}>📡 Sua localização está sempre compartilhada com seus responsáveis</Text>
       </View>
 
-      {!permissionReady ? (
-        <View style={s.centered}>
-          <ActivityIndicator size="large" color={accent} />
-          <Text style={[s.permDesc, { marginTop: 12 }]}>A pedir permissão de localização...</Text>
-        </View>
-      ) : permissionDenied ? (
-        <View style={s.centered}>
-          <Text style={{ fontSize: 48, marginBottom: 12 }}>📍</Text>
-          <Text style={s.permTitle}>Permissão de Localização</Text>
-          <Text style={s.permDesc}>Para ver o mapa, permita o acesso à localização.</Text>
-          <TouchableOpacity style={[s.permBtn, { backgroundColor: accent }]} onPress={requestPermissions}>
-            <Text style={s.permBtnText}>Permitir Localização</Text>
-          </TouchableOpacity>
-        </View>
-      ) : (
         <View style={s.mapArea}>
           <FamilyMapView
             locations={locations}
@@ -129,10 +115,25 @@ export default function ChildLocationScreen() {
             mapPaddingBottom={100}
           />
 
+          {permissionDenied && (
+            <TouchableOpacity style={s.permissionNotice} onPress={requestPermissions}>
+              <Text style={s.positionText}>Permita o GPS para compartilhar sua posição. O mapa continua mostrando as últimas posições recebidas. Toque para permitir.</Text>
+            </TouchableOpacity>
+          )}
+
           {loading && (
             <View style={s.mapLoadingBadge}>
               <ActivityIndicator size="small" color={accent} />
               <Text style={s.mapLoadingText}>A actualizar posições...</Text>
+            </View>
+          )}
+
+          {selectedLocation && (
+            <View style={s.positionCard}>
+              <Text style={s.positionTitle}>{selectedLocation.users?.name || 'Membro'}</Text>
+              <Text style={s.positionText}>Última posição: {new Date(selectedLocation.updated_at).toLocaleString('pt-BR')}</Text>
+              <Text style={s.positionText}>A posição será atualizada quando o aparelho voltar a transmitir.</Text>
+              <TouchableOpacity onPress={() => setSelectedUser(null)}><Text style={{ color: accent, fontWeight: '700' }}>Fechar</Text></TouchableOpacity>
             </View>
           )}
 
@@ -155,7 +156,6 @@ export default function ChildLocationScreen() {
             ))}
           </ScrollView>
         </View>
-      )}
 
     </View>
   );
@@ -190,4 +190,8 @@ const s = StyleSheet.create({
     borderRadius: Radii.full, ...Shadow.sm,
   },
   mapLoadingText: { fontSize: 11, color: Colors.textSecondary, fontWeight: '600' },
+  positionCard: { position: 'absolute', top: 12, left: 16, right: 16, backgroundColor: Colors.surface, borderRadius: Radii.lg, padding: 14, gap: 4, ...Shadow.md },
+  positionTitle: { color: Colors.text, fontSize: FontSize.sm, fontWeight: '800' },
+  positionText: { color: Colors.textSecondary, fontSize: FontSize.xs },
+  permissionNotice: { position: 'absolute', top: 12, left: 16, right: 16, backgroundColor: Colors.surface, borderRadius: Radii.lg, padding: 12, ...Shadow.sm },
 }) as any;

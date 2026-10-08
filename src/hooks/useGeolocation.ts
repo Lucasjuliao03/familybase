@@ -76,7 +76,7 @@ export function useGeolocation({
       setSending(true);
       try {
         const deviceId = await getDeviceId();
-        await supabase.from('family_member_devices').upsert({
+        const { error: deviceError } = await supabase.from('family_member_devices').upsert({
           family_id: familyId,
           user_id: userId,
           device_id: deviceId,
@@ -86,6 +86,7 @@ export function useGeolocation({
           is_location_enabled: true,
           is_primary_location_device: true,
         }, { onConflict: 'family_id,user_id,device_id' });
+        if (deviceError) throw deviceError;
 
         const { error: upErr } = await supabase.from('family_locations').upsert({
           family_id: familyId,
@@ -102,7 +103,8 @@ export function useGeolocation({
           updated_at: new Date().toISOString(),
         }, { onConflict: 'family_id,user_id,device_id' });
 
-        if (!upErr) lastSentRef.current = { lat, lng, ts: now };
+        if (upErr) throw upErr;
+        lastSentRef.current = { lat, lng, ts: now };
       } catch (e) {
         console.warn('[geo] send:', e);
       } finally {
@@ -246,10 +248,10 @@ export function useGeolocation({
   }, [enabled, familyId, userId]);
 
   useEffect(() => {
-    if (familyId && userId) {
+    if (enabled && familyId && userId) {
       void saveLocationContext({ familyId, userId, shareWithChildren }).catch((e) => console.warn('[Location] save context failed:', e));
     }
-  }, [familyId, userId, shareWithChildren]);
+  }, [enabled, familyId, userId, shareWithChildren]);
 
   return {
     position,
