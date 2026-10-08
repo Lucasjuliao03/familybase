@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as TaskManager from 'expo-task-manager';
 import { supabase } from './supabase';
+import { getDeviceId, getDeviceName, getDeviceType } from './deviceId';
 
 export const LOCATION_TASK = 'background-location-task';
 const LOCATION_CTX_KEY = 'familia_location_ctx';
@@ -35,14 +36,15 @@ async function persistBackgroundLocation(
   const ctx = await loadLocationContext();
   if (!ctx?.familyId || !ctx.userId) return;
 
-  const deviceId = `mob_${ctx.userId.substring(0, 8)}`;
+  // The foreground watcher and the background task must update the same device row.
+  const deviceId = await getDeviceId();
 
   await supabase.from('family_member_devices').upsert({
     family_id: ctx.familyId,
     user_id: ctx.userId,
     device_id: deviceId,
-    device_name: 'Celular Mobile',
-    device_type: 'mobile',
+    device_name: getDeviceName(),
+    device_type: getDeviceType(),
     last_seen_at: new Date().toISOString(),
     is_location_enabled: true,
     is_primary_location_device: true,

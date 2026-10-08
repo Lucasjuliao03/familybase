@@ -207,16 +207,23 @@ export function useGeolocation({
 
       if (cancelled) return;
 
-      watchRef.current = await Location.watchPositionAsync(
-        { accuracy: Location.Accuracy.High, timeInterval: 15_000, distanceInterval: 20 },
-        (loc) => {
-          const { latitude, longitude, accuracy, speed, heading } = loc.coords;
-          setPosition({ lat: latitude, lng: longitude, accuracy, speed, heading, ts: Date.now() });
-          setError(null);
-          sendToSupabase(latitude, longitude, accuracy, speed, heading);
-        },
-      );
-    })();
+      try {
+        const watcher = await Location.watchPositionAsync(
+          { accuracy: Location.Accuracy.High, timeInterval: 15_000, distanceInterval: 20 },
+          (loc) => {
+            const { latitude, longitude, accuracy, speed, heading } = loc.coords;
+            setPosition({ lat: latitude, lng: longitude, accuracy, speed, heading, ts: Date.now() });
+            setError(null);
+            void sendToSupabase(latitude, longitude, accuracy, speed, heading);
+          },
+        );
+        if (cancelled) watcher.remove();
+        else watchRef.current = watcher;
+      } catch (e) {
+        console.warn('[Location] watch failed:', e);
+        if (!cancelled) setError('Não foi possível acompanhar a localização.');
+      }
+    })().catch((e) => console.warn('[Location] init failed:', e));
 
     const channel = supabase.channel(`location_updates:${familyId}`);
     broadcastRef.current = channel;
@@ -240,7 +247,7 @@ export function useGeolocation({
 
   useEffect(() => {
     if (familyId && userId) {
-      saveLocationContext({ familyId, userId, shareWithChildren });
+      void saveLocationContext({ familyId, userId, shareWithChildren }).catch((e) => console.warn('[Location] save context failed:', e));
     }
   }, [familyId, userId, shareWithChildren]);
 

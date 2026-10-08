@@ -27,8 +27,7 @@ import { formatDateBR, formatLocalYMD, todayLocalYMD } from '../../src/shared/li
 
 const cofrinhoImg = require('../../icon/cofrinho.png');
 
-/** Avatar no header: 101px base + 120% → ~222px */
-const HEADER_AVATAR_SIZE = Math.round(101 * 2.2);
+const HEADER_AVATAR_SIZE = 68;
 
 function formatCurrency(val: number, currency = 'BRL') {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency }).format(val ?? 0);
@@ -279,12 +278,18 @@ export default function ChildHomeScreen() {
         end={{ x: 1, y: 1 }}
         style={[styles.header, isChildProxy && styles.headerWithProxy]}
       >
-        <TouchableOpacity
-          style={styles.headerAvatar}
-          onPress={() => router.push('/child/profile')}
-          activeOpacity={0.9}
-        >
-          <View style={styles.headerAvatarInner}>
+        <View style={styles.headerRow}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.greeting} numberOfLines={1}>Olá, {firstName}!</Text>
+            <Text style={styles.familyName} numberOfLines={1}>{family?.name ?? 'Minha Família'}</Text>
+          </View>
+          <TouchableOpacity
+            style={styles.headerAvatar}
+            onPress={() => router.push('/child/profile')}
+            activeOpacity={0.85}
+            accessibilityRole="button"
+            accessibilityLabel="Abrir meu perfil"
+          >
             <UserAvatar
               avatarUrl={childProfile?.avatar_url}
               avatarPreset={childProfile?.avatar_preset}
@@ -293,14 +298,7 @@ export default function ChildHomeScreen() {
               bordered={false}
               presentation="character"
             />
-          </View>
-        </TouchableOpacity>
-
-        <View style={styles.headerRow}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.greeting}>Olá, {firstName}!</Text>
-            <Text style={styles.familyName}>{family?.name ?? 'Minha Família'}</Text>
-          </View>
+          </TouchableOpacity>
         </View>
 
         <View style={styles.balanceRow}>
@@ -318,16 +316,6 @@ export default function ChildHomeScreen() {
           </View>
         </View>
 
-        <LinearGradient
-          colors={[
-            'rgba(91,33,182,0)',
-            'rgba(55,20,120,0.42)',
-            'rgba(30,8,70,0.88)',
-          ]}
-          locations={[0, 0.38, 1]}
-          style={styles.headerBaseFade}
-          pointerEvents="none"
-        />
       </LinearGradient>
 
       {showAllowanceCard && (hasLoadedOnce.current || !loading) && (
@@ -544,35 +532,21 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 0,
   },
   headerAvatar: {
-    position: 'absolute',
-    right: 0,
-    bottom: 0,
-    zIndex: 0,
-    alignItems: 'flex-end',
-    justifyContent: 'flex-end',
-  },
-  headerAvatarInner: {
-    position: 'relative',
-    alignItems: 'flex-end',
-    justifyContent: 'flex-end',
-  },
-  headerBaseFade: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    height: '58%',
-    borderBottomLeftRadius: 24,
-    borderBottomRightRadius: 24,
-    zIndex: 1,
+    width: 82,
+    height: 82,
+    marginLeft: 12,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+    backgroundColor: 'rgba(255,255,255,0.16)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.3)',
   },
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 12,
-    zIndex: 1,
-    position: 'relative',
-    paddingRight: Math.round(HEADER_AVATAR_SIZE * 0.92),
+    marginBottom: 14,
   },
   greeting: { fontSize: FontSize.lg, fontWeight: '800', color: '#fff' },
   familyName: { fontSize: FontSize.xs, color: 'rgba(255,255,255,0.85)', marginTop: 2 },

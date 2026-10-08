@@ -2,6 +2,7 @@ import React, { useRef, useEffect, useCallback, useMemo, useState } from 'react'
 import { View, StyleSheet, ActivityIndicator, Text, TouchableOpacity } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { publicAssetUrl } from '../../lib/api';
+import { leafletCss, leafletJs } from '../../lib/leafletAssets.generated';
 import { Colors } from '../../theme';
 
 export interface MapLocation {
@@ -65,8 +66,8 @@ const mapHtmlSource = `
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <style>${leafletCss}</style>
+  <script>${leafletJs}</script>
   <style>
     body { padding: 0; margin: 0; background-color: #f8fafc; }
     html, body, #map { height: 100%; width: 100vw; }
@@ -170,6 +171,8 @@ const mapHtmlSource = `
 <body>
   <div id="map"></div>
   <script>
+    function startMap() {
+    try {
     var PRESET_EMOJIS = {
       astronaut: '🚀', explorer: '🗺️', artist: '🎨', scientist: '🔬',
       athlete: '⚽', musician: '🎵', chef: '🍳', reader: '📚',
@@ -181,18 +184,21 @@ const mapHtmlSource = `
     var hasCenteredOnGPS = false;
     var hasCenteredFallback = false;
 
-    // OpenStreetMap standard: tema claro, sem chave, com cache HTTP e atribuição.
+    // Raster tiles keep the map usable on Android WebViews without WebGL or workers.
+    // Leaflet requests only tiles within the visible viewport and uses the WebView cache.
     var tileLayer = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
       maxZoom: 19,
-      keepBuffer: 1,
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+      updateWhenIdle: true,
+      keepBuffer: 1
     }).addTo(map);
-    tileLayer.on('tileerror', function() {
-      if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify({type:'tile_error'}));
-    });
+    var firstTileLoaded = false;
     tileLayer.on('tileload', function() {
+      if (firstTileLoaded) return;
+      firstTileLoaded = true;
       if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify({type:'tile_loaded'}));
     });
+    setTimeout(function() { map.invalidateSize(); }, 250);
     function escapeHtml(value) {
       return String(value || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
     }
@@ -232,6 +238,7 @@ const mapHtmlSource = `
 
           // 1) Renderizar Zonas Seguras
           data.zones.forEach(zone => {
+            if (!Number.isFinite(Number(zone.latitude)) || !Number.isFinite(Number(zone.longitude))) return;
             const color = /^#[0-9a-f]{6}$/i.test(zone.color) ? zone.color : '#10B981';
             const c = L.circle([zone.latitude, zone.longitude], {
               radius: zone.radius_meters || 200,
@@ -252,7 +259,7 @@ const mapHtmlSource = `
           });
 
           // 2) Renderizar Rascunho de Zona (Draft Zone)
-          if (data.draftZone) {
+          if (data.draftZone && Number.isFinite(Number(data.draftZone.latitude)) && Number.isFinite(Number(data.draftZone.longitude))) {
             const dz = data.draftZone;
             const c = L.circle([dz.latitude, dz.longitude], {
               radius: dz.radius_meters,
@@ -274,6 +281,7 @@ const mapHtmlSource = `
 
           // 3) Renderizar Membros da Família
           data.locations.forEach(loc => {
+            if (!Number.isFinite(Number(loc.latitude)) || !Number.isFinite(Number(loc.longitude))) return;
             const color = /^#[0-9a-f]{6}$/i.test(loc.color) ? loc.color : '#4f46e5';
             const isMe = loc.user_id === data.currentUserId;
             const isSelected = data.selectedUserId === loc.user_id;
@@ -281,7 +289,7 @@ const mapHtmlSource = `
             // Se for o próprio usuário e houver GPS em tempo real, prioriza as coordenadas do GPS próprio
             let lat = loc.latitude;
             let lng = loc.longitude;
-            if (isMe && data.userPosition) {
+            if (isMe && data.userPosition && Number.isFinite(Number(data.userPosition.latitude)) && Number.isFinite(Number(data.userPosition.longitude))) {
               lat = data.userPosition.latitude;
               lng = data.userPosition.longitude;
             }
@@ -326,7 +334,7 @@ const mapHtmlSource = `
           });
 
           // 4) Posição do Usuário Local (GPS do aparelho) se disponível e não listado na lista de membros
-          if (data.userPosition && !markers['user-' + data.currentUserId]) {
+          if (data.userPosition && Number.isFinite(Number(data.userPosition.latitude)) && Number.isFinite(Number(data.userPosition.longitude)) && !markers['user-' + data.currentUserId]) {
             const up = data.userPosition;
             const icon = L.divIcon({
               html: 
@@ -351,25 +359,33 @@ const mapHtmlSource = `
               map.setView([data.userPosition.latitude, data.userPosition.longitude], 15);
               hasCenteredOnGPS = true;
             } else if (!hasCenteredFallback && points.length > 0) {
-              map.fitBounds(points, { padding: [45, 45] });
+              if (points.length === 1) map.setView(points[0], 15);
+              else map.fitBounds(points, { padding: [45, 45], maxZoom: 16 });
               hasCenteredFallback = true;
             }
           }
           
           // Se for solicitado autoFit explícito (pelo React Native)
           if (data.autoFit && points.length > 0) {
-            map.fitBounds(points, { padding: [45, 45] });
+            if (points.length === 1) map.setView(points[0], 15);
+            else map.fitBounds(points, { padding: [45, 45], maxZoom: 16 });
           }
         } else if (data.type === 'center') {
           map.setView([data.latitude, data.longitude], 16, { animate: true });
         }
       } catch (err) {
         console.error('Erro na WebView do Mapa:', err);
+        if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'map_error', message: String(err) }));
       }
     }
     window.addEventListener('message', handleMapMessage);
     document.addEventListener('message', handleMapMessage);
     if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify({type:'ready'}));
+    } catch (error) {
+      if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'map_error', message: String(error) }));
+    }
+    }
+    startMap();
   </script>
 </body>
 </html>
@@ -391,8 +407,21 @@ export function FamilyMapView({
 }: FamilyMapViewProps) {
   const webViewRef = useRef<WebView>(null);
   const [mapReady, setMapReady] = useState(false);
-  const [mapError, setMapError] = useState(false);
+  const [mapError, setMapError] = useState<'load' | 'tiles' | null>(null);
+  const [tilesLoaded, setTilesLoaded] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
+
+  useEffect(() => {
+    if (mapReady) return;
+    const timer = setTimeout(() => setMapError('load'), 12000);
+    return () => clearTimeout(timer);
+  }, [mapReady, reloadKey]);
+
+  useEffect(() => {
+    if (!mapReady || tilesLoaded) return;
+    const timer = setTimeout(() => setMapError('tiles'), 20000);
+    return () => clearTimeout(timer);
+  }, [mapReady, tilesLoaded, reloadKey]);
 
   const serializedLocations = useMemo(() => {
     const list = locations.map((loc, idx) => {
@@ -506,9 +535,9 @@ export function FamilyMapView({
   const handleMessage = (event: any) => {
     try {
       const data = JSON.parse(event.nativeEvent.data);
-      if (data.type === 'ready') { setMapReady(true); setMapError(false); }
-      else if (data.type === 'tile_error') setMapError(true);
-      else if (data.type === 'tile_loaded') setMapError(false);
+      if (data.type === 'ready') { setMapReady(true); setMapError(null); }
+      else if (data.type === 'tile_loaded') { setTilesLoaded(true); setMapError(null); }
+      else if (data.type === 'map_error') { console.warn('[FamilyMapView]', data.message); setMapError('load'); }
       else if (data.type === 'click_user' && onSelectUser) {
         onSelectUser(data.userId);
       } else if (data.type === 'map_click' && onMapClick) {
@@ -525,23 +554,30 @@ export function FamilyMapView({
         key={reloadKey}
         ref={webViewRef}
         originWhitelist={['*']}
-        source={{ html: mapHtmlSource }}
-        applicationNameForUserAgent="TudoDeFamilia/1.0.1 (com.familybase.mobile)"
+        source={{ html: mapHtmlSource, baseUrl: 'https://www.openstreetmap.org/' }}
+        applicationNameForUserAgent="TudoDeFamilia/1.0.5 (com.familybase.mobile)"
         cacheEnabled
         style={[s.map, { marginBottom: mapPaddingBottom }]}
-        onError={() => setMapError(true)}
-        onHttpError={() => setMapError(true)}
+        onError={() => setMapError('load')}
+        onRenderProcessGone={() => { setMapReady(false); setMapError('load'); }}
+        onContentProcessDidTerminate={() => { setMapReady(false); setMapError('load'); }}
         onMessage={handleMessage}
         javaScriptEnabled
         domStorageEnabled
         mixedContentMode="never"
       />
 
-      {(!mapReady || mapError) && (
+      {(!mapReady || mapError === 'load') && (
         <View style={s.loadingOverlay}>
           {!mapError && <ActivityIndicator size="large" color={accentColor} />}
-          <Text style={s.loadingText}>{mapError ? 'Não foi possível carregar o mapa. Verifique sua conexão.' : 'A carregar mapa...'}</Text>
-          <TouchableOpacity accessibilityRole="button" onPress={() => { setMapReady(false); setMapError(false); setHasAutofitted(false); setReloadKey(k => k + 1); }} style={{ padding: 16 }}><Text style={{ color: accentColor, fontWeight: '700' }}>Recarregar mapa</Text></TouchableOpacity>
+          <Text style={s.loadingText}>{mapError ? 'Não foi possível iniciar o mapa.' : 'Carregando mapa...'}</Text>
+          <TouchableOpacity accessibilityRole="button" onPress={() => { setMapReady(false); setMapError(null); setTilesLoaded(false); setHasAutofitted(false); setReloadKey(k => k + 1); }} style={{ padding: 16 }}><Text style={{ color: accentColor, fontWeight: '700' }}>Recarregar mapa</Text></TouchableOpacity>
+        </View>
+      )}
+      {mapReady && mapError === 'tiles' && !tilesLoaded && (
+        <View style={s.tileNotice}>
+          <Text style={s.loadingText}>Sem imagens do mapa. Verifique a internet.</Text>
+          <TouchableOpacity accessibilityRole="button" onPress={() => { setMapReady(false); setMapError(null); setTilesLoaded(false); setHasAutofitted(false); setReloadKey(k => k + 1); }}><Text style={{ color: accentColor, fontWeight: '700' }}>Tentar novamente</Text></TouchableOpacity>
         </View>
       )}
     </View>
@@ -580,6 +616,16 @@ const s = StyleSheet.create({
     fontSize: 13,
     color: Colors.textSecondary,
     fontWeight: '600',
+  },
+  tileNotice: {
+    position: 'absolute',
+    top: 8,
+    alignSelf: 'center',
+    backgroundColor: '#ffffff',
+    borderRadius: 10,
+    padding: 12,
+    alignItems: 'center',
+    gap: 4,
   },
 });
 

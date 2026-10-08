@@ -1,9 +1,7 @@
-import { useEffect, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { useEffect } from 'react';
 import { Stack, useRouter, useSegments, useRootNavigationState } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   AuthProvider,
   useAuth,
@@ -12,30 +10,14 @@ import {
 } from '../src/contexts/AuthContext';
 import '../src/lib/locationBackgroundTask';
 import { FirstAccessPasswordModal } from '../src/components/auth/FirstAccessPasswordModal';
-import { IntroVideo } from '../src/components/auth/IntroVideo';
+import { AppErrorBoundary } from '../src/components/ui/AppErrorBoundary';
 import { AppSettingsProvider, AppAnnouncement } from '../src/contexts/AppSettingsContext';
 
-const INTRO_SEEN_KEY = 'familia_intro_seen';
-
 function RootLayoutNav() {
-  const [showIntro, setShowIntro] = useState(false);
   const { user, family, effectiveSubscription, loading, isChildProxy } = useAuth();
   const segments: readonly string[] = useSegments();
   const router = useRouter();
   const navigationState = useRootNavigationState();
-
-  useEffect(() => {
-    AsyncStorage.getItem(INTRO_SEEN_KEY)
-      .then((v) => {
-        if (v !== '1') setShowIntro(true);
-      })
-      .catch(() => {});
-  }, []);
-
-  const finishIntro = () => {
-    AsyncStorage.setItem(INTRO_SEEN_KEY, '1').catch(() => {});
-    setShowIntro(false);
-  };
 
   useEffect(() => {
     if (loading || !navigationState?.key) return;
@@ -114,17 +96,13 @@ function RootLayoutNav() {
         }}
       />
       <FirstAccessPasswordModal />
-      {showIntro ? (
-        <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
-          <IntroVideo onFinish={finishIntro} />
-        </View>
-      ) : null}
     </>
   );
 }
 
 export default function RootLayout() {
   return (
+    <AppErrorBoundary>
     <SafeAreaProvider>
       <AuthProvider>
         <AppSettingsProvider>
@@ -135,5 +113,6 @@ export default function RootLayout() {
         </AppSettingsProvider>
       </AuthProvider>
     </SafeAreaProvider>
+    </AppErrorBoundary>
   );
 }

@@ -1,7 +1,7 @@
 {
   "name": "Tudo de Família",
   "slug": "familybase-mobile",
-  "version": "1.0.1",
+  "version": "1.0.5",
   "orientation": "portrait",
   "icon": "./icon/logo.png",
   "userInterfaceStyle": "automatic",
@@ -25,14 +25,15 @@
       "foregroundImage": "./icon/logo.png"
     },
     "package": "com.familybase.mobile",
-    "versionCode": 3,
+    "versionCode": 7,
     "predictiveBackGestureEnabled": false,
     "permissions": [
       "ACCESS_COARSE_LOCATION",
       "ACCESS_FINE_LOCATION",
       "ACCESS_BACKGROUND_LOCATION",
       "FOREGROUND_SERVICE",
-      "FOREGROUND_SERVICE_LOCATION"
+      "FOREGROUND_SERVICE_LOCATION",
+      "RECEIVE_BOOT_COMPLETED"
     ]
   },
   "web": {

@@ -21,7 +21,7 @@ interface SafeZone {
 }
 
 export default function ChildLocationScreen() {
-  const { user } = useAuth();
+  const { user, childProfile } = useAuth();
   const familyId = user?.family_id;
   const accent = '#EF4444';
 
@@ -118,6 +118,11 @@ export default function ChildLocationScreen() {
             zones={zones}
             selectedUserId={selectedUser}
             currentUserId={user?.id}
+            currentUser={{
+              name: childProfile?.name || user?.name,
+              avatar_url: childProfile?.avatar_url || user?.avatar_url,
+              avatar_preset: childProfile?.avatar_preset || user?.avatar_preset,
+            }}
             userPosition={position ? { lat: position.lat, lng: position.lng } : null}
             accentColor={accent}
             onSelectUser={focusMember}

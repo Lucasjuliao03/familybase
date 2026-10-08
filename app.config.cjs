@@ -4,7 +4,7 @@ module.exports = ({ config }) => {
     ...config,
     android: {
       ...config.android,
-      versionCode: 3,
+      versionCode: 7,
     },
     extra: {
       ...(config.extra || {}),

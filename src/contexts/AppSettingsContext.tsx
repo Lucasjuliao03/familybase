@@ -11,8 +11,12 @@ export function AppSettingsProvider({ children }: { children: React.ReactNode })
   const [settings, setSettings] = useState(empty);
   const refresh = useCallback(async () => {
     if (!user?.id) { setSettings(empty); return; }
-    const { data, error } = await supabase.from('app_settings').select('announcement,support_email,privacy_url,terms_url').eq('id', true).single();
-    if (!error && data) setSettings(data);
+    try {
+      const { data, error } = await supabase.from('app_settings').select('announcement,support_email,privacy_url,terms_url').eq('id', true).single();
+      if (!error && data) setSettings(data);
+    } catch (error) {
+      console.warn('[AppSettings] Não foi possível atualizar as configurações:', error);
+    }
   }, [user?.id]);
   useEffect(() => { void refresh(); const sub = AppState.addEventListener('change', state => { if (state === 'active') void refresh(); }); return () => sub.remove(); }, [refresh]);
   return <Context.Provider value={{ settings, refresh }}>{children}</Context.Provider>;
@@ -32,4 +36,3 @@ export function AppHelpLinks() {
   ].filter(item => item.url);
   return <View style={{ gap: 10, marginVertical: 16 }}>{links.map(item => <TouchableOpacity key={item.title} accessibilityRole="link" onPress={() => { void Linking.openURL(item.url).catch(() => {}); }} style={{ padding: 12 }}><Text style={{ color: '#3348b8', fontWeight: '600' }}>{item.title}</Text></TouchableOpacity>)}</View>;
 }
-

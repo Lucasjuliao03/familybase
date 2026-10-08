@@ -200,6 +200,11 @@ export default function ParentLocationScreen() {
                 zones={zones}
                 selectedUserId={selectedUser}
                 currentUserId={user?.id}
+                currentUser={{
+                  name: user?.name,
+                  avatar_url: user?.avatar_url,
+                  avatar_preset: user?.avatar_preset,
+                }}
                 userPosition={position ? { lat: position.lat, lng: position.lng } : null}
                 onSelectUser={focusMember}
                 mapPaddingBottom={100}
