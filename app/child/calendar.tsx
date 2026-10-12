@@ -14,7 +14,7 @@ import {
   Platform,
 } from 'react-native';
 import { Colors, Shadow, Radii, FontSize } from '../../src/theme';
-import { useRouter } from 'expo-router';
+import { ChildModuleHeader } from '../../src/components/child/ChildModuleHeader';
 import api from '../../src/services/api';
 import {
   FamilyCalendarBoard,
@@ -24,7 +24,6 @@ import {
 import { deriveCalendarRange, normalizeAnchorMidday, formatDateBR, parseDateBR, todayLocalYMD } from '../../src/shared/lib/familyCalendarRange';
 
 export default function ChildCalendarScreen() {
-  const router = useRouter();
 
   const [initialLoading, setInitialLoading] = useState(true);
   const [calendarLoading, setCalendarLoading] = useState(false);
@@ -133,17 +132,13 @@ export default function ChildCalendarScreen() {
     <View style={styles.root}>
       <StatusBar barStyle="dark-content" backgroundColor={Colors.bg} />
 
-      <View style={styles.headerWrap}>
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-            <Text style={styles.backBtnText}>‹</Text>
-          </TouchableOpacity>
-          <Text style={styles.title}>Meu Calendário</Text>
-          <TouchableOpacity style={styles.addBtn} onPress={() => openCreateModal()} activeOpacity={0.8}>
-            <Text style={styles.addBtnText}>+ Novo</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
+      <ChildModuleHeader
+        moduleId="calendario"
+        title="Calendário"
+        actionLabel="Novo"
+        actionIcon="add"
+        onAction={() => openCreateModal()}
+      />
 
       {initialLoading ? (
         <View style={styles.centerContainer}>

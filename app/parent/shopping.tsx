@@ -196,7 +196,7 @@ export default function ParentShoppingScreen() {
   // ─── Render ───────────────────────────────────────────────────────────────
   return (
     <View style={s.screen}>
-      <StatusBar barStyle="light-content" backgroundColor={Colors.gradStart} />
+      <StatusBar barStyle="dark-content" />
 
       <ShoppingModuleHeader
         backgroundColor={Colors.gradStart}

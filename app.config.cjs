@@ -2,10 +2,6 @@ module.exports = ({ config }) => {
   // console.log("config", config);
   return {
     ...config,
-    android: {
-      ...config.android,
-      versionCode: 9,
-    },
     extra: {
       ...(config.extra || {}),
       eas: {

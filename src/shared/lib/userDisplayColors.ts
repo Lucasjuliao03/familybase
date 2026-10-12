@@ -50,5 +50,5 @@ export function pickFirstAvailableUserDisplayColor({ primary, secondary, exclude
 
 export function calendarEventAccentColor(ev: any): string {
   if (!ev) return '#7C3AED';
-  return ev.color || ev.child_color || ev.creator_color || '#7C3AED';
+  return (ev.child_id && ev.child_color) || ev.color || ev.creator_color || '#7C3AED';
 }

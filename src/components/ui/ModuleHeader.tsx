@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity, StatusBar, Platform } from 'r
 import { Ionicons } from '@expo/vector-icons';
 import { Colors, Radii, FontSize, Shadow } from '../../theme';
 import { ParentModuleIcon } from './ParentModuleIcon';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 interface ModuleHeaderProps {
   title: string;
@@ -15,10 +16,11 @@ interface ModuleHeaderProps {
 }
 
 export function ModuleHeader({ title, emoji, iconName, subtitle, onBack, right }: ModuleHeaderProps) {
+  const insets = useSafeAreaInsets();
   const resolvedIcon = iconName || (emoji ? undefined : 'dashboard');
 
   return (
-    <View style={s.header}>
+    <View style={[s.header, { paddingTop: Math.max(insets.top + 18, Platform.OS === 'ios' ? 56 : 46) }]}>
       <StatusBar barStyle="dark-content" backgroundColor={Colors.bg} />
       {onBack ? (
         <TouchableOpacity onPress={onBack} style={s.backBtn} activeOpacity={0.8} accessibilityLabel="Voltar">

@@ -43,7 +43,7 @@ async function fetchLocationsFromDb(familyId: string): Promise<Map<string, Famil
   // cannot join the profile through that FK; fetch it explicitly.
   const [{ data: profiles, error: profileError }, { data: children, error: childError }] = await Promise.all([
     supabase.from('users').select('id, name, role, display_color, avatar_url, avatar_preset').eq('family_id', familyId),
-    supabase.from('children').select('user_id, name, avatar_url, avatar_preset').eq('family_id', familyId),
+    supabase.from('children').select('user_id, name, color, avatar_url, avatar_preset').eq('family_id', familyId),
   ]);
   if (profileError) throw new Error(profileError.message);
   if (childError) throw new Error(childError.message);
@@ -63,6 +63,7 @@ async function fetchLocationsFromDb(familyId: string): Promise<Map<string, Famil
         name: child?.name || profile.name,
         avatar_url: child?.avatar_url || profile.avatar_url,
         avatar_preset: child?.avatar_url ? null : (child?.avatar_preset || profile.avatar_preset),
+        display_color: child?.color || profile.display_color,
       } : undefined,
     });
   });

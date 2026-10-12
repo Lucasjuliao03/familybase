@@ -1,7 +1,6 @@
 import { supabase } from './supabase';
+import { familyAssetUrl } from './familyAssets';
 import { resolveSupabaseConfig } from './supabaseConfig';
-
-const { url: supabaseUrl } = resolveSupabaseConfig();
 
 export {
   AVATAR_OPTIONS as PRESET_AVATARS,
@@ -13,12 +12,7 @@ export {
 export type { AvatarOption } from './avatarCatalog';
 
 export function publicAssetUrl(path?: string | null): string {
-  if (path == null || path === '') return '';
-  const s = String(path).trim();
-  if (s.startsWith('http://') || s.startsWith('https://')) return s;
-  if (!supabaseUrl) return s;
-  const clean = s.replace(/^\/+/, '');
-  return `${supabaseUrl}/storage/v1/object/public/${clean}`;
+  return familyAssetUrl(path,resolveSupabaseConfig().url);
 }
 
 // ─── Tipos de Dados ──────────────────────────────────────────────────────────

@@ -26,6 +26,7 @@ import {
   normalizeMedalRequirementTypeForSave,
 } from '../../lib/medalHelpers';
 import api from '../../services/api';
+import { FamilyMemberAdminForm } from './FamilyMemberAdminForm';
 
 function ModalShell({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
   return (
@@ -104,9 +105,9 @@ export function PasswordResetModal({ visible, target, onClose, onSaved }: {
   if (!visible || !target) return null;
 
   const submit = async () => {
-    const minLen = target.isChildUser ? 6 : 4;
+    const minLen = 6;
     if (password.length < minLen) {
-      return Alert.alert('Senha', target.isChildUser ? 'Mínimo 6 caracteres para contas de filho.' : 'Mínimo 4 caracteres.');
+      return Alert.alert('Senha', 'Mínimo 6 caracteres.');
     }
     setSaving(true);
     try {
@@ -146,148 +147,9 @@ export function PasswordResetModal({ visible, target, onClose, onSaved }: {
   );
 }
 
-export function GuardianModal({ visible, initial, onClose, onSaved, familyPrimary, familySecondary, adultMembers }: any) {
-  const isEdit = !!initial?.id;
-  const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState(() => {
-    let displayColor = initial?.display_color;
-    if (!isEdit) displayColor = pickFirstAvailableUserDisplayColor({ primary: familyPrimary, secondary: familySecondary, adultMembers });
-    else {
-      const n = normalizeHex(displayColor || '');
-      if (!USER_DISPLAY_COLOR_PALETTE.some((c) => normalizeHex(c) === n) || isUserDisplaySwatchDisabled(n, { primary: familyPrimary, secondary: familySecondary, excludeUserId: initial.id, adultMembers })) {
-        displayColor = pickFirstAvailableUserDisplayColor({ primary: familyPrimary, secondary: familySecondary, excludeUserId: initial.id, adultMembers });
-      } else displayColor = n;
-    }
-    return { name: initial?.name || '', email: initial?.email || '', password: '', access_profile: initial?.access_profile === 'auxiliar' ? 'auxiliar' : 'gestor', phone: initial?.phone || '', emoji: initial?.emoji || '', display_color: displayColor, must_change_password: false };
-  });
-  if (!visible) return null;
-
-  const submit = async () => {
-    setSaving(true);
-    try {
-      if (isEdit) await api.put(`/families/members/${initial.id}`, { name: form.name, email: form.email, phone: form.phone, emoji: form.emoji || null, display_color: form.display_color, access_profile: form.access_profile });
-      else await api.post('/families/members', { name: form.name, email: form.email, password: form.password || '123456', access_profile: form.access_profile, phone: form.phone, emoji: form.emoji, display_color: form.display_color, must_change_password: form.must_change_password });
-      onSaved(); onClose();
-    } catch (err: any) { Alert.alert('Erro', err?.message || 'Falha ao salvar.'); }
-    finally { setSaving(false); }
-  };
-
-  return (
-    <ModalShell title={isEdit ? 'Editar responsável' : 'Adicionar responsável'} onClose={onClose}>
-      <Field label="Nome *" value={form.name} onChangeText={(v) => setForm((p) => ({ ...p, name: v }))} />
-      <Field label="E-mail *" value={form.email} onChangeText={(v) => setForm((p) => ({ ...p, email: v }))} keyboardType="email-address" />
-      {!isEdit && <Field label="Senha inicial" value={form.password} onChangeText={(v) => setForm((p) => ({ ...p, password: v }))} secureTextEntry />}
-      <View style={[f.chipRow, { marginBottom: 12 }]}>
-        {(['gestor', 'auxiliar'] as const).map((ap) => (
-          <TouchableOpacity key={ap} style={[f.chip, form.access_profile === ap && f.chipActive]} onPress={() => setForm((p) => ({ ...p, access_profile: ap }))}>
-            <Text style={[f.chipText, form.access_profile === ap && f.chipTextActive]}>{ap === 'gestor' ? 'Gestor' : 'Auxiliar'}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-      <Field label="Telefone" value={form.phone} onChangeText={(v) => setForm((p) => ({ ...p, phone: v }))} />
-      <Field label="Emoji" value={form.emoji} onChangeText={(v) => setForm((p) => ({ ...p, emoji: v }))} />
-      <UserDisplayColorPicker value={form.display_color} onChange={(hex) => setForm((p) => ({ ...p, display_color: hex }))} primaryColor={familyPrimary} secondaryColor={familySecondary} excludeUserId={initial?.id} adultMembers={adultMembers} />
-      {!isEdit && <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}><Switch value={form.must_change_password} onValueChange={(v) => setForm((p) => ({ ...p, must_change_password: v }))} /><Text style={{ fontSize: FontSize.sm }}>Exigir troca de senha</Text></View>}
-      <Footer saving={saving} onClose={onClose} onSave={submit} />
-    </ModalShell>
-  );
-}
-
-function buildChildForm(initial: any) {
-  return {
-    name: initial?.name || '',
-    nickname: initial?.nickname || '',
-    age: initial?.age != null && initial?.age !== '' ? String(initial.age) : '',
-    email: initial?.user_email || '',
-    password: '',
-    color: initial?.color || '#6C5CE7',
-    emoji: initial?.emoji || '',
-    notes: initial?.notes || '',
-    must_change_password: false,
-  };
-}
-
-export function ChildAdminModal({ visible, initial, onClose, onSaved }: any) {
-  const isEdit = !!initial?.id;
-  const hasLogin = !!(initial?.user_id || initial?.user_email);
-  const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState(() => buildChildForm(initial));
-
-  useEffect(() => {
-    if (visible) setForm(buildChildForm(initial));
-  }, [visible, initial?.id]);
-
-  if (!visible) return null;
-
-  const submit = async () => {
-    const emailTrim = form.email.trim().toLowerCase();
-    if (!emailTrim) return Alert.alert('Dados incompletos', 'E-mail é obrigatório.');
-    if ((!isEdit || !hasLogin) && form.password.length < 6) return Alert.alert('Dados incompletos', 'Senha (mín. 6 caracteres) é obrigatória.');
-    setSaving(true);
-    try {
-      const payload = { name: form.name, nickname: form.nickname, age: form.age === '' ? null : Number(form.age), color: form.color, emoji: form.emoji, notes: form.notes };
-      if (isEdit) await api.put(`/families/children/${initial.id}`, { ...payload, email: emailTrim, password: !hasLogin ? form.password : undefined, must_change_password: !hasLogin ? form.must_change_password : undefined });
-      else await api.post('/families/children', { ...payload, email: emailTrim, password: form.password, must_change_password: form.must_change_password });
-      onSaved(); onClose();
-    } catch (err: any) { Alert.alert('Erro', err?.message || 'Falha ao salvar.'); }
-    finally { setSaving(false); }
-  };
-
-  return (
-    <ModalShell title={isEdit ? 'Editar filho(a)' : 'Adicionar filho(a)'} onClose={onClose}>
-      <Field label="Nome *" value={form.name} onChangeText={(v) => setForm((p) => ({ ...p, name: v }))} />
-      <Field label="Apelido" value={form.nickname} onChangeText={(v) => setForm((p) => ({ ...p, nickname: v }))} />
-      <Field label="Idade" value={form.age} onChangeText={(v) => setForm((p) => ({ ...p, age: v }))} keyboardType="numeric" />
-      <Field label="E-mail *" value={form.email} onChangeText={(v) => setForm((p) => ({ ...p, email: v }))} keyboardType="email-address" />
-      {(!isEdit || !hasLogin) && (<><Field label="Senha *" value={form.password} onChangeText={(v) => setForm((p) => ({ ...p, password: v }))} secureTextEntry /><View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}><Switch value={form.must_change_password} onValueChange={(v) => setForm((p) => ({ ...p, must_change_password: v }))} /><Text style={{ fontSize: FontSize.sm }}>Exigir troca de senha</Text></View></>)}
-      <View style={[f.chipRow, { marginBottom: 12 }]}>{COLOR_PRESETS.map((c) => (<TouchableOpacity key={c} onPress={() => setForm((p) => ({ ...p, color: c }))} style={[f.swatch, { backgroundColor: c, borderWidth: form.color === c ? 3 : 0, borderColor: Colors.text }]} />))}</View>
-      <Field label="Emoji" value={form.emoji} onChangeText={(v) => setForm((p) => ({ ...p, emoji: v }))} />
-      <Field label="Observações" value={form.notes} onChangeText={(v) => setForm((p) => ({ ...p, notes: v }))} multiline />
-      <Footer saving={saving} onClose={onClose} onSave={submit} />
-    </ModalShell>
-  );
-}
-
-export function RelativeAdminModal({ visible, initial, childrenList, onClose, onSaved, familyPrimary, familySecondary, adultMembers }: any) {
-  const isEdit = !!initial?.id;
-  const [saving, setSaving] = useState(false);
-  const linkedInit = Array.isArray(initial?.linked_child_ids) ? initial.linked_child_ids : String(initial?.linked_child_ids || '').split(',').filter(Boolean);
-  const [form, setForm] = useState({ name: initial?.name || '', email: initial?.email || '', password: '', relationship: initial?.relationship || '', access_profile: initial?.access_profile === 'auxiliar' ? 'auxiliar' : 'parente', phone: initial?.phone || '', emoji: initial?.emoji || '', display_color: initial?.display_color || pickFirstAvailableUserDisplayColor({ primary: familyPrimary, secondary: familySecondary, adultMembers }), linked_child_ids: linkedInit as string[], must_change_password: false });
-  if (!visible) return null;
-
-  const submit = async () => {
-    setSaving(true);
-    try {
-      const body = { name: form.name, email: form.email, relationship: form.relationship, access_profile: form.access_profile, phone: form.phone, emoji: form.emoji, display_color: form.display_color, linked_child_ids: form.linked_child_ids };
-      if (isEdit) await api.put(`/families/relatives/${initial.id}`, body);
-      else await api.post('/families/relatives', { ...body, password: form.password || '123456', must_change_password: form.must_change_password });
-      onSaved(); onClose();
-    } catch (err: any) { Alert.alert('Erro', err?.message || 'Falha ao salvar.'); }
-    finally { setSaving(false); }
-  };
-
-  return (
-    <ModalShell title={isEdit ? 'Editar parente' : 'Adicionar parente'} onClose={onClose}>
-      <Field label="Nome *" value={form.name} onChangeText={(v) => setForm((p) => ({ ...p, name: v }))} />
-      <Field label="E-mail *" value={form.email} onChangeText={(v) => setForm((p) => ({ ...p, email: v }))} keyboardType="email-address" />
-      {!isEdit && <Field label="Senha inicial" value={form.password} onChangeText={(v) => setForm((p) => ({ ...p, password: v }))} secureTextEntry />}
-      <Field label="Parentesco" value={form.relationship} onChangeText={(v) => setForm((p) => ({ ...p, relationship: v }))} />
-      <UserDisplayColorPicker value={form.display_color} onChange={(hex) => setForm((p) => ({ ...p, display_color: hex }))} primaryColor={familyPrimary} secondaryColor={familySecondary} excludeUserId={initial?.id} adultMembers={adultMembers} />
-      <Text style={f.label}>Filhos vinculados</Text>
-      <View style={[f.chipRow, { marginBottom: 12 }]}>{childrenList.map((c: any) => (<TouchableOpacity key={c.id} style={[f.chip, form.linked_child_ids.includes(c.id) && f.chipActive]} onPress={() => setForm((p) => ({ ...p, linked_child_ids: p.linked_child_ids.includes(c.id) ? p.linked_child_ids.filter((x) => x !== c.id) : [...p.linked_child_ids, c.id] }))}><Text style={[f.chipText, form.linked_child_ids.includes(c.id) && f.chipTextActive]}>{c.name}</Text></TouchableOpacity>))}</View>
-      {!isEdit && (
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-          <Switch
-            value={form.must_change_password}
-            onValueChange={(v) => setForm((p) => ({ ...p, must_change_password: v }))}
-          />
-          <Text style={{ fontSize: FontSize.sm }}>Exigir troca de senha no próximo login</Text>
-        </View>
-      )}
-      <Footer saving={saving} onClose={onClose} onSave={submit} />
-    </ModalShell>
-  );
-}
+export function GuardianModal(props: any) { return props.visible ? <FamilyMemberAdminForm {...props} role="parent" /> : null; }
+export function ChildAdminModal(props: any) { return props.visible ? <FamilyMemberAdminForm {...props} role="child" /> : null; }
+export function RelativeAdminModal(props: any) { return props.visible ? <FamilyMemberAdminForm {...props} role="relative" /> : null; }
 
 export function MedalAdminModal({ visible, initial, onClose, onSaved }: any) {
   const isEdit = !!initial?.id;

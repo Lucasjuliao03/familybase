@@ -15,7 +15,7 @@ export function FirstAccessPasswordModal() {
 
   const submit = async () => {
     setErr('');
-    if (pw.length < 4) return setErr('Senha muito curta (mín. 4 caracteres).');
+    if (pw.length < 6) return setErr('Senha muito curta (mín. 6 caracteres).');
     if (pw !== pw2) return setErr('As senhas não coincidem.');
     setLoading(true);
     try {

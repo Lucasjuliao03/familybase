@@ -293,6 +293,7 @@ export default function ParentLocationScreen() {
                       size={36}
                       bordered={false}
                       backgroundColor={MEMBER_COLORS[idx % MEMBER_COLORS.length]}
+                      ringColor={loc.users?.display_color}
                     />
                     <View>
                       <Text style={s.memberName} numberOfLines={1}>{loc.users?.name?.split(' ')[0] || 'Membro'}</Text>

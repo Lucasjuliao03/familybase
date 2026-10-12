@@ -1,0 +1,27 @@
+// Reuses the Expo signing key downloaded with `eas credentials`.
+// Passwords remain in the ignored credentials.json file, never in source or CLI args.
+def mobileRoot = rootProject.projectDir.parentFile
+def credentialsFile = new File(mobileRoot, 'credentials.json')
+if (!credentialsFile.isFile()) {
+    throw new GradleException('Missing local Expo credentials.json. Download the existing project credentials before building an update.')
+}
+def localKeystore = new groovy.json.JsonSlurper().parse(credentialsFile).android?.keystore
+if (!localKeystore?.keystorePath || !localKeystore.keystorePassword || !localKeystore.keyAlias || !localKeystore.keyPassword) {
+    throw new GradleException('Incomplete Android signing credentials.')
+}
+def keystoreFile = new File(localKeystore.keystorePath)
+if (!keystoreFile.isAbsolute()) keystoreFile = new File(mobileRoot, localKeystore.keystorePath)
+if (!keystoreFile.isFile()) throw new GradleException('Existing release keystore file not found.')
+android {
+    signingConfigs {
+        localRelease {
+            storeFile keystoreFile
+            storePassword localKeystore.keystorePassword
+            keyAlias localKeystore.keyAlias
+            keyPassword localKeystore.keyPassword
+        }
+    }
+    buildTypes {
+        release { signingConfig signingConfigs.localRelease }
+    }
+}

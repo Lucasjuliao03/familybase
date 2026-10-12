@@ -353,7 +353,9 @@ export default function ParentAllowanceScreen() {
 
       Alert.alert(
         reviewApproved ? 'Aprovada! ✅' : 'Reprovada! ✕',
-        `A solicitação de resgate de ${selectedRequest.child_name} foi processada.`
+        reviewApproved
+          ? `O dinheiro de ${selectedRequest.child_name} foi transferido da mesada para o cofrinho e registrado no extrato.`
+          : `O pedido de ${selectedRequest.child_name} foi recusado. Nenhum valor foi transferido.`
       );
       setReviewModalVisible(false);
       setSelectedRequest(null);
@@ -382,7 +384,7 @@ export default function ParentAllowanceScreen() {
       <ModuleHeader
         title="Gestão de Mesadas"
         emoji="💰"
-        subtitle="Gerencie saldos, metas e resgates"
+        subtitle="Gerencie saldos, metas e cofrinhos"
         onBack={() => router.back()}
       />
 
@@ -408,7 +410,7 @@ export default function ParentAllowanceScreen() {
           onPress={() => setTab('piggy')}
         >
           <Text style={[styles.tabBtnText, tab === 'piggy' && styles.tabBtnTextActive]}>
-            🐷 Resgates {pendingRequests.length > 0 && `(${pendingRequests.length})`}
+            🐷 Guardar {pendingRequests.length > 0 && `(${pendingRequests.length})`}
           </Text>
         </TouchableOpacity>
       </View>
@@ -714,14 +716,14 @@ export default function ParentAllowanceScreen() {
             </View>
           )}
 
-          {/* ── ABA 3: PEDIDOS DE RESGATE ── */}
+          {/* ── ABA 3: PEDIDOS PARA GUARDAR ── */}
           {tab === 'piggy' && (
             <View>
               <Text style={styles.sectionTitle}>Solicitações Pendentes</Text>
               {pendingRequests.length === 0 ? (
                 <View style={styles.emptyState}>
                   <Text style={{ fontSize: 32, marginBottom: 8 }}>🎉</Text>
-                  <Text style={styles.emptyTitle}>Nenhum resgate pendente</Text>
+                  <Text style={styles.emptyTitle}>Nenhum pedido pendente</Text>
                   <Text style={styles.emptySub}>Todos os pedidos de cofrinho das crianças foram resolvidos!</Text>
                 </View>
               ) : (
@@ -755,10 +757,10 @@ export default function ParentAllowanceScreen() {
               )}
 
               {/* Histórico recente */}
-              <Text style={[styles.sectionTitle, { marginTop: 24 }]}>Histórico de Resgates</Text>
+              <Text style={[styles.sectionTitle, { marginTop: 24 }]}>Histórico de transferências</Text>
               {historyRequests.length === 0 ? (
                 <View style={styles.emptyState}>
-                  <Text style={styles.emptySub}>Nenhum resgate histórico.</Text>
+                  <Text style={styles.emptySub}>Nenhuma transferência registrada.</Text>
                 </View>
               ) : (
                 historyRequests.map((r) => {
@@ -1080,7 +1082,7 @@ export default function ParentAllowanceScreen() {
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>
-                {reviewApproved ? '✓ Aprovar Retirada' : '✕ Rejeitar Retirada'}
+                {reviewApproved ? '✓ Aprovar transferência' : '✕ Rejeitar pedido'}
               </Text>
               <TouchableOpacity onPress={() => setReviewModalVisible(false)} style={styles.modalCloseBtn}>
                 <Text style={styles.modalCloseText}>✕</Text>

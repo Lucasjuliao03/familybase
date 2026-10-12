@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, StatusBar } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Colors, Spacing, FontSize } from '../../theme';
 
@@ -34,7 +34,6 @@ export function GradientHeader({
       end={{ x: 1, y: 1 }}
       style={[styles.container, { paddingBottom: 20 + extraBottom }]}
     >
-      <StatusBar barStyle="light-content" />
 
       {/* Top action row */}
       {(leftAction || rightAction) && (

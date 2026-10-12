@@ -22,6 +22,10 @@ import { Badge } from '../../src/components/ui/Badge';
 import { ModuleHeader } from '../../src/components/ui/ModuleHeader';
 import api from '../../src/services/api';
 import { UserAvatar } from '../../src/components/profile/UserAvatar';
+import { indexMedicationLogs, localDate, medicationDoses, medicationState, normalizeMedication, parseScheduledTimes } from '../../src/lib/medicationSchedule';
+import { useMedicationClock } from '../../src/lib/useMedicationClock';
+import { MedicationDayPicker } from '../../src/components/health/MedicationDayPicker';
+import { MedicationDoseModal } from '../../src/components/health/MedicationDoseModal';
 
 const RECORD_TYPES = [
   { id: 'headache', label: 'Dor de Cabeça 🤕' },
@@ -44,6 +48,11 @@ const SEVERITIES = [
 export default function ParentHealthScreen() {
   const router = useRouter();
   const { family, user } = useAuth();
+  const now = useMedicationClock();
+  const today = localDate(now);
+  const [selectedDoseDate, setSelectedDoseDate] = useState<string | null>(null);
+  const doseDate = selectedDoseDate || today;
+  const [doseToLog, setDoseToLog] = useState<{ med: any; dose: any } | null>(null);
 
   const [tab, setTab] = useState<'overview' | 'symptoms' | 'appointments' | 'medications' | 'history'>('overview');
   const [loading, setLoading] = useState<boolean>(true);
@@ -62,10 +71,12 @@ export default function ParentHealthScreen() {
 
   // Dados do Servidor
   const [overview, setOverview] = useState<any>(null);
+  const activeOverviewMedications = (overview?.activeMedications || []).filter((med: any) => medicationState(med, today) === 'active');
   const [records, setRecords] = useState<any[]>([]);
   const [appointments, setAppointments] = useState<any[]>([]);
   const [medications, setMedications] = useState<any[]>([]);
   const [logs, setLogs] = useState<any[]>([]);
+  const logsByMedication = useMemo(() => indexMedicationLogs(logs), [logs]);
 
   // Modais de Criação / Edição
   const [showRecordModal, setShowRecordModal] = useState<boolean>(false);
@@ -102,6 +113,9 @@ export default function ParentHealthScreen() {
     name: '',
     dosage: '',
     frequency: '',
+    start_date: localDate(),
+    end_date: '',
+    scheduled_times: [''],
     notes: '',
     status: 'active',
   });
@@ -150,7 +164,7 @@ export default function ParentHealthScreen() {
 
   useEffect(() => {
     loadData();
-  }, [loadData]);
+  }, [loadData, today]);
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
@@ -296,18 +310,20 @@ export default function ParentHealthScreen() {
 
   // ── REMÉDIOS ───────────────────────────────
   const handleSaveMed = async () => {
-    if (!medForm.name.trim() || !medForm.dosage.trim()) {
-      setFormError('Informe o nome do remédio e a dosagem.');
+    if (working) return;
+    if (!medForm.name.trim() || !medForm.dosage.trim() || !medForm.start_date) {
+      setFormError('Informe o nome do remédio, a dosagem e a data de início.');
       return;
     }
     try {
       setWorking(true);
       setFormError(null);
+      const payload = normalizeMedication(medForm);
       if (medForm.id) {
-        await api.put(`/health/medications/${medForm.id}`, medForm);
+        await api.put(`/health/medications/${medForm.id}`, payload);
         setHealthNotice('Medicamento atualizado.');
       } else {
-        await api.post('/health/medications', medForm);
+        await api.post('/health/medications', payload);
         setHealthNotice('Medicamento cadastrado.');
       }
 
@@ -318,6 +334,10 @@ export default function ParentHealthScreen() {
     } finally {
       setWorking(false);
     }
+  };
+
+  const handleLogMedDose = (med: any, dose: any) => {
+    if (!dose.log) setDoseToLog({ med, dose });
   };
 
   const handleDeleteMed = async (id: string) => {
@@ -466,7 +486,7 @@ export default function ParentHealthScreen() {
               {/* KPIs rápidas */}
               <View style={styles.kpiRow}>
                 <View style={styles.kpiCard}>
-                  <Text style={styles.kpiVal}>{overview.activeMedications?.length || 0}</Text>
+                  <Text style={styles.kpiVal}>{activeOverviewMedications.length}</Text>
                   <Text style={styles.kpiLabel}>Remédios Ativos</Text>
                 </View>
                 <View style={[styles.kpiCard, { borderColor: Colors.warning }]}>
@@ -521,10 +541,10 @@ export default function ParentHealthScreen() {
               {/* Remédios Ativos */}
               <Card style={styles.blockCard}>
                 <Text style={styles.blockTitle}>💊 Medicamentos em Uso</Text>
-                {(overview.activeMedications || []).length === 0 ? (
+                {activeOverviewMedications.length === 0 ? (
                   <Text style={styles.emptyBlockText}>Nenhum remédio ativo.</Text>
                 ) : (
-                  overview.activeMedications.map((m: any) => {
+                  activeOverviewMedications.map((m: any) => {
                     const child = getChild(m.child_id);
                     return (
                       <View key={m.id} style={styles.itemRow}>
@@ -742,6 +762,7 @@ export default function ParentHealthScreen() {
           {/* ── MEDICAMENTOS ── */}
           {tab === 'medications' && (
             <View>
+              <MedicationDayPicker date={doseDate} today={today} onChange={setSelectedDoseDate} />
               <View style={styles.flexBetweenRow}>
                 <Text style={styles.sectionTitle}>Remédios & Prescrições</Text>
                 <TouchableOpacity
@@ -753,6 +774,9 @@ export default function ParentHealthScreen() {
                       name: '',
                       dosage: '',
                       frequency: '',
+                      start_date: localDate(),
+                      end_date: '',
+                      scheduled_times: [''],
                       notes: '',
                       status: 'active',
                     });
@@ -790,8 +814,20 @@ export default function ParentHealthScreen() {
                           </Text>
                         </View>
                       </View>
-                      <Badge label={m.status === 'active' ? 'Ativo' : 'Finalizado'} variant={m.status === 'active' ? 'primary' : 'ghost'} />
+                      <Badge label={({ active: 'Ativo', completed: 'Finalizado', upcoming: 'A iniciar', inactive: 'Suspenso' } as Record<string, string>)[medicationState(m, today)]} variant={medicationState(m, today) === 'active' ? 'primary' : 'ghost'} />
                     </View>
+                        <Text style={styles.cardMeta}>Horários: {parseScheduledTimes(m).join(' · ') || 'Conforme orientação'}</Text>
+                    <Text style={styles.cardMeta}>Período: {formatDateBr(m.start_date) || 'Sem início definido'} → {formatDateBr(m.end_date) || 'Uso contínuo'}</Text>
+                    {medicationDoses(m, logsByMedication.get(m.id) || [], doseDate, now).map((dose: any) => (
+                      <View key={dose.time || 'livre'} style={styles.itemRow}>
+                        <Text style={[styles.cardMeta, { flex: 1 }, dose.state === 'overdue' && { color: Colors.danger }]}>
+                          {dose.time || 'Dose de hoje'} · {dose.log ? `Tomado em ${new Date(dose.log.taken_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}` : dose.state === 'overdue' ? 'Atrasado' : 'Pendente'}
+                        </Text>
+                        {!dose.log && <TouchableOpacity accessibilityRole="button" style={styles.btnAction} onPress={() => handleLogMedDose(m, dose)} disabled={working}>
+                          <Text style={styles.btnActionText}>Registrar tomada</Text>
+                        </TouchableOpacity>}
+                      </View>
+                    ))}
                     {m.notes ? <Text style={styles.cardObs}>💬 Obs: "{m.notes}"</Text> : null}
 
                     <View style={styles.cardActions}>
@@ -804,6 +840,9 @@ export default function ParentHealthScreen() {
                             name: m.name,
                             dosage: m.dosage,
                             frequency: m.frequency,
+                            start_date: m.start_date || '',
+                            end_date: m.end_date || '',
+                            scheduled_times: parseScheduledTimes(m).length ? parseScheduledTimes(m) : [''],
                             notes: m.notes || '',
                             status: m.status || 'active',
                           });
@@ -851,6 +890,7 @@ export default function ParentHealthScreen() {
                           <Text style={styles.logDetail}>
                             {getChildName(l.child_id)} · Tomado em: {l.taken_at ? new Date(l.taken_at).toLocaleString('pt-BR') : ''}
                           </Text>
+                          {l.scheduled_date && <Text style={styles.logDetail}>Dose prevista: {formatDateBr(l.scheduled_date)} às {l.scheduled_time?.slice(0, 5)}{l.status === 'late' ? ' · Tomado com atraso' : ''}</Text>}
                         </View>
                         {l.notes ? <Text style={styles.logNotes}>"{l.notes}"</Text> : null}
                       </View>
@@ -1142,6 +1182,35 @@ export default function ParentHealthScreen() {
                 onChangeText={(text) => setMedForm((p: any) => ({ ...p, frequency: text }))}
               />
 
+              <Text style={styles.formLabel}>Data de início (DD/MM/AAAA) *</Text>
+              <TextInput accessibilityLabel="Data de início do tratamento" style={styles.input} placeholder="DD/MM/AAAA" value={formatDateBr(medForm.start_date)} onChangeText={(text) => setMedForm((p: any) => ({ ...p, start_date: text }))} />
+              <Text style={styles.formLabel}>Data de término (DD/MM/AAAA)</Text>
+              <TextInput accessibilityLabel="Data de término do tratamento" style={styles.input} placeholder="Deixe vazio para uso contínuo" value={formatDateBr(medForm.end_date)} onChangeText={(text) => setMedForm((p: any) => ({ ...p, end_date: text }))} />
+              <Text style={styles.cardMeta}>O tratamento inclui o dia de término. Depois, sai da lista de doses e permanece no histórico.</Text>
+
+              <Text style={styles.formLabel}>Quantas vezes ao dia?</Text>
+              <View style={styles.gridContainer}>
+                {[1, 2, 3, 4, 5, 6, 7, 8].map((count) => (
+                  <TouchableOpacity key={count} accessibilityRole="button" accessibilityLabel={`${count} doses por dia`} style={[styles.selectorChip, medForm.scheduled_times.length === count && styles.selectorChipActive]} onPress={() => setMedForm((p: any) => ({ ...p, scheduled_times: Array.from({ length: count }, (_, i) => p.scheduled_times[i] || '') }))}>
+                    <Text style={styles.selectorChipText}>{count}x</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              {medForm.scheduled_times.map((time: string, index: number) => (
+                <View key={index}>
+                  <Text style={styles.formLabel}>Horário da dose {index + 1} (HH:MM) *</Text>
+                  <TextInput accessibilityLabel={`Horário da dose ${index + 1}`} style={styles.input} placeholder="Ex.: 04:00, 12:00 ou 20:00" value={time} maxLength={5} onChangeText={(text) => setMedForm((p: any) => ({ ...p, scheduled_times: p.scheduled_times.map((value: string, i: number) => i === index ? text : value) }))} />
+                </View>
+              ))}
+              <Text style={styles.formLabel}>Situação do tratamento</Text>
+              <View style={styles.gridContainer}>
+                {[['active', 'Ativo'], ['completed', 'Finalizado'], ['inactive', 'Suspenso']].map(([value, label]) => (
+                  <TouchableOpacity key={value} accessibilityRole="button" style={[styles.selectorChip, medForm.status === value && styles.selectorChipActive]} onPress={() => setMedForm((p: any) => ({ ...p, status: value }))}>
+                    <Text style={styles.selectorChipText}>{label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
               <Text style={styles.formLabel}>Recomendações / Anotações</Text>
               <TextInput
                 style={[styles.textarea, { height: 60 }]}
@@ -1158,6 +1227,11 @@ export default function ParentHealthScreen() {
           </View>
         </KeyboardAvoidingView>
       </Modal>}
+
+      {doseToLog && <MedicationDoseModal medication={doseToLog.med} dose={doseToLog.dose} onClose={() => setDoseToLog(null)} onSaved={async () => {
+        setHealthNotice('Dose registrada com a data e hora da tomada.');
+        await loadData(true);
+      }} />}
 
     </View>
   );

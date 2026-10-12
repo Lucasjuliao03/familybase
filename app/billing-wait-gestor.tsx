@@ -10,7 +10,7 @@ export default function BillingWaitGestorScreen() {
 
   return (
     <View style={s.screen}>
-      <StatusBar barStyle="light-content" />
+      <StatusBar barStyle="dark-content" />
       <View style={s.card}>
         <Text style={s.icon}>📋</Text>
         <Text style={s.title}>Assinatura a cargo do gestor</Text>

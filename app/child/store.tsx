@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -8,38 +8,45 @@ import {
   TouchableOpacity,
   RefreshControl,
   ActivityIndicator,
-  Alert,
 } from 'react-native';
 import { Colors, Shadow, Radii, FontSize } from '../../src/theme';
-import { useRouter, useFocusEffect } from 'expo-router';
+import { useFocusEffect } from 'expo-router';
 import { useAuth } from '../../src/contexts/AuthContext';
+import { ChildModuleHeader } from '../../src/components/child/ChildModuleHeader';
 import api from '../../src/services/api';
+import { isRewardAvailable } from '../../src/lib/rewardStore';
+import { StoreDialog, type StoreDialogConfig } from '../../src/components/store/StoreDialog';
 
 export default function ChildStoreScreen() {
-  const router = useRouter();
-  const { childProfile, refreshProfile } = useAuth();
+  const { childProfile } = useAuth();
 
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [rewards, setRewards] = useState<any[]>([]);
   const [redemptions, setRedemptions] = useState<any[]>([]);
   const [showHistory, setShowHistory] = useState<boolean>(false);
+  const [busy, setBusy] = useState(false);
+  const [loadError, setLoadError] = useState('');
+  const [dialog, setDialog] = useState<StoreDialogConfig | null>(null);
+  const mutationRef = useRef(false);
+  const confirmationRef = useRef(false);
+  const loadVersion = useRef(0);
+  const [points, setPoints] = useState({ total: 0, reserved: 0, available: 0 });
 
   const loadData = useCallback(async (isRefresh = false) => {
-    if (!childProfile?.id) return;
+    const version = ++loadVersion.current;
+    if (!childProfile?.id) { setLoading(false); setRefreshing(false); return; }
     try {
       if (!isRefresh) setLoading(true);
 
-      // Sincroniza dados do perfil (pontos atualizados)
-      await refreshProfile();
-
-      const [rewardsRes, redemptionsRes] = await Promise.all([
-        api.get('/allowance/rewards/list').catch(() => ({ data: [] })),
-        api.get('/allowance/redemptions/list').catch(() => ({ data: [] })),
+      const [rewardsRes, redemptionsRes, balanceRes] = await Promise.all([
+        api.get('/allowance/rewards/list'),
+        api.get('/allowance/redemptions/list'),
+        api.get('/allowance/store-balance', { params: { child_id: childProfile.id } }),
       ]);
-
+      if (version !== loadVersion.current) return;
       // Filtrar prêmios ativos
-      const activeRewards = (rewardsRes?.data || []).filter((r: any) => r.is_active !== false && r.available !== false);
+      const activeRewards = (rewardsRes?.data || []).filter(isRewardAvailable);
       setRewards(activeRewards);
 
       // Filtrar resgates desta criança
@@ -47,13 +54,14 @@ export default function ChildStoreScreen() {
         (r: any) => String(r.child_id) === String(childProfile.id)
       );
       setRedemptions(childReds);
-    } catch (err) {
-      console.error('[ChildStore] Erro ao carregar dados da loja:', err);
+      setPoints(balanceRes.data);
+      setLoadError('');
+    } catch (err: any) {
+      if (version === loadVersion.current) setLoadError(err.message || 'Não foi possível atualizar a loja.');
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (version === loadVersion.current) { setLoading(false); setRefreshing(false); }
     }
-  }, [childProfile?.id, refreshProfile]);
+  }, [childProfile?.id]);
 
   useFocusEffect(
     useCallback(() => {
@@ -67,54 +75,46 @@ export default function ChildStoreScreen() {
   }, [loadData]);
 
   // Executar pedido de resgate
+  const redeemReward = async (reward: any) => {
+    if (mutationRef.current) return;
+    mutationRef.current = true;
+    setBusy(true);
+    try {
+      await api.post(`/allowance/rewards/${reward.id}/redeem`, {
+        child_id: childProfile?.id,
+      });
+      await loadData(true);
+      setDialog({ title: 'Pedido enviado! 📤', message: 'Seu pedido de resgate foi enviado para aprovação dos seus pais.' });
+    } catch (err: any) {
+      setDialog({ title: 'Erro', message: err.message || 'Não foi possível solicitar o resgate.' });
+    } finally {
+      mutationRef.current = false;
+      setBusy(false);
+    }
+  };
+
   const handleRedeemReward = (reward: any) => {
+    if (!childProfile?.id || confirmationRef.current || mutationRef.current || loading || loadError) return;
     const cost = Number(reward.point_cost ?? reward.points ?? 0);
-    const myPoints = Number(childProfile?.points ?? 0);
-
-    // Soma pontos pendentes em outros resgates aguardando aprovação
-    const pendingPoints = redemptions
-      .filter((r) => r.status === 'pending')
-      .reduce((sum, r) => sum + Number(r.reward_point_cost ?? r.point_cost ?? 0), 0);
-
-    const availablePoints = Math.max(0, myPoints - pendingPoints);
+    const myPoints = points.total;
+    const availablePoints = points.available;
 
     if (cost > availablePoints) {
       if (cost > myPoints) {
-        Alert.alert('Pontos Insuficientes', `Você tem ⭐ ${myPoints} pontos, mas este prêmio custa ⭐ ${cost} pontos.`);
+        setDialog({ title: 'Pontos Insuficientes', message: `Você tem ⭐ ${myPoints} pontos, mas este prêmio custa ⭐ ${cost} pontos.` });
       } else {
-        Alert.alert(
-          'Pontos Reservados',
-          `Você já tem outros resgates aguardando aprovação que comprometem seus pontos. Disponível no momento: ⭐ ${availablePoints}.`
-        );
+        setDialog({ title: 'Pontos Reservados', message: `Você já tem outros resgates aguardando aprovação que comprometem seus pontos. Disponível no momento: ⭐ ${availablePoints}.` });
       }
       return;
     }
 
-    Alert.alert(
-      'Confirmar Resgate',
-      `Deseja trocar ⭐ ${cost} pontos por "${reward.name}"?`,
-      [
-        { text: 'Cancelar', style: 'cancel' },
-        {
-          text: 'Resgatar! 🎁',
-          onPress: async () => {
-            try {
-              setLoading(true);
-              await api.post(`/allowance/rewards/${reward.id}/redeem`, {
-                child_id: childProfile?.id,
-              });
-
-              Alert.alert('Sucesso! 📤', 'Seu pedido de resgate foi enviado! Fale com os seus pais para eles aprovarem.');
-              loadData(true);
-            } catch (err: any) {
-              Alert.alert('Erro', err.message || 'Não foi possível solicitar o resgate.');
-            } finally {
-              setLoading(false);
-            }
-          },
-        },
-      ]
-    );
+    confirmationRef.current = true;
+    setDialog({
+      title: 'Confirmar Resgate',
+      message: `Deseja trocar ⭐ ${cost} pontos por "${reward.name}"?`,
+      confirmLabel: 'Resgatar! 🎁',
+      onConfirm: () => { void redeemReward(reward); },
+    });
   };
 
   const getStatusBadge = (status: string) => {
@@ -131,6 +131,14 @@ export default function ChildStoreScreen() {
   return (
     <View style={styles.root}>
       <StatusBar barStyle="dark-content" backgroundColor={Colors.bg} />
+      <ChildModuleHeader
+        moduleId="loja"
+        title="Loja"
+        subtitle="Prêmios da família"
+        actionLabel={showHistory ? 'Ver Prêmios' : 'Ver Pedidos'}
+        actionIcon={showHistory ? 'gift-outline' : 'receipt-outline'}
+        onAction={() => setShowHistory(!showHistory)}
+      />
       <ScrollView
         style={styles.container}
         contentContainerStyle={styles.content}
@@ -139,31 +147,18 @@ export default function ChildStoreScreen() {
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[Colors.primary]} />
         }
       >
-        {/* Header */}
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-            <Text style={styles.backBtnText}>‹</Text>
-          </TouchableOpacity>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.title}>Loja de Prêmios 🛍️</Text>
-          </View>
-          <TouchableOpacity 
-            style={styles.historyToggleBtn}
-            onPress={() => setShowHistory(!showHistory)}
-          >
-            <Text style={styles.historyToggleText}>{showHistory ? 'Ver Prêmios' : 'Ver Pedidos'}</Text>
-          </TouchableOpacity>
-        </View>
-
         {/* Card de Pontos */}
         <View style={styles.pointsCard}>
           <View style={styles.pointsLeft}>
             <Text style={styles.pointsLabel}>Minhas Estrelas Disponíveis</Text>
-            <Text style={styles.pointsValue}>⭐ {childProfile?.points ?? 0} XP</Text>
+            <Text style={styles.pointsValue}>⭐ {points.available} pontos</Text>
+            <Text style={styles.pointsLabel}>Total: {points.total} · Reservados: {points.reserved}</Text>
           </View>
           <Text style={{ fontSize: 44 }}>🎁</Text>
         </View>
 
+        {loadError ? <TouchableOpacity onPress={onRefresh} accessibilityRole="button"><Text style={{ color: Colors.danger, marginBottom: 12 }}>{loadError} Toque para tentar novamente.</Text></TouchableOpacity> : null}
+        {busy ? <ActivityIndicator color={Colors.primary} /> : null}
         {loading && !refreshing ? (
           <View style={styles.centerContainer}>
             <ActivityIndicator size="large" color={Colors.primary} />
@@ -187,10 +182,11 @@ export default function ChildStoreScreen() {
                     <Text style={styles.redemptionIcon}>{r.reward_icon || '🎁'}</Text>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.redemptionTitle}>{r.reward_name || 'Prêmio'}</Text>
-                      <Text style={styles.redemptionCost}>Custo: ⭐ {r.reward_point_cost ?? r.point_cost} XP</Text>
+                      <Text style={styles.redemptionCost}>Custo: ⭐ {r.point_cost} pontos</Text>
                       <Text style={styles.redemptionDate}>
                         Solicitado em: {new Date(r.created_at).toLocaleDateString('pt-BR')}
                       </Text>
+                      {r.reviewed_at ? <Text style={styles.redemptionDate}>Resolvido em: {new Date(r.reviewed_at).toLocaleString('pt-BR')}</Text> : null}
                     </View>
                     <View style={[styles.statusBadge, { backgroundColor: badge.bg }]}>
                       <Text style={[styles.statusBadgeText, { color: badge.color }]}>{badge.label}</Text>
@@ -213,14 +209,14 @@ export default function ChildStoreScreen() {
             ) : (
               rewards.map((rew) => {
                 const cost = Number(rew.point_cost ?? rew.points ?? 0);
-                const myPoints = Number(childProfile?.points ?? 0);
-                const canAfford = myPoints >= cost;
+                const canAfford = points.available >= cost;
 
                 return (
                   <TouchableOpacity
                     key={rew.id}
                     style={[styles.rewardCard, !canAfford && styles.rewardCardCantAfford]}
                     onPress={() => handleRedeemReward(rew)}
+                    disabled={busy || !!loadError}
                     activeOpacity={0.8}
                   >
                     <Text style={styles.rewardIcon}>{rew.icon || '🎁'}</Text>
@@ -229,10 +225,10 @@ export default function ChildStoreScreen() {
                       {rew.description ? (
                         <Text style={styles.rewardDesc}>{rew.description}</Text>
                       ) : null}
-                      <Text style={styles.rewardCost}>⭐ {cost} XP</Text>
+                      <Text style={styles.rewardCost}>⭐ {cost} pontos</Text>
                     </View>
                     <View style={[styles.buyBtn, !canAfford && styles.buyBtnDisabled]}>
-                      <Text style={styles.buyBtnText}>{canAfford ? 'Resgatar' : 'Bloqueado'}</Text>
+                      <Text style={styles.buyBtnText}>{busy ? 'Aguarde...' : canAfford ? 'Resgatar' : 'Bloqueado'}</Text>
                     </View>
                   </TouchableOpacity>
                 );
@@ -243,6 +239,7 @@ export default function ChildStoreScreen() {
 
         <View style={{ height: 100 }} />
       </ScrollView>
+      <StoreDialog dialog={dialog} onClose={() => { confirmationRef.current = false; setDialog(null); }} />
     </View>
   );
 }
@@ -257,7 +254,7 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: 16,
-    paddingTop: 45,
+    paddingTop: 16,
     paddingBottom: 110,
   },
   header: {

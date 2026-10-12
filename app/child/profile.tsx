@@ -11,14 +11,19 @@ import {
   TextInput,
   ActivityIndicator,
   Alert,
+  Image,
 } from 'react-native';
 import { Colors, Shadow, Radii, FontSize } from '../../src/theme';
-import { AvatarPicker } from '../../src/components/profile/AvatarPicker';
+import { UserAvatar } from '../../src/components/profile/UserAvatar';
 import { useAuth } from '../../src/contexts/AuthContext';
 import { useRouter } from 'expo-router';
 import api from '../../src/services/api';
+import { USER_DISPLAY_COLOR_PALETTE, normalizeHex } from '../../src/shared/lib/userDisplayColors';
+import { getMascot, MASCOTS } from '../../src/lib/mascotCatalog';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export default function ChildProfileScreen() {
+  const insets = useSafeAreaInsets();
   const { user, family, childProfile, logout, refreshProfile } = useAuth();
   const router = useRouter();
 
@@ -26,10 +31,12 @@ export default function ChildProfileScreen() {
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [pwLoading, setPwLoading] = useState(false);
+  const [colorSaving, setColorSaving] = useState(false);
+  const [selectedColor, setSelectedColor] = useState<string | null>(null);
 
   const handleUpdatePassword = async () => {
-    if (newPassword.length < 4) {
-      return Alert.alert('Erro', 'A senha deve ter pelo menos 4 caracteres.');
+    if (newPassword.length < 6) {
+      return Alert.alert('Erro', 'A senha deve ter pelo menos 6 caracteres.');
     }
     if (newPassword !== confirmPassword) {
       return Alert.alert('Erro', 'As senhas não coincidem.');
@@ -49,14 +56,27 @@ export default function ChildProfileScreen() {
   };
 
   const displayName = childProfile?.name || user?.name || 'Criança';
-  const childEndpoint = childProfile?.id
-    ? `/auth/avatar/child/${childProfile.id}`
-    : '/auth/avatar';
+  const childColor = selectedColor || normalizeHex(childProfile?.color) || Colors.primary;
+  const selectedMascot = getMascot(childProfile?.mascot_id);
+
+  const chooseColor = async (color: string) => {
+    if (!childProfile?.id || colorSaving || color === childColor) return;
+    setColorSaving(true);
+    try {
+      await api.put('/children/me/color', { child_id: childProfile.id, color });
+      setSelectedColor(color);
+      await refreshProfile();
+    } catch (err: any) {
+      Alert.alert('Não foi possível salvar a cor', err?.message || 'Tente novamente.');
+    } finally {
+      setColorSaving(false);
+    }
+  };
 
   return (
     <View style={styles.root}>
       <StatusBar barStyle="dark-content" backgroundColor={Colors.bg} />
-      <ScrollView style={styles.container} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView style={styles.container} contentContainerStyle={[styles.content, { paddingTop: Math.max(insets.top + 18, 45) }]} showsVerticalScrollIndicator={false}>
         <View style={styles.header}>
           <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
             <Text style={styles.backBtnText}>‹</Text>
@@ -65,19 +85,65 @@ export default function ChildProfileScreen() {
         </View>
 
         <View style={styles.profileCard}>
-          <AvatarPicker
-            currentAvatarUrl={childProfile?.avatar_url}
-            currentPreset={childProfile?.avatar_preset}
-            name={displayName}
-            endpoint={childEndpoint}
-            size={88}
-            onSave={() => refreshProfile()}
-          />
+          <TouchableOpacity
+            onPress={() => router.push('/child/avatar' as any)}
+            accessibilityRole="button"
+            accessibilityLabel="Escolher meu avatar"
+            activeOpacity={0.85}
+            style={styles.avatarAction}
+          >
+            <UserAvatar
+              avatarUrl={childProfile?.avatar_url}
+              avatarPreset={childProfile?.avatar_preset}
+              name={displayName}
+              size={88}
+              ringColor={childColor}
+            />
+            <View style={styles.avatarEditBadge}><Text style={styles.avatarEditText}>✎</Text></View>
+          </TouchableOpacity>
+          <Text style={styles.avatarHint}>Toque no avatar para escolher seu visual</Text>
           <Text style={styles.profileName}>{displayName}</Text>
           <Text style={styles.profileEmail}>{user?.email || '—'}</Text>
           <View style={styles.roleBadge}>
             <Text style={styles.roleBadgeText}>🏅 Filho(a) · Nível {childProfile?.level ?? 1}</Text>
           </View>
+        </View>
+
+        <Text style={styles.sectionTitle}>Meu mascote</Text>
+        <TouchableOpacity
+          style={[styles.mascotCard, { backgroundColor: selectedMascot?.softBackground || '#FFF4F7' }]}
+          onPress={() => router.push('/child/mascot' as any)}
+          activeOpacity={0.85}
+          accessibilityRole="button"
+          accessibilityLabel={selectedMascot ? `Trocar mascote ${selectedMascot.name}` : 'Escolher meu mascote'}
+        >
+          <Image source={(selectedMascot || MASCOTS[0]).thumbnail} style={styles.mascotImage} resizeMode="contain" />
+          <View style={styles.mascotTextGroup}>
+            <Text style={styles.mascotTitle}>{selectedMascot ? `${selectedMascot.name} é seu companheiro!` : 'Escolha seu companheiro'}</Text>
+            <Text style={styles.mascotHint}>{selectedMascot ? 'Toque para conhecer e trocar de mascote' : 'Conheça Lili, Tobe, Pipo e Luca'}</Text>
+          </View>
+          <Text style={styles.mascotArrow}>›</Text>
+        </TouchableOpacity>
+
+        <Text style={styles.sectionTitle}>Minha cor</Text>
+        <View style={styles.colorCard}>
+          <Text style={styles.colorHint}>Escolha a cor que vai identificar você no mapa, agenda e cartões da família.</Text>
+          <View style={styles.colorGrid}>
+            {USER_DISPLAY_COLOR_PALETTE.map((color) => (
+              <TouchableOpacity
+                key={color}
+                accessibilityRole="button"
+                accessibilityLabel={`Escolher cor ${color}`}
+                accessibilityState={{ selected: childColor === color, disabled: colorSaving }}
+                disabled={colorSaving}
+                onPress={() => chooseColor(color)}
+                style={[styles.colorSwatch, { backgroundColor: color }, childColor === color && styles.colorSelected]}
+              >
+                {childColor === color ? <Text style={styles.colorCheck}>✓</Text> : null}
+              </TouchableOpacity>
+            ))}
+          </View>
+          {colorSaving ? <ActivityIndicator color={childColor} /> : null}
         </View>
 
         <Text style={styles.sectionTitle}>Minha Família</Text>
@@ -168,8 +234,24 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.surface, borderRadius: Radii.md, padding: 24,
     alignItems: 'center', borderWidth: 1, borderColor: Colors.border, marginBottom: 24, ...Shadow.sm,
   },
+  avatarAction: { alignItems: 'center', justifyContent: 'center' },
+  avatarEditBadge: { position: 'absolute', right: -4, bottom: -2, width: 28, height: 28, borderRadius: 14, backgroundColor: Colors.primary, borderWidth: 2, borderColor: Colors.white, alignItems: 'center', justifyContent: 'center' },
+  avatarEditText: { color: Colors.white, fontSize: 15, fontWeight: '800' },
+  avatarHint: { color: Colors.textSecondary, fontSize: FontSize.xs, marginTop: 10 },
   profileName: { fontSize: FontSize.md, fontWeight: '800', color: Colors.text, marginTop: 16 },
   profileEmail: { fontSize: FontSize.sm, color: Colors.textSecondary, marginTop: 4, marginBottom: 12 },
+  colorCard: { backgroundColor: Colors.surface, borderRadius: Radii.md, padding: 16, borderWidth: 1, borderColor: Colors.border, marginBottom: 24 },
+  mascotCard: { flexDirection: 'row', alignItems: 'center', borderRadius: Radii.md, padding: 12, marginBottom: 24, borderWidth: 1, borderColor: Colors.border },
+  mascotImage: { width: 60, height: 60 },
+  mascotTextGroup: { flex: 1, marginLeft: 10 },
+  mascotTitle: { color: Colors.text, fontSize: FontSize.sm, fontWeight: '900' },
+  mascotHint: { color: Colors.textSecondary, fontSize: FontSize.xs, marginTop: 3 },
+  mascotArrow: { color: Colors.textSecondary, fontSize: 24, fontWeight: '700' },
+  colorHint: { fontSize: FontSize.sm, color: Colors.textSecondary, marginBottom: 14, lineHeight: 20 },
+  colorGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
+  colorSwatch: { width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
+  colorSelected: { borderWidth: 3, borderColor: Colors.text },
+  colorCheck: { color: Colors.white, fontSize: 23, fontWeight: '900' },
   roleBadge: {
     backgroundColor: Colors.primaryLighter, borderRadius: Radii.xs,
     paddingVertical: 4, paddingHorizontal: 12, borderWidth: 1, borderColor: Colors.border,

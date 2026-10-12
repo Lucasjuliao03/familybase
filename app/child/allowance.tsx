@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -17,9 +17,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   Image,
-  useWindowDimensions,
 } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { useAuth } from '../../src/contexts/AuthContext';
 import { Colors, Radii, Shadow, FontSize } from '../../src/theme';
@@ -28,29 +26,13 @@ import { Badge } from '../../src/components/ui/Badge';
 import { ProgressBar } from '../../src/components/ui/ProgressBar';
 import { PiggyPopoutCard, piggyScrollTopInset } from '../../src/components/allowance/PiggyPopoutCard';
 import api from '../../src/services/api';
+import { ActionCelebration, CelebrationEvent } from '../../src/components/child/ActionCelebration';
+import { ChildModuleHeader } from '../../src/components/child/ChildModuleHeader';
 
 const cofrinhoImg = require('../../icon/cofrinho.png');
-const mesadaHeaderImg = require('../../icon/mesada1.png');
-
-function useMesadaHeaderMetrics(screenW: number) {
-  return useMemo(() => {
-    const prevImgW = Math.round(screenW * 0.36 * 0.98);
-    const imgWBase = Math.min(Math.round(prevImgW * 2), Math.round(screenW * 0.52));
-    const imgW = Math.round(imgWBase * 0.75);
-    const rowH = Math.round(imgW * 0.78);
-    const slotW = Math.round(imgW * 0.82);
-    const imgDisplayW = Math.round(slotW * 1.3);
-    const imgDisplayH = Math.round(rowH * 1.3);
-    const imgLeft = Math.round((slotW - imgDisplayW) / 2);
-    return { slotW, rowH, imgDisplayW, imgDisplayH, imgLeft };
-  }, [screenW]);
-}
-
 export default function AllowanceScreen() {
   const router = useRouter();
   const { childProfile, refreshProfile } = useAuth();
-  const { width: screenW } = useWindowDimensions();
-  const { slotW, rowH, imgDisplayW, imgDisplayH, imgLeft } = useMesadaHeaderMetrics(screenW);
 
   const [tab, setTab] = useState<'allowance' | 'goals' | 'piggy'>('allowance');
   const [loading, setLoading] = useState<boolean>(true);
@@ -61,6 +43,8 @@ export default function AllowanceScreen() {
   const [cycle, setCycle] = useState<any>(null);
   const [transactions, setTransactions] = useState<any[]>([]);
   const [goals, setGoals] = useState<any[]>([]);
+  const [celebration, setCelebration] = useState<CelebrationEvent | null>(null);
+  const goalAmountsRef = useRef<Map<string, number> | null>(null);
   const [piggyRequests, setPiggyRequests] = useState<any[]>([]);
   const [cycles, setCycles] = useState<any[]>([]);
 
@@ -75,10 +59,11 @@ export default function AllowanceScreen() {
   const [goalTitle, setGoalTitle] = useState<string>('');
   const [goalTargetAmount, setGoalTargetAmount] = useState<string>('');
 
-  // Formulário de Resgate (Piggy Request)
+  // Pedido para transferir parte da mesada para uma meta.
   const [piggyGoalId, setPiggyGoalId] = useState<string>('');
   const [piggyAmount, setPiggyAmount] = useState<string>('');
   const [piggyMessage, setPiggyMessage] = useState<string>('');
+  const [savingPiggy, setSavingPiggy] = useState(false);
 
   const formatCurrency = (val: number, currencyCode = 'BRL') => {
     return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: currencyCode }).format(val);
@@ -128,7 +113,18 @@ export default function AllowanceScreen() {
 
       setSettings(mySetting);
       setTransactions(rTrans?.data || []);
-      setGoals(rGoals?.data || []);
+      const freshGoals: any[] = rGoals?.data || [];
+      if (goalAmountsRef.current) {
+        const increased = freshGoals.find((goal) =>
+          goalAmountsRef.current!.has(goal.id) &&
+          Number(goal.current_amount || 0) > Number(goalAmountsRef.current!.get(goal.id) || 0)
+        );
+        if (increased) {
+          setCelebration({ id: Date.now(), kind: 'savings', message: `Dinheiro guardado em ${increased.title}!` });
+        }
+      }
+      goalAmountsRef.current = new Map(freshGoals.map((goal) => [goal.id, Number(goal.current_amount || 0)]));
+      setGoals(freshGoals);
       setCycle(rCyc?.data || null);
       setCycles((rCyclesAll?.data || []).filter((c: any) => String(c.child_id) === String(childId)));
 
@@ -208,8 +204,8 @@ export default function AllowanceScreen() {
         child_id: childProfile?.id,
       });
 
-      Alert.alert('Sucesso!', 'Nova meta criada com sucesso no seu cofrinho! 🎯');
       setShowGoalModal(false);
+      setCelebration({ id: Date.now(), kind: 'savings', message: 'Sua nova meta está pronta para guardar dinheiro!' });
       setGoalTitle('');
       setGoalTargetAmount('');
       loadData(true);
@@ -220,15 +216,16 @@ export default function AllowanceScreen() {
     }
   };
 
-  // Enviar Solicitação de Cofrinho (Retirada/Resgate)
+  // Enviar pedido de transferência da mesada para o cofrinho.
   const handleSubmitPiggyRequest = async () => {
+    if (savingPiggy) return;
     if (!piggyGoalId) {
-      Alert.alert('Aviso', 'Selecione a meta correspondente ao resgate.');
+      Alert.alert('Aviso', 'Selecione a meta em que deseja guardar dinheiro.');
       return;
     }
     const amount = parseFloat(piggyAmount);
     if (isNaN(amount) || amount <= 0) {
-      Alert.alert('Aviso', 'Informe um valor de resgate válido.');
+      Alert.alert('Aviso', 'Informe um valor válido para guardar.');
       return;
     }
     if (amount > Math.max(currentBalance, 0)) {
@@ -237,7 +234,7 @@ export default function AllowanceScreen() {
     }
 
     try {
-      setLoading(true);
+      setSavingPiggy(true);
       await api.post('/allowance/piggy-requests', {
         savings_goal_id: piggyGoalId,
         requested_amount: amount,
@@ -245,7 +242,7 @@ export default function AllowanceScreen() {
         child_id: childProfile?.id,
       });
 
-      Alert.alert('Sucesso!', 'Sua solicitação de retirada foi enviada para o seu responsável aprovar! 📤');
+      Alert.alert('Pedido enviado!', 'O valor será transferido da mesada para a meta quando seu responsável aprovar.');
       setPiggyGoalId('');
       setPiggyAmount('');
       setPiggyMessage('');
@@ -254,7 +251,7 @@ export default function AllowanceScreen() {
     } catch (err: any) {
       Alert.alert('Erro', err.message || 'Não foi possível enviar a solicitação.');
     } finally {
-      setLoading(false);
+      setSavingPiggy(false);
     }
   };
 
@@ -271,40 +268,10 @@ export default function AllowanceScreen() {
 
   return (
     <View style={styles.root}>
-      <StatusBar barStyle="light-content" />
+      <StatusBar barStyle="dark-content" />
 
       {/* ── HEADER ──────────────────────────────── */}
-      <LinearGradient
-        colors={[Colors.gradStart, Colors.gradMid, Colors.gradEnd]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={[styles.header, { paddingTop: 18 }]}
-      >
-        <TouchableOpacity style={styles.backBtnAbs} onPress={() => router.back()}>
-          <Text style={styles.backBtnText}>‹</Text>
-        </TouchableOpacity>
-
-        <View style={[styles.headerColumns, { minHeight: rowH }]}>
-          <View style={{ width: slotW, height: rowH }} />
-          <View style={[styles.headerTextCol, { minHeight: rowH }]}>
-            <Text style={styles.headerTitle}>Mesada & Cofrinho</Text>
-            <Text style={styles.headerSub}>Aprender, guardar e conquistar!</Text>
-          </View>
-        </View>
-
-        <Image
-          source={mesadaHeaderImg}
-          style={[
-            styles.headerHeroImg,
-            {
-              left: 10 + imgLeft,
-              width: imgDisplayW,
-              height: imgDisplayH,
-            },
-          ]}
-          resizeMode="contain"
-        />
-      </LinearGradient>
+      <ChildModuleHeader moduleId="mesada" title="Mesada" subtitle="Aprender, guardar e conquistar!" />
 
       {/* Abas */}
       <View style={styles.tabsContainer}>
@@ -324,7 +291,7 @@ export default function AllowanceScreen() {
           style={[styles.tabBtn, tab === 'piggy' && styles.tabBtnActive]}
           onPress={() => setTab('piggy')}
         >
-          <Text style={[styles.tabBtnText, tab === 'piggy' && styles.tabBtnTextActive]}>💾 Resgates</Text>
+          <Text style={[styles.tabBtnText, tab === 'piggy' && styles.tabBtnTextActive]}>🐷 Guardar</Text>
         </TouchableOpacity>
       </View>
 
@@ -459,26 +426,17 @@ export default function AllowanceScreen() {
             </View>
           )}
 
-          {/* ── ABA 3: RETIRADA E SOLICITAÇÕES ── */}
+          {/* ── ABA 3: TRANSFERÊNCIAS PARA O COFRINHO ── */}
           {tab === 'piggy' && (
             <View>
               {/* Form de solicitação */}
               <Card style={{ padding: 18, marginBottom: 20 }}>
-                <Text style={styles.sectionTitleInside}>💾 Pedir Retirada do Cofrinho</Text>
-                <Text style={styles.helpText}>Use seu saldo acumulado para comprar/pagar por uma de suas metas de poupança.</Text>
+                <Text style={styles.sectionTitleInside}>🐷 Guardar dinheiro no cofrinho</Text>
+                <Text style={styles.helpText}>Peça para transferir parte da sua mesada para uma meta. O valor só sai da mesada após aprovação.</Text>
 
                 <Text style={styles.label}>Qual a sua meta? *</Text>
                 <View style={{ marginBottom: 16 }}>
                   <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
-                    <TouchableOpacity
-                      style={[styles.goalPickerChip, piggyGoalId === '' && styles.goalPickerChipActive]}
-                      onPress={() => setPiggyGoalId('')}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={[styles.goalPickerChipText, piggyGoalId === '' && styles.goalPickerChipTextActive]}>
-                        Sem Meta (Livre)
-                      </Text>
-                    </TouchableOpacity>
                     {goals.filter((g: any) => g.status === 'active').map((g: any) => {
                       const active = piggyGoalId === g.id;
                       return (
@@ -497,7 +455,7 @@ export default function AllowanceScreen() {
                   </ScrollView>
                 </View>
 
-                <Text style={styles.label}>Valor do Resgate (R$) *</Text>
+                <Text style={styles.label}>Valor para guardar (R$) *</Text>
                 <TextInput
                   style={styles.input}
                   placeholder="Ex: 50.00"
@@ -510,7 +468,7 @@ export default function AllowanceScreen() {
                 <Text style={styles.label}>Recadinho para os pais (opcional)</Text>
                 <TextInput
                   style={[styles.textarea, { height: 60 }]}
-                  placeholder="Ex: Consegui juntar tudo e quero comprar meu videogame!"
+                  placeholder="Ex: Quero guardar para comprar meu jogo!"
                   placeholderTextColor={Colors.textMuted}
                   multiline
                   numberOfLines={2}
@@ -521,19 +479,20 @@ export default function AllowanceScreen() {
                 <TouchableOpacity 
                   style={styles.btnSubmit}
                   onPress={handleSubmitPiggyRequest}
+                  disabled={savingPiggy}
                   activeOpacity={0.8}
                 >
-                  <Text style={styles.btnSubmitText}>Enviar Solicitação 📤</Text>
+                  <Text style={styles.btnSubmitText}>{savingPiggy ? 'Enviando...' : 'Pedir para guardar 📤'}</Text>
                 </TouchableOpacity>
               </Card>
 
               {/* Lista de requisições */}
-              <Text style={styles.sectionTitle}>Minhas Solicitações de Retirada</Text>
+              <Text style={styles.sectionTitle}>Meus pedidos para guardar</Text>
               {piggyRequests.length === 0 ? (
                 <View style={styles.emptyState}>
                   <Text style={{ fontSize: 36, marginBottom: 8 }}>📤</Text>
                   <Text style={styles.emptyTextTitle}>Nenhum pedido enviado</Text>
-                  <Text style={styles.emptyTextSub}>Seus pedidos de resgate do cofrinho aparecerão aqui.</Text>
+                  <Text style={styles.emptyTextSub}>Seus pedidos para guardar dinheiro aparecerão aqui.</Text>
                 </View>
               ) : (
                 piggyRequests.map((r) => {
@@ -541,7 +500,7 @@ export default function AllowanceScreen() {
                   return (
                     <Card key={r.id} style={styles.requestCard}>
                       <View style={styles.flexBetweenRow}>
-                        <Text style={styles.requestGoal}>💾 {r.goal_title || 'Retirada'}</Text>
+                        <Text style={styles.requestGoal}>🐷 {r.goal_title || 'Cofrinho'}</Text>
                         <View style={[styles.statusBadge, { backgroundColor: badge.bg }]}>
                           <Text style={[styles.statusBadgeText, { color: badge.color }]}>{badge.label}</Text>
                         </View>
@@ -754,6 +713,7 @@ export default function AllowanceScreen() {
         </KeyboardAvoidingView>
       </Modal>
 
+      <ActionCelebration event={celebration} onFinish={() => setCelebration(null)} />
     </View>
   );
 }

@@ -1,6 +1,6 @@
 {
   "name": "familybase-mobile",
-  "version": "1.0.7",
+  "version": "1.0.14",
   "main": "expo-router/entry",
   "type": "module",
   "dependencies": {
@@ -11,6 +11,7 @@
     "@supabase/supabase-js": "^2.49.4",
     "babel-preset-expo": "^56.0.12",
     "expo": "~56.0.23",
+    "expo-clipboard": "~56.0.4",
     "expo-constants": "~56.0.15",
     "expo-dev-client": "~56.0.27",
     "expo-font": "~56.0.5",

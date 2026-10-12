@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useRef, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -11,16 +11,16 @@ import {
   Modal,
   TextInput,
   Switch,
-  Alert,
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
-import { useRouter } from 'expo-router';
-import { useAuth } from '../../src/contexts/AuthContext';
+import { useRouter, useFocusEffect } from 'expo-router';
+import { isRewardAvailable } from '../../src/lib/rewardStore';
 import { Colors, Radii, Shadow, FontSize } from '../../src/theme';
 import { Card } from '../../src/components/ui/Card';
 import { Badge } from '../../src/components/ui/Badge';
 import { ModuleHeader } from '../../src/components/ui/ModuleHeader';
+import { StoreDialog, type StoreDialogConfig } from '../../src/components/store/StoreDialog';
 import api from '../../src/services/api';
 
 export default function ParentStoreScreen() {
@@ -29,6 +29,11 @@ export default function ParentStoreScreen() {
   const [tab, setTab] = useState<'rewards' | 'redemptions'>('rewards');
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
+  const [busy, setBusy] = useState(false);
+  const [loadError, setLoadError] = useState('');
+  const [dialog, setDialog] = useState<StoreDialogConfig | null>(null);
+  const mutationRef = useRef(false);
+  const loadVersion = useRef(0);
 
   // Estados dos dados
   const [rewards, setRewards] = useState<any[]>([]);
@@ -44,29 +49,29 @@ export default function ParentStoreScreen() {
   const [rewardIcon, setRewardIcon] = useState<string>('🎁');
   const [rewardCost, setRewardCost] = useState<string>('');
   const [rewardIsActive, setRewardIsActive] = useState<boolean>(true);
+  const [rewardFormError, setRewardFormError] = useState('');
 
   const loadData = useCallback(async (isRefresh = false) => {
+    const version = ++loadVersion.current;
     try {
       if (!isRefresh) setLoading(true);
 
       const [rewardsRes, redemptionsRes] = await Promise.all([
-        api.get('/allowance/rewards/list').catch(() => ({ data: [] })),
-        api.get('/allowance/redemptions/list').catch(() => ({ data: [] })),
+        api.get('/allowance/rewards/list'),
+        api.get('/allowance/redemptions/list'),
       ]);
-
+      if (version !== loadVersion.current) return;
       setRewards(rewardsRes?.data || []);
       setRedemptions(redemptionsRes?.data || []);
-    } catch (err) {
-      console.error('[ParentStore] Erro ao carregar dados da loja:', err);
+      setLoadError('');
+    } catch (err: any) {
+      if (version === loadVersion.current) setLoadError(err.message || 'Não foi possível atualizar a loja.');
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (version === loadVersion.current) { setLoading(false); setRefreshing(false); }
     }
   }, []);
 
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
+  useFocusEffect(useCallback(() => { void loadData(); }, [loadData]));
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
@@ -75,42 +80,49 @@ export default function ParentStoreScreen() {
 
   // Abrir Modal de Criação
   const handleNewReward = () => {
+    if (mutationRef.current) return;
     setEditingReward(null);
     setRewardName('');
     setRewardDescription('');
     setRewardIcon('🎁');
     setRewardCost('100');
     setRewardIsActive(true);
+    setRewardFormError('');
     setShowRewardModal(true);
   };
 
   // Abrir Modal de Edição
   const handleEditReward = (reward: any) => {
+    if (mutationRef.current) return;
     setEditingReward(reward);
     setRewardName(reward.name || '');
     setRewardDescription(reward.description || '');
     setRewardIcon(reward.icon || '🎁');
-    setRewardCost(String(reward.point_cost || reward.points || '100'));
-    setRewardIsActive(reward.is_active !== false);
+    setRewardCost(String(reward.point_cost ?? reward.points ?? 100));
+    setRewardIsActive(isRewardAvailable(reward));
+    setRewardFormError('');
     setShowRewardModal(true);
   };
 
   // Salvar Recompensa (Nova ou Editada)
   const handleSaveReward = async () => {
+    if (mutationRef.current) return;
     if (!rewardName.trim() || !rewardCost.trim()) {
-      Alert.alert('Aviso', 'Preencha os campos obrigatórios.');
+      setRewardFormError('Preencha os campos obrigatórios.');
       return;
     }
-    const cost = parseInt(rewardCost, 10);
-    if (isNaN(cost) || cost <= 0) {
-      Alert.alert('Aviso', 'O custo em pontos deve ser um número maior que zero.');
+    const cost = Number(rewardCost);
+    if (!Number.isInteger(cost) || cost < 0 || cost > 2147483647) {
+      setRewardFormError('O custo deve ser um número inteiro de pontos, maior ou igual a zero.');
       return;
     }
 
+    mutationRef.current = true;
+    setBusy(true);
+    setRewardFormError('');
     try {
-      setLoading(true);
       const payload = {
-        name: rewardName,
+        name: rewardName.trim(),
         description: rewardDescription || null,
         icon: rewardIcon || '🎁',
         point_cost: cost,
@@ -120,84 +132,84 @@ export default function ParentStoreScreen() {
 
       if (editingReward?.id) {
         await api.put(`/allowance/rewards/${editingReward.id}`, payload);
-        Alert.alert('Sucesso!', 'Recompensa atualizada com sucesso!');
       } else {
         await api.post('/allowance/rewards', payload);
-        Alert.alert('Sucesso!', 'Nova recompensa criada com sucesso!');
       }
 
       setShowRewardModal(false);
-      loadData(true);
+      await loadData(true);
+      setDialog({ title: 'Sucesso!', message: editingReward?.id ? 'Recompensa atualizada com sucesso!' : 'Nova recompensa criada com sucesso!' });
     } catch (err: any) {
-      Alert.alert('Erro', err.message || 'Não foi possível salvar a recompensa.');
+      setRewardFormError(err.message || 'Não foi possível salvar a recompensa.');
     } finally {
-      setLoading(false);
+      mutationRef.current = false;
+      setBusy(false);
     }
   };
 
   // Deletar Recompensa
+  const deleteReward = async (rewardId: string) => {
+    if (mutationRef.current) return;
+    mutationRef.current = true;
+    setBusy(true);
+    try {
+      await api.delete(`/allowance/rewards/${rewardId}`);
+      await loadData(true);
+      setDialog({ title: 'Sucesso!', message: 'Recompensa excluída.' });
+    } catch (err: any) {
+      setDialog({ title: 'Erro', message: err.message || 'Não foi possível excluir a recompensa.' });
+    } finally {
+      mutationRef.current = false;
+      setBusy(false);
+    }
+  };
+
   const handleDeleteReward = (rewardId: string, rewardName: string) => {
-    Alert.alert(
-      'Confirmar Exclusão',
-      `Tem certeza que deseja excluir "${rewardName}" permanentemente?`,
-      [
-        { text: 'Cancelar', style: 'cancel' },
-        {
-          text: 'Excluir',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              setLoading(true);
-              await api.delete(`/allowance/rewards/${rewardId}`);
-              Alert.alert('Sucesso!', 'Recompensa excluída.');
-              loadData(true);
-            } catch (err: any) {
-              Alert.alert('Erro', err.message || 'Não foi possível excluir a recompensa.');
-            } finally {
-              setLoading(false);
-            }
-          },
-        },
-      ]
-    );
+    setDialog({
+      title: 'Confirmar Exclusão',
+      message: `Remover "${rewardName}" da loja? Os pedidos existentes e o histórico serão preservados.`,
+      confirmLabel: 'Excluir',
+      destructive: true,
+      onConfirm: () => { void deleteReward(rewardId); },
+    });
   };
 
   // Decidir sobre Resgate (Aprovar / Rejeitar)
+  const reviewRedemption = async (redemptionId: string, childName: string, approved: boolean) => {
+    if (mutationRef.current) return;
+    mutationRef.current = true;
+    setBusy(true);
+    try {
+      await api.put(`/allowance/redemptions/${redemptionId}/approve`, { approved });
+      await loadData(true);
+      setDialog({
+        title: approved ? 'Aprovado! ✓' : 'Recusado! ✕',
+        message: approved
+          ? `O resgate de ${childName} foi liberado. Estrelas foram deduzidas.`
+          : 'O pedido foi recusado e os pontos reservados foram liberados.',
+      });
+    } catch (err: any) {
+      setDialog({ title: 'Erro', message: err.message || 'Não foi possível processar a decisão.' });
+    } finally {
+      mutationRef.current = false;
+      setBusy(false);
+    }
+  };
+
   const handleReviewRedemption = (redemptionId: string, childName: string, rewardName: string, approved: boolean) => {
-    Alert.alert(
-      approved ? 'Aprovar Resgate' : 'Recusar Resgate',
-      `Deseja ${approved ? 'aprovar' : 'recusar'} o pedido de ${childName} para resgatar "${rewardName}"?`,
-      [
-        { text: 'Cancelar', style: 'cancel' },
-        {
-          text: approved ? 'Aprovar' : 'Recusar',
-          style: approved ? 'default' : 'destructive',
-          onPress: async () => {
-            try {
-              setLoading(true);
-              await api.put(`/allowance/redemptions/${redemptionId}/approve`, { approved });
-              Alert.alert(
-                approved ? 'Aprovado! ✓' : 'Recusado! ✕',
-                approved 
-                  ? `O resgate de ${childName} foi liberado. Estrelas foram deduzidas.` 
-                  : 'O pedido de resgate foi reprovado.'
-              );
-              loadData(true);
-            } catch (err: any) {
-              Alert.alert('Erro', err.message || 'Não foi possível processar a decisão.');
-            } finally {
-              setLoading(false);
-            }
-          },
-        },
-      ]
-    );
+    setDialog({
+      title: approved ? 'Aprovar Resgate' : 'Recusar Resgate',
+      message: `Deseja ${approved ? 'aprovar' : 'recusar'} o pedido de ${childName} para resgatar "${rewardName}"?`,
+      confirmLabel: approved ? 'Aprovar' : 'Recusar',
+      destructive: !approved,
+      onConfirm: () => { void reviewRedemption(redemptionId, childName, approved); },
+    });
   };
 
   const getStatusBadge = (status: string) => {
     switch (status) {
       case 'approved':
-        return { label: 'Entregue ✓', color: Colors.success, bg: '#d1fae5' };
+        return { label: 'Aprovado ✓', color: Colors.success, bg: '#d1fae5' };
       case 'rejected':
         return { label: 'Recusado ✕', color: Colors.danger, bg: '#fee2e2' };
       default:
@@ -210,7 +222,7 @@ export default function ParentStoreScreen() {
   }, [redemptions]);
 
   const historyRedemptions = useMemo(() => {
-    return redemptions.filter((r) => r.status !== 'pending').slice(0, 15);
+    return redemptions.filter((r) => r.status !== 'pending');
   }, [redemptions]);
 
   return (
@@ -231,7 +243,7 @@ export default function ParentStoreScreen() {
           style={[styles.tabBtn, tab === 'rewards' && styles.tabBtnActive]}
           onPress={() => setTab('rewards')}
         >
-          <Text style={[styles.tabBtnText, tab === 'rewards' && styles.tabBtnTextActive]}>🧸 Prêmios Ativos</Text>
+          <Text style={[styles.tabBtnText, tab === 'rewards' && styles.tabBtnTextActive]}>🧸 Prêmios</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.tabBtn, tab === 'redemptions' && styles.tabBtnActive]}
@@ -257,6 +269,8 @@ export default function ParentStoreScreen() {
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[Colors.primary]} />
           }
         >
+          {loadError ? <TouchableOpacity onPress={onRefresh} accessibilityRole="button"><Text style={{ color: Colors.danger, marginBottom: 12 }}>{loadError} Toque para tentar novamente.</Text></TouchableOpacity> : null}
+          {busy ? <ActivityIndicator color={Colors.primary} /> : null}
           {/* ── CARD INFORMATIVO ── */}
           <Card style={styles.infoCard} shadow="sm">
             <Text style={{ fontSize: 36, marginBottom: 8 }}>🎁</Text>
@@ -271,7 +285,7 @@ export default function ParentStoreScreen() {
             <View>
               <View style={styles.flexRowBetween}>
                 <Text style={styles.sectionTitle}>Prêmios Cadastrados</Text>
-                <TouchableOpacity style={styles.btnAction} onPress={handleNewReward}>
+                <TouchableOpacity disabled={busy} style={styles.btnAction} onPress={handleNewReward}>
                   <Text style={styles.btnActionText}>+ Novo Prêmio</Text>
                 </TouchableOpacity>
               </View>
@@ -290,24 +304,26 @@ export default function ParentStoreScreen() {
                       <View style={styles.flexRowBetween}>
                         <Text style={styles.rewardTitle}>{rew.name}</Text>
                         <Badge
-                          label={rew.is_active !== false ? 'Disponível' : 'Indisponível'}
-                          variant={rew.is_active !== false ? 'success' : 'primary'}
+                          label={isRewardAvailable(rew) ? 'Disponível' : 'Indisponível'}
+                          variant={isRewardAvailable(rew) ? 'success' : 'primary'}
                         />
                       </View>
                       {rew.description ? (
                         <Text style={styles.rewardDesc}>{rew.description}</Text>
                       ) : null}
-                      <Text style={styles.rewardCost}>⭐ {rew.point_cost ?? rew.points ?? 0} XP</Text>
+                      <Text style={styles.rewardCost}>⭐ {rew.point_cost ?? rew.points ?? 0} pontos</Text>
                       
                       <View style={styles.rewardActionsRow}>
                         <TouchableOpacity
                           style={styles.rewardEditBtn}
+                          disabled={busy}
                           onPress={() => handleEditReward(rew)}
                         >
                           <Text style={styles.rewardEditBtnText}>✏️ Editar</Text>
                         </TouchableOpacity>
                         <TouchableOpacity
                           style={styles.rewardDeleteBtn}
+                          disabled={busy}
                           onPress={() => handleDeleteReward(rew.id, rew.name)}
                         >
                           <Text style={styles.rewardDeleteBtnText}>✕ Excluir</Text>
@@ -337,7 +353,7 @@ export default function ParentStoreScreen() {
                     <View style={{ flex: 1 }}>
                       <View style={styles.flexRowBetween}>
                         <Text style={styles.redemptionReqTitle}>{r.reward_name}</Text>
-                        <Text style={styles.redemptionReqCost}>⭐ {r.reward_point_cost ?? r.point_cost} XP</Text>
+                        <Text style={styles.redemptionReqCost}>⭐ {r.point_cost} pontos</Text>
                       </View>
                       <Text style={styles.redemptionReqChild}>Solicitado por: <Text style={{ fontWeight: '800' }}>{r.child_name}</Text></Text>
                       <Text style={styles.redemptionReqDate}>Data do pedido: {new Date(r.created_at).toLocaleDateString('pt-BR')}</Text>
@@ -345,12 +361,14 @@ export default function ParentStoreScreen() {
                       <View style={styles.redemptionReqActions}>
                         <TouchableOpacity
                           style={[styles.btnReview, styles.btnApprove]}
+                          disabled={busy}
                           onPress={() => handleReviewRedemption(r.id, r.child_name, r.reward_name, true)}
                         >
                           <Text style={styles.btnReviewText}>Aprovar ✓</Text>
                         </TouchableOpacity>
                         <TouchableOpacity
                           style={[styles.btnReview, styles.btnReject]}
+                          disabled={busy}
                           onPress={() => handleReviewRedemption(r.id, r.child_name, r.reward_name, false)}
                         >
                           <Text style={[styles.btnReviewText, { color: Colors.danger }]}>Recusar ✕</Text>
@@ -381,7 +399,8 @@ export default function ParentStoreScreen() {
                           </View>
                         </View>
                         <Text style={styles.redemptionHistChild}>Filho: {r.child_name}</Text>
-                        <Text style={styles.redemptionHistCost}>Custo: ⭐ {r.reward_point_cost ?? r.point_cost} XP</Text>
+                        <Text style={styles.redemptionHistCost}>Custo: ⭐ {r.point_cost} pontos</Text>
+                        {r.reviewed_at ? <Text style={styles.redemptionReqDate}>Resolvido em: {new Date(r.reviewed_at).toLocaleString('pt-BR')}</Text> : null}
                       </View>
                     </Card>
                   );
@@ -399,7 +418,7 @@ export default function ParentStoreScreen() {
         visible={showRewardModal}
         transparent
         animationType="slide"
-        onRequestClose={() => setShowRewardModal(false)}
+        onRequestClose={() => { if (!busy) setShowRewardModal(false); }}
       >
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -410,7 +429,7 @@ export default function ParentStoreScreen() {
               <Text style={styles.modalTitle}>
                 {editingReward ? '✏️ Editar Prêmio' : '🎁 Novo Prêmio / Recompensa'}
               </Text>
-              <TouchableOpacity onPress={() => setShowRewardModal(false)} style={styles.modalCloseBtn}>
+              <TouchableOpacity disabled={busy} onPress={() => setShowRewardModal(false)} style={styles.modalCloseBtn}>
                 <Text style={styles.modalCloseText}>✕</Text>
               </TouchableOpacity>
             </View>
@@ -435,7 +454,7 @@ export default function ParentStoreScreen() {
                 onChangeText={setRewardName}
               />
 
-              <Text style={styles.label}>Custo em XP/Estrelas *</Text>
+              <Text style={styles.label}>Custo em pontos *</Text>
               <TextInput
                 style={styles.input}
                 placeholder="Ex: 150"
@@ -466,17 +485,22 @@ export default function ParentStoreScreen() {
                 />
               </View>
 
+              {rewardFormError ? <Text style={styles.formError} accessibilityRole="alert">{rewardFormError}</Text> : null}
+
               <TouchableOpacity 
                 style={styles.btnSubmitModal}
+                disabled={busy}
                 onPress={handleSaveReward}
                 activeOpacity={0.8}
               >
-                <Text style={styles.btnSubmitModalText}>Salvar Recompensa 🚀</Text>
+                <Text style={styles.btnSubmitModalText}>{busy ? 'Salvando...' : 'Salvar Recompensa 🚀'}</Text>
               </TouchableOpacity>
             </ScrollView>
           </View>
         </KeyboardAvoidingView>
       </Modal>
+
+      <StoreDialog dialog={dialog} onClose={() => setDialog(null)} />
 
     </View>
   );
@@ -892,6 +916,12 @@ const styles = StyleSheet.create({
     fontSize: FontSize.xs,
     fontWeight: '700',
     color: Colors.text,
+  },
+  formError: {
+    color: Colors.danger,
+    fontSize: FontSize.xs,
+    fontWeight: '700',
+    marginBottom: 12,
   },
   btnSubmitModal: {
     backgroundColor: Colors.primary,

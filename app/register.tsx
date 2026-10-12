@@ -1,441 +1,149 @@
-import { useState, ComponentProps, type ReactNode } from 'react';
-import {
-  View, Text, TextInput, TouchableOpacity, Image,
-  StyleSheet, KeyboardAvoidingView, Platform,
-  Alert, ScrollView, StatusBar,
-} from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { Ionicons } from '@expo/vector-icons';
+import { useEffect, useRef, useState, type ComponentProps } from 'react';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, KeyboardAvoidingView, Platform, Linking } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as ExpoLinking from 'expo-linking';
 import { useRouter } from 'expo-router';
-import * as ImagePicker from 'expo-image-picker';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../src/contexts/AuthContext';
-import { Colors, Radii, Shadow, FontSize } from '../src/theme';
-import { PrimaryButton } from '../src/components/ui/PrimaryButton';
+import { useAppSettings } from '../src/contexts/AppSettingsContext';
+import { supabase } from '../src/lib/supabase';
+import { maskPhone, normalizeEmail } from '../src/lib/familyIdentity';
+import { resendSignupConfirmation, confirmSignupCode } from '../src/lib/legacyFamilyAuth';
+import { EMPTY_REGISTRATION, REGISTRATION_STEPS, registrationFromUser, registrationStepErrors, restoreRegistrationDraft, safeRegistrationDraft, validateSimulationCode } from '../src/lib/familyRegistration';
+import { CatalogAvatarChoice } from '../src/components/auth/CatalogAvatarChoice';
+import { BirthDatePicker } from '../src/components/auth/BirthDatePicker';
 import { AppLogo } from '../src/components/ui/AppLogo';
-import {
-  isBiometricSupported,
-  getBiometricLabel,
-  enableBiometricLogin,
-  runBiometricPrompt,
-} from '../src/lib/biometrics';
+import { PrimaryButton } from '../src/components/ui/PrimaryButton';
+import { Colors } from '../src/theme';
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-interface AvatarPick {
-  uri: string;
-  base64: string;
-  ext: string;
-}
-
-type IonName = ComponentProps<typeof Ionicons>['name'];
-
-function toISODate(masked: string): string | null {
-  const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(masked.trim());
-  if (!m) return null;
-  const [, dd, mm, yyyy] = m;
-  const d = Number(dd), mo = Number(mm), y = Number(yyyy);
-  if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
-  const date = new Date(y, mo - 1, d);
-  if (date.getFullYear() !== y || date.getMonth() !== mo - 1 || date.getDate() !== d) return null;
-  return `${yyyy}-${mm}-${dd}`;
-}
-
-function yearsSince(iso: string): number {
-  const dob = new Date(iso);
-  const now = new Date();
-  let age = now.getFullYear() - dob.getFullYear();
-  const m = now.getMonth() - dob.getMonth();
-  if (m < 0 || (m === 0 && now.getDate() < dob.getDate())) age--;
-  return age;
-}
-
-function maskDate(input: string): string {
-  const digits = input.replace(/\D/g, '').slice(0, 8);
-  const p1 = digits.slice(0, 2);
-  const p2 = digits.slice(2, 4);
-  const p3 = digits.slice(4, 8);
-  let out = p1;
-  if (p2) out += '/' + p2;
-  if (p3) out += '/' + p3;
-  return out;
-}
-
+const DRAFT_KEY = 'family-registration-draft-v1';
+type Form = typeof EMPTY_REGISTRATION;
 export default function RegisterScreen() {
   const router = useRouter();
-  const { register } = useAuth();
-
-  const [familyName, setFamilyName] = useState('');
-  const [profileType, setProfileType] = useState<'pai' | 'mae'>('pai');
-  const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [confirm, setConfirm] = useState('');
-  const [phone, setPhone] = useState('');
-  const [address, setAddress] = useState('');
-  const [birth, setBirth] = useState('');
-  const [avatar, setAvatar] = useState<AvatarPick | null>(null);
+  const { register, user, refreshProfile } = useAuth();
+  const { settings } = useAppSettings();
+  const [form, setForm] = useState<Form>(EMPTY_REGISTRATION);
+  const [step, setStep] = useState(0);
+  const [ready, setReady] = useState(false);
+  const [errors, setErrors] = useState<Record<string,string>>({});
   const [accepted, setAccepted] = useState(false);
-  const [showPass, setShowPass] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-
-  async function pickAvatar() {
-    try {
-      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!perm.granted) {
-        Alert.alert('Permissão necessária', 'Autorize o acesso às fotos para escolher um avatar.');
-        return;
-      }
-      const res = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ['images'],
-        allowsEditing: true,
-        aspect: [1, 1],
-        quality: 0.5,
-        base64: true,
-      });
-      if (res.canceled || !res.assets?.[0]) return;
-      const asset = res.assets[0];
-      if (!asset.base64) {
-        Alert.alert('Erro', 'Não foi possível processar a imagem. Tente outra.');
-        return;
-      }
-      const ext = (asset.uri.split('.').pop() || 'jpg').toLowerCase().includes('png') ? 'png' : 'jpg';
-      setAvatar({ uri: asset.uri, base64: asset.base64, ext });
-    } catch {
-      Alert.alert('Erro', 'Não foi possível abrir a galeria.');
+  const [showPassword, setShowPassword] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [code, setCode] = useState('');
+  const [confirmationCode,setConfirmationCode]=useState('');
+  const [pendingEmail,setPendingEmail]=useState('');
+  const [verified, setVerified] = useState(false);
+  const [passwordSet, setPasswordSet] = useState(false);
+  const [resendUntil, setResendUntil] = useState(0);
+  const [now, setNow] = useState(() => Date.now());
+  const [simulation,setSimulation]=useState(false);
+  const [simulationDone,setSimulationDone]=useState(false);
+  const submitting = useRef(false);
+  const restoredUser = useRef<string | null>(null);
+  const inputRef = useRef<TextInput>(null);
+  const scrollRef = useRef<ScrollView>(null);
+  useEffect(() => {
+    let active = true;
+    AsyncStorage.getItem(DRAFT_KEY).then(raw => {
+      if (!active) return;
+      const draft = restoreRegistrationDraft(raw ? JSON.parse(raw) : null);
+      if (draft) { setForm(draft.form); setStep(Math.min(3,draft.step)); }
+    }).catch(() => {}).finally(() => { if (active) setReady(true); });
+    return () => { active = false; };
+  }, []);
+  useEffect(() => {
+    if (simulation || !ready || !user?.id || user.family_id || restoredUser.current === user.id) return;
+    let active = true;
+    supabase.auth.getUser().then(({ data }) => {
+      if (!active || !data.user?.email_confirmed_at) return;
+      restoredUser.current = data.user.id;
+      const fromUser = registrationFromUser(data.user);
+      const pw = !!data.user.user_metadata.registration_password_set || data.user.user_metadata.registration_version === 2 || !!data.user.user_metadata.legacy_registration;
+      setForm(p => normalizeEmail(p.email) === fromUser.email ? { ...fromUser,...p,email:fromUser.email } : fromUser);
+      setVerified(true); setPasswordSet(pw); setStep(p => Math.max(pw ? 5 : 4,p));
+    });
+    return () => { active = false; };
+  }, [ready,user?.id,user?.family_id,simulation]);
+  useEffect(() => {
+    if (ready) void AsyncStorage.setItem(DRAFT_KEY,JSON.stringify(safeRegistrationDraft(form,step,verified,passwordSet))).catch(() => {});
+  }, [form,step,ready,verified,passwordSet]);
+  useEffect(() => {
+    if(!pendingEmail || !resendUntil) return;
+    const timer=setInterval(() => {const time=Date.now();setNow(time);if(time>=resendUntil) clearInterval(timer);},1000);
+    return () => clearInterval(timer);
+  },[pendingEmail,resendUntil]);
+  useEffect(() => { setErrors({}); scrollRef.current?.scrollTo({ y:0,animated:true }); inputRef.current?.focus(); }, [step]);
+  const update = (key: keyof Form,value: string) => { setForm(p => ({ ...p,[key]:value })); if(key==='email'){setVerified(false);setCode('');} setErrors({}); };
+  const wait = Math.max(0,Math.ceil((resendUntil-now)/1000));
+  const current = REGISTRATION_STEPS[step];
+  const run = async (task: () => Promise<void>) => {
+    if (submitting.current) return;
+    submitting.current = true; setBusy(true); setErrors({});
+    try { await task(); }
+    catch (error) { setErrors({ submit:(error as Error).message || 'Não foi possível continuar. Tente novamente.' }); }
+    finally { submitting.current = false; setBusy(false); }
+  };
+  const resend = () => run(async () => { await resendSignupConfirmation(supabase,pendingEmail,ExpoLinking.createURL('/auth-confirm')); const time=Date.now();setNow(time);setResendUntil(time+60000); });
+  const confirmEmail = () => run(async () => {
+    await confirmSignupCode(supabase,pendingEmail,confirmationCode);
+    setConfirmationCode('');
+    await refreshProfile();
+  });
+  const next = () => {
+    if (busy) return;
+    const invalid = registrationStepErrors(form,current.id);
+    if (Object.keys(invalid).length) { setErrors(invalid); return; }
+    if (current.id==='email') { setStep(verified ? 4:3); return; }
+    if (current.id==='verification') { void run(async () => { if (simulation) validateSimulationCode(code); else if(normalizeEmail(code)!==normalizeEmail(form.email)) throw new Error('Os e-mails não coincidem. Digite novamente seu e-mail.'); setVerified(true); setCode(''); setStep(4); }); return; }
+    if (current.id==='password') { setPasswordSet(true); setStep(5); return; }
+    if (current.id==='terms') {
+      if (!accepted) { setErrors({ accepted:'Aceite os Termos de Uso e a Política de Privacidade.' }); return; }
+      if (!verified || !passwordSet) { setErrors({ submit:'Confirme seu e-mail e defina a senha antes de concluir.' }); return; }
+      void run(async () => {
+        if (simulation) setSimulationDone(true);
+        else { const result=await register({ ...form,profileType:form.profileType as 'pai' | 'mae',accepted:true }); if(result.status==='confirmation_required'){setPendingEmail(form.email);const time=Date.now();setNow(time);setResendUntil(time+60000);} }
+        setForm(p=>({...p,password:'',confirmPassword:''})); await AsyncStorage.removeItem(DRAFT_KEY);
+      }); return;
     }
-  }
-
-  function validate(): string | null {
-    if (!familyName.trim()) return 'Informe o nome da família.';
-    if (!name.trim()) return 'Informe o nome do responsável.';
-    const em = email.trim().toLowerCase();
-    if (!EMAIL_RE.test(em)) return 'Informe um email válido.';
-    if (password.length < 6) return 'A senha deve ter no mínimo 6 caracteres.';
-    if (password !== confirm) return 'As senhas não coincidem.';
-    if (!birth.trim()) return 'Informe a data de nascimento do responsável.';
-    const iso = toISODate(birth);
-    if (!iso) return 'Data de nascimento inválida (use DD/MM/AAAA).';
-    if (yearsSince(iso) < 18) return 'O responsável principal deve ter pelo menos 18 anos.';
-    if (!accepted) return 'É necessário aceitar os termos e a política de privacidade.';
-    return null;
-  }
-
-  async function offerBiometric(em: string, pw: string) {
-    try {
-      const supported = await isBiometricSupported();
-      if (!supported) return;
-      const label = await getBiometricLabel();
-      Alert.alert(
-        `Ativar ${label}?`,
-        `Use o ${label} para entrar mais rápido e com segurança nas próximas vezes.`,
-        [
-          { text: 'Agora não', style: 'cancel' },
-          {
-            text: 'Ativar',
-            onPress: async () => {
-              const ok = await runBiometricPrompt(`Ativar ${label}`);
-              if (ok) {
-                await enableBiometricLogin({ email: em, password: pw });
-                Alert.alert('Pronto', `${label} ativado para este aparelho.`);
-              }
-            },
-          },
-        ],
-      );
-    } catch { /* noop */ }
-  }
-
-  async function handleSubmit() {
-    const err = validate();
-    if (err) {
-      Alert.alert('Verifique o cadastro', err);
-      return;
-    }
-    const em = email.trim().toLowerCase();
-    const iso = toISODate(birth)!;
-    try {
-      setSubmitting(true);
-      await register({
-        familyName: familyName.trim(),
-        name: name.trim(),
-        email: em,
-        password,
-        profileType,
-        phone: phone.trim() || undefined,
-        address: address.trim() || undefined,
-        dateOfBirth: iso,
-        avatarBase64: avatar?.base64 || null,
-        avatarExt: avatar?.ext,
-      });
-      await offerBiometric(em, password);
-    } catch (e) {
-      Alert.alert('Erro no cadastro', (e as Error)?.message || 'Tente novamente.');
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  return (
-    <KeyboardAvoidingView
-      style={styles.root}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
-      <StatusBar barStyle="light-content" />
-      <ScrollView bounces={false} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-
-        <LinearGradient
-          colors={[Colors.gradStart, Colors.gradMid, Colors.gradEnd]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={styles.hero}
-        >
-          <TouchableOpacity style={styles.backBtn} onPress={() => router.back()} accessibilityLabel="Voltar">
-            <Ionicons name="chevron-back" size={22} color="#fff" />
-          </TouchableOpacity>
-          <AppLogo size={92} containerStyle={{ marginBottom: 8 }} />
-          <Text style={styles.heroTitle}>Nova família</Text>
-          <Text style={styles.heroSub}>Cadastro do responsável principal · 7 dias grátis</Text>
-        </LinearGradient>
-
-        <View style={styles.panel}>
-          <TouchableOpacity style={styles.avatarPick} onPress={pickAvatar} activeOpacity={0.85}>
-            {avatar ? (
-              <Image source={{ uri: avatar.uri }} style={styles.avatarImg} />
-            ) : (
-              <View style={styles.avatarPlaceholder}>
-                <Ionicons name="camera-outline" size={28} color={Colors.primary} />
-              </View>
-            )}
-            <Text style={styles.avatarHint}>{avatar ? 'Alterar foto' : 'Adicionar foto (opcional)'}</Text>
-          </TouchableOpacity>
-
-          <Label text="Nome da família" required />
-          <Field icon="people-outline" value={familyName} onChangeText={setFamilyName} placeholder="Ex: Família Silva" editable={!submitting} />
-
-          <Label text="Perfil do responsável" required />
-          <View style={styles.segment}>
-            {([
-              ['pai', 'Pai', 'man-outline'],
-              ['mae', 'Mãe', 'woman-outline'],
-            ] as const).map(([val, lbl, icon]) => (
-              <TouchableOpacity
-                key={val}
-                style={[styles.segmentBtn, profileType === val && styles.segmentBtnActive]}
-                onPress={() => setProfileType(val)}
-                disabled={submitting}
-              >
-                <Ionicons
-                  name={icon}
-                  size={18}
-                  color={profileType === val ? Colors.primary : Colors.textSecondary}
-                />
-                <Text style={[styles.segmentText, profileType === val && styles.segmentTextActive]}>{lbl}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-          <Text style={styles.helper}>O responsável principal é o gestor da família (financeiro e administração).</Text>
-
-          <Label text="Nome do responsável" required />
-          <Field icon="person-outline" value={name} onChangeText={setName} placeholder="Seu nome completo" editable={!submitting} />
-
-          <Label text="Email" required />
-          <Field
-            icon="mail-outline" value={email} onChangeText={setEmail} placeholder="seu@email.com"
-            keyboardType="email-address" autoCapitalize="none" editable={!submitting}
-          />
-
-          <Label text="Senha" required />
-          <Field
-            icon="lock-closed-outline"
-            value={password}
-            onChangeText={setPassword}
-            placeholder="Mínimo 6 caracteres"
-            secureTextEntry={!showPass}
-            editable={!submitting}
-            trailing={
-              <TouchableOpacity onPress={() => setShowPass(!showPass)} hitSlop={8}>
-                <Ionicons name={showPass ? 'eye-off-outline' : 'eye-outline'} size={20} color={Colors.textMuted} />
-              </TouchableOpacity>
-            }
-          />
-
-          <Label text="Confirmar senha" required />
-          <Field
-            icon="lock-closed-outline" value={confirm} onChangeText={setConfirm} placeholder="Repita a senha"
-            secureTextEntry={!showPass} editable={!submitting}
-          />
-
-          <Label text="Telefone" optional />
-          <Field
-            icon="call-outline" value={phone} onChangeText={setPhone} placeholder="(00) 00000-0000"
-            keyboardType="phone-pad" editable={!submitting}
-          />
-
-          <Label text="Endereço" optional />
-          <Field icon="location-outline" value={address} onChangeText={setAddress} placeholder="Rua, número, cidade" editable={!submitting} />
-
-          <Label text="Data de nascimento" required />
-          <Field
-            icon="calendar-outline" value={birth} onChangeText={(t) => setBirth(maskDate(t))} placeholder="DD/MM/AAAA"
-            keyboardType="number-pad" editable={!submitting}
-          />
-
-          <TouchableOpacity style={styles.termsRow} onPress={() => setAccepted((v) => !v)} activeOpacity={0.8}>
-            <View style={[styles.checkbox, accepted && styles.checkboxOn]}>
-              {accepted && <Ionicons name="checkmark" size={14} color="#fff" />}
-            </View>
-            <Text style={styles.termsText}>
-              Li e aceito os <Text style={styles.termsLink}>Termos de Uso</Text> e a{' '}
-              <Text style={styles.termsLink}>Política de Privacidade</Text>.
-            </Text>
-          </TouchableOpacity>
-
-          <View style={styles.trialCallout}>
-            <View style={styles.trialIconWrap}>
-              <Ionicons name="sparkles-outline" size={18} color={Colors.primary} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.trialTitle}>Teste grátis de 7 dias</Text>
-              <Text style={styles.trialText}>
-                Toda a família usa o mesmo plano. Contas de crianças são criadas depois pelo gestor no painel.
-              </Text>
-            </View>
-          </View>
-
-          <PrimaryButton
-            label="Criar família"
-            onPress={handleSubmit}
-            loading={submitting}
-            style={{ marginTop: 8 }}
-          />
-
-          <TouchableOpacity style={styles.loginLink} onPress={() => router.replace('/login')} disabled={submitting}>
-            <Text style={styles.loginLinkText}>Já tem conta? <Text style={styles.loginLinkStrong}>Entrar</Text></Text>
-          </TouchableOpacity>
-        </View>
-      </ScrollView>
-    </KeyboardAvoidingView>
-  );
+    setStep(s => s+1);
+  };
+  const field = (key: keyof Form,label: string,props: ComponentProps<typeof TextInput> = {}) => <View style={s.group}><Text style={s.label}>{label}</Text>
+    <TextInput ref={key==='confirmPassword' ? undefined:inputRef} accessibilityLabel={label} value={form[key]} onChangeText={v => update(key,v)} editable={!busy} style={[s.input,errors[key] ? s.invalid:null]} placeholderTextColor={Colors.textMuted} returnKeyType="next" onSubmitEditing={next} {...props} />
+    {!!errors[key] && <Text style={s.error} accessibilityRole="alert">{errors[key]}</Text>}
+  </View>;
+  return <KeyboardAvoidingView style={s.root} behavior={Platform.OS === 'ios' ? 'padding':undefined}>
+    <ScrollView ref={scrollRef} keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom:36 }}>
+      <LinearGradient colors={[Colors.gradStart,Colors.gradEnd]} style={s.hero}><AppLogo size={64} /><Text style={s.title}>Vamos criar sua família</Text><Text style={s.subtitle}>Um passo de cada vez · 7 dias grátis</Text></LinearGradient>
+      <View style={s.card}>
+        {__DEV__ && <PrimaryButton variant="ghost" disabled={busy} label={simulation ? 'Sair da simulação':'Simular cadastro para teste'} onPress={() => { setSimulation(v => !v); setStep(0); setVerified(false); setPasswordSet(false); setSimulationDone(false); setAccepted(false); setCode(''); }} />}
+        {simulation && <Text style={[s.hint,{ backgroundColor:Colors.primaryLighter,padding:12,borderRadius:12,marginBottom:16 }]}>Modo de teste · qualquer código numérico · nenhuma conta será gravada</Text>}
+        {pendingEmail ? <View style={{gap:16}}><Text style={s.prompt}>Confirme seu cadastro</Text><Text style={s.hint}>Confira a caixa de entrada e o spam de {pendingEmail}. Digite o código recebido para confirmar seu e-mail e concluir a criação da família.</Text><TextInput accessibilityLabel="Código de confirmação" placeholder="Código do e-mail" keyboardType="number-pad" autoComplete="one-time-code" textContentType="oneTimeCode" maxLength={10} value={confirmationCode} onChangeText={v=>setConfirmationCode(v.replace(/\D/g,''))} editable={!busy} style={s.input} /><PrimaryButton label="Confirmar cadastro" disabled={busy || !/^\d{6,10}$/.test(confirmationCode)} loading={busy} onPress={() => {void confirmEmail();}} /><Text style={s.hint}>Se a mensagem tiver um link, abra-o e depois entre com seu e-mail e senha. Se já possui uma conta, use Entrar.</Text><PrimaryButton variant="ghost" label={wait ? `Reenviar em ${wait}s`:'Reenviar confirmação'} disabled={busy || wait>0} onPress={() => {void resend();}} />{!!errors.submit && <Text style={s.error} accessibilityRole="alert">{errors.submit}</Text>}</View> : simulationDone ? <View style={{ gap:16 }}><Text style={s.prompt}>Simulação concluída!</Text><Text style={s.hint}>{form.familyName} está pronta na prévia do cadastro, com {form.name} como responsável.</Text><Text style={s.hint}>No cadastro real, a confirmação usa o código ou link recebido por e-mail.</Text><PrimaryButton label="Testar novamente" onPress={() => { setSimulationDone(false); setStep(0); setForm(EMPTY_REGISTRATION); setVerified(false); setPasswordSet(false); setAccepted(false); }} /></View> : <><View style={s.track} accessible accessibilityLabel={`Passo ${step+1} de 10`}><View style={[s.progress,{ width:`${(step+1)*10}%` }]} /></View><Text style={s.counter}>Passo {step+1} de 10</Text>
+        <View style={s.question}><Text accessibilityRole="header" style={s.prompt}>{current.prompt}</Text><Text style={s.hint}>{current.id==='verification' && !simulation ? 'Repita seu e-mail para evitar erros. Você receberá um código ao concluir o cadastro.':current.hint}</Text></View>
+        {current.id==='profileType' && <View style={s.choices}>{(['pai','mae'] as const).map(id => <TouchableOpacity key={id} disabled={busy || !ready} onPress={() => { update('profileType',id); setStep(1); }} accessibilityRole="radio" accessibilityState={{ selected:form.profileType===id }} style={[s.choice,form.profileType===id && s.selected]}><Text style={{ fontSize:44 }}>{id==='pai' ? '👨':'👩'}</Text><Text style={s.choiceText}>{id==='pai' ? 'Pai':'Mãe'}</Text></TouchableOpacity>)}</View>}
+        {current.id==='familyName' && field('familyName','Nome da família',{ placeholder:'Ex: Família Silva',autoComplete:'organization',maxLength:80 })}
+        {current.id==='name' && field('name','Nome completo',{ placeholder:'Seu nome e sobrenome',autoComplete:'name',maxLength:160 })}
+        {current.id==='email' && field('email','E-mail pessoal',{ placeholder:'seu@email.com',keyboardType:'email-address',autoCapitalize:'none',autoComplete:'email',editable:!busy })}
+        {current.id==='verification' && <><Text style={s.hint}>{simulation ? 'No teste, use qualquer número para':'Confira'} <Text style={{ fontWeight:'700' }}>{form.email}</Text></Text><Text style={s.label}>{simulation ? 'Código de confirmação':'Confirmar e-mail'}</Text><TextInput ref={inputRef} accessibilityLabel={simulation ? 'Código de confirmação':'Confirmar e-mail'} keyboardType={simulation ? 'number-pad':'email-address'} autoComplete={simulation ? 'one-time-code':'email'} autoCapitalize="none" editable={!busy} maxLength={simulation ? 10:254} value={code} onChangeText={v => setCode(simulation ? v.replace(/\D/g,''):v)} style={simulation ? [s.input,{fontSize:24,textAlign:'center',letterSpacing:4}]:s.input} /></>}
+        {current.id==='password' && <>{field('password','Senha',{ placeholder:'Pelo menos 6 caracteres',secureTextEntry:!showPassword,autoCapitalize:'none',autoComplete:'new-password' })}{field('confirmPassword','Confirmar senha',{ placeholder:'Repita sua senha',secureTextEntry:!showPassword,autoCapitalize:'none',autoComplete:'new-password' })}<TouchableOpacity disabled={busy} onPress={() => setShowPassword(v => !v)}><Text style={s.link}>{showPassword ? 'Ocultar senhas':'Mostrar senhas'}</Text></TouchableOpacity></>}
+        {current.id==='phone' && field('phone','Telefone com DDD',{ placeholder:'(11) 99999-9999',keyboardType:'phone-pad',autoComplete:'tel',onChangeText:v => update('phone',maskPhone(v)) })}
+        {current.id==='dateOfBirth' && <><Text style={s.label}>Data de nascimento</Text><BirthDatePicker value={form.dateOfBirth} onChange={v => update('dateOfBirth',v)} disabled={busy} />{!!errors.dateOfBirth && <Text style={s.error} accessibilityRole="alert">{errors.dateOfBirth}</Text>}</>}
+        {current.id==='avatarPreset' && <><CatalogAvatarChoice showcase value={form.avatarPreset} onChange={id => update('avatarPreset',id)} disabled={busy} />{!!errors.avatarPreset && <Text style={s.error} accessibilityRole="alert">{errors.avatarPreset}</Text>}</>}
+        {current.id==='terms' && <><View style={s.review}>{[['Família',form.familyName],['Responsável',`${form.name} · ${form.profileType==='pai' ? 'Pai':'Mãe'}`],['E-mail de acesso',form.email],['Telefone',form.phone],['Nascimento',form.dateOfBirth.split('-').reverse().join('/')]].map(([label,value]) => <View key={label}><Text style={s.reviewLabel}>{label}</Text><Text style={s.reviewValue}>{value}</Text></View>)}</View>
+          <View style={{ flexDirection:'row',flexWrap:'wrap',gap:16 }}>{[{ label:'Termos de Uso',url:settings.terms_url },{ label:'Política de Privacidade',url:settings.privacy_url }].filter(item => item.url).map(item => <TouchableOpacity key={item.label} accessibilityRole="link" onPress={() => { void Linking.openURL(item.url).catch(() => setErrors({ submit:'Não foi possível abrir o documento. Tente novamente.' })); }}><Text style={s.link}>{item.label}</Text></TouchableOpacity>)}</View>
+          <TouchableOpacity disabled={busy} style={s.terms} onPress={() => setAccepted(v => !v)} accessibilityRole="checkbox" accessibilityState={{ checked:accepted }}><Text style={s.checkbox}>{accepted ? '☑':'☐'}</Text><Text style={s.hint}>Li e aceito os Termos de Uso e a Política de Privacidade.</Text></TouchableOpacity>{!!errors.accepted && <Text style={s.error} accessibilityRole="alert">{errors.accepted}</Text>}</>}
+        {!!errors.submit && <Text style={s.error} accessibilityRole="alert">{errors.submit}</Text>}
+        {step>0 && <PrimaryButton label={current.id==='terms' ? 'Criar minha família' : current.id==='verification' ? 'Confirmar e-mail':'Continuar'} onPress={next} loading={busy} disabled={!ready} style={{ marginTop:16 }} />}
+        {step>0 && <PrimaryButton variant="ghost" label="← Voltar" disabled={busy} onPress={() => setStep(p => p-1)} />}
+        </>}<TouchableOpacity disabled={busy} onPress={() => router.replace('/login')} style={{ padding:16 }}><Text style={s.login}>Já tem conta? Entrar</Text></TouchableOpacity>
+      </View>
+    </ScrollView>
+  </KeyboardAvoidingView>;
 }
-
-function Label({ text, required, optional }: { text: string; required?: boolean; optional?: boolean }) {
-  return (
-    <Text style={styles.label}>
-      {text}
-      {required ? ' *' : ''}
-      {optional ? <Text style={styles.labelOptional}> (opcional)</Text> : null}
-    </Text>
-  );
-}
-
-function Field(
-  props: ComponentProps<typeof TextInput> & {
-    icon: IonName;
-    trailing?: ReactNode;
-  },
-) {
-  const { icon, trailing, style, ...rest } = props;
-  return (
-    <View style={styles.inputWrap}>
-      <Ionicons name={icon} size={18} color={Colors.textMuted} />
-      <TextInput
-        style={[styles.input, style]}
-        placeholderTextColor={Colors.textMuted}
-        {...rest}
-      />
-      {trailing}
-    </View>
-  );
-}
-
-const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: Colors.bg },
-
-  hero: {
-    paddingTop: 56,
-    paddingBottom: 36,
-    alignItems: 'center',
-    borderBottomLeftRadius: 32,
-    borderBottomRightRadius: 32,
-  },
-  backBtn: {
-    position: 'absolute', top: 52, left: 16,
-    width: 38, height: 38, borderRadius: 19,
-    backgroundColor: 'rgba(255,255,255,0.18)',
-    justifyContent: 'center', alignItems: 'center',
-  },
-  heroTitle: { fontSize: FontSize.xl, fontWeight: '900', color: '#fff', letterSpacing: -0.3 },
-  heroSub: {
-    fontSize: FontSize.sm, color: 'rgba(255,255,255,0.92)',
-    textAlign: 'center', marginTop: 6, paddingHorizontal: 28,
-  },
-
-  panel: {
-    marginTop: -18,
-    backgroundColor: Colors.surface,
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    paddingHorizontal: 22,
-    paddingTop: 22,
-    paddingBottom: 44,
-    ...Shadow.lg,
-    shadowOffset: { width: 0, height: -4 },
-  },
-
-  avatarPick: { alignItems: 'center', marginBottom: 12 },
-  avatarImg: { width: 84, height: 84, borderRadius: 42, borderWidth: 2, borderColor: Colors.primaryLighter },
-  avatarPlaceholder: {
-    width: 84, height: 84, borderRadius: 42,
-    backgroundColor: Colors.bg, borderWidth: 1.5, borderColor: Colors.border,
-    justifyContent: 'center', alignItems: 'center',
-  },
-  avatarHint: { marginTop: 6, fontSize: FontSize.xs, color: Colors.primary, fontWeight: '700' },
-
-  label: { fontSize: FontSize.xs + 1, fontWeight: '800', color: Colors.text, marginTop: 14, marginBottom: 6 },
-  labelOptional: { fontWeight: '600', color: Colors.textMuted },
-  helper: { fontSize: FontSize.xs, color: Colors.textMuted, marginTop: 6, lineHeight: 16 },
-
-  inputWrap: {
-    flexDirection: 'row', alignItems: 'center',
-    backgroundColor: Colors.bg, borderRadius: Radii.md,
-    borderWidth: 1, borderColor: Colors.border,
-    paddingHorizontal: 14, paddingVertical: Platform.OS === 'ios' ? 13 : 8,
-    gap: 10,
-  },
-  input: { flex: 1, fontSize: FontSize.base, color: Colors.text },
-
-  segment: { flexDirection: 'row', gap: 10 },
-  segmentBtn: {
-    flex: 1, paddingVertical: 12, borderRadius: Radii.md,
-    borderWidth: 1, borderColor: Colors.border, backgroundColor: Colors.bg,
-    alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8,
-  },
-  segmentBtnActive: { borderColor: Colors.primary, backgroundColor: Colors.primaryLighter },
-  segmentText: { fontSize: FontSize.base, fontWeight: '700', color: Colors.textSecondary },
-  segmentTextActive: { color: Colors.primary, fontWeight: '900' },
-
-  termsRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, marginTop: 18 },
-  checkbox: {
-    width: 22, height: 22, borderRadius: 6, borderWidth: 1.5, borderColor: Colors.border,
-    justifyContent: 'center', alignItems: 'center', marginTop: 1,
-  },
-  checkboxOn: { backgroundColor: Colors.primary, borderColor: Colors.primary },
-  termsText: { flex: 1, fontSize: FontSize.sm, color: Colors.textSecondary, lineHeight: 19 },
-  termsLink: { color: Colors.primary, fontWeight: '700' },
-
-  trialCallout: {
-    flexDirection: 'row', alignItems: 'flex-start', gap: 12,
-    backgroundColor: '#F5F3FF', borderRadius: Radii.md,
-    borderWidth: 1, borderColor: '#DDD6FE', padding: 14, marginTop: 18, marginBottom: 4,
-  },
-  trialIconWrap: {
-    width: 34, height: 34, borderRadius: 17,
-    backgroundColor: '#EDE9FE', alignItems: 'center', justifyContent: 'center',
-  },
-  trialTitle: { fontSize: FontSize.sm, fontWeight: '800', color: Colors.primary },
-  trialText: { fontSize: FontSize.xs, color: Colors.textSecondary, marginTop: 4, lineHeight: 17 },
-
-  loginLink: { alignItems: 'center', paddingVertical: 16 },
-  loginLinkText: { fontSize: FontSize.sm, color: Colors.textSecondary },
-  loginLinkStrong: { color: Colors.primary, fontWeight: '800' },
+const s = StyleSheet.create({
+  root:{ flex:1,backgroundColor:Colors.bg },hero:{ paddingTop:52,paddingBottom:32,alignItems:'center',gap:10 },title:{ fontSize:25,fontWeight:'800',color:'#fff' },subtitle:{ fontSize:14,color:'#eee4ff' },
+  card:{ marginHorizontal:20,marginTop:-12,padding:22,borderRadius:24,backgroundColor:'#fff',maxWidth:490,width:'90%',alignSelf:'center' },track:{ height:6,borderRadius:6,backgroundColor:'#eee7f8',overflow:'hidden' },progress:{ height:6,backgroundColor:Colors.primary },counter:{ fontSize:12,color:Colors.textMuted,textAlign:'right',marginTop:7,marginBottom:16 },
+  question:{ borderRadius:18,borderBottomLeftRadius:4,padding:18,backgroundColor:Colors.primaryLighter,marginBottom:22,gap:8 },prompt:{ fontSize:21,fontWeight:'800',color:Colors.text },hint:{ fontSize:14,lineHeight:21,color:Colors.textMuted,flexShrink:1 },
+  group:{ gap:7,marginBottom:16 },label:{ fontWeight:'700',color:Colors.text,fontSize:14,marginBottom:6 },input:{ borderWidth:1,borderColor:Colors.border,borderRadius:14,paddingHorizontal:15,paddingVertical:14,fontSize:16,color:Colors.text,backgroundColor:Colors.bg },invalid:{ borderColor:'#b91c1c' },error:{ color:'#b91c1c',fontSize:13,lineHeight:19,marginTop:6 },
+  choices:{ flexDirection:'row',gap:12 },choice:{ flex:1,alignItems:'center',padding:24,borderWidth:2,borderColor:Colors.border,borderRadius:18,gap:14 },selected:{ borderColor:Colors.primary,backgroundColor:Colors.primaryLighter },choiceText:{ fontWeight:'800',fontSize:18,color:Colors.primary },link:{ color:Colors.primary,fontSize:13,paddingVertical:8 },
+  review:{ backgroundColor:Colors.bg,padding:18,borderRadius:16,gap:12,marginBottom:16 },reviewLabel:{ fontSize:12,fontWeight:'700',color:Colors.textMuted },reviewValue:{ fontSize:14,color:Colors.text,marginTop:3 },terms:{ flexDirection:'row',alignItems:'center',gap:10,marginVertical:16 },checkbox:{ fontSize:25,color:Colors.primary },login:{ color:Colors.textMuted,fontSize:13,textAlign:'center' },
 });

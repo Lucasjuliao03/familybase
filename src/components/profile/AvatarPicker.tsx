@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -11,10 +11,13 @@ import {
   Platform,
   Image,
 } from 'react-native';
-import { AVATAR_OPTIONS } from '../../lib/avatarCatalog';
+import { AVATAR_OPTIONS, getAvatarPresetPortraitSource } from '../../lib/avatarCatalog';
 import { Colors, Radii, FontSize, Shadow } from '../../theme';
 import { UserAvatar } from './UserAvatar';
 import api from '../../services/api';
+import { useAuth } from '../../contexts/AuthContext';
+import { ADULT_AVATAR_IDS,CHILD_AVATAR_IDS } from '../../lib/familyIdentity';
+import { avatarKind } from '../../lib/familyAvatar';
 
 interface AvatarSaveResult {
   avatar_url?: string | null;
@@ -27,6 +30,7 @@ interface AvatarPickerProps {
   name?: string | null;
   endpoint?: string;
   size?: number;
+  ringColor?: string;
   onSave?: (result: AvatarSaveResult) => void;
 }
 
@@ -36,10 +40,14 @@ export function AvatarPicker({
   name,
   endpoint = '/auth/avatar',
   size = 80,
+  ringColor,
   onSave,
 }: AvatarPickerProps) {
+  const { user }=useAuth();
+  const ids=avatarKind(endpoint,user?.role)==='child' ? CHILD_AVATAR_IDS:ADULT_AVATAR_IDS;
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
+  const pending=useRef(false);
   const [localUrl, setLocalUrl] = useState<string | null | undefined>(currentAvatarUrl);
   const [localPreset, setLocalPreset] = useState<string | null | undefined>(currentPreset);
 
@@ -49,11 +57,12 @@ export function AvatarPicker({
   }, [currentAvatarUrl, currentPreset]);
 
   const handleSelectPreset = async (presetId: string) => {
+    if(pending.current) return;
+    pending.current=true;
     setSaving(true);
     try {
-      const formData = new FormData();
-      formData.append('avatar_preset', presetId);
-      const { data } = await api.put(endpoint, formData);
+      const { data } = await api.put(endpoint, {avatar_preset:presetId});
+      if(data?.avatar_preset!==presetId) throw new Error('O avatar não foi confirmado pelo banco. Tente novamente.');
       setLocalPreset(presetId);
       setLocalUrl(null);
       onSave?.(data);
@@ -61,19 +70,21 @@ export function AvatarPicker({
     } catch (err: any) {
       Alert.alert('Erro', err?.message || 'Não foi possível salvar o avatar.');
     } finally {
+      pending.current=false;
       setSaving(false);
     }
   };
 
   return (
     <>
-      <TouchableOpacity onPress={() => setOpen(true)} activeOpacity={0.85}>
+      <TouchableOpacity onPress={() => setOpen(true)} activeOpacity={0.85} accessibilityRole="button" accessibilityLabel="Alterar avatar">
         <View>
           <UserAvatar
             avatarUrl={localUrl}
             avatarPreset={localPreset}
             name={name}
             size={size}
+            ringColor={ringColor}
           />
           <View style={styles.editBadge}>
             <Text style={styles.editBadgeText}>✎</Text>
@@ -81,7 +92,7 @@ export function AvatarPicker({
         </View>
       </TouchableOpacity>
 
-      <Modal visible={open} animationType="slide" transparent onRequestClose={() => setOpen(false)}>
+      <Modal visible={open} animationType="slide" transparent onRequestClose={() => {if(!pending.current) setOpen(false);}}>
         <View style={styles.backdrop}>
           <View style={styles.sheet}>
             <Text style={styles.sheetTitle}>Escolher avatar</Text>
@@ -90,20 +101,24 @@ export function AvatarPicker({
               <ActivityIndicator size="large" color={Colors.primary} style={{ marginVertical: 24 }} />
             ) : (
               <ScrollView contentContainerStyle={styles.presetGrid}>
-                {AVATAR_OPTIONS.map((p) => (
+                {AVATAR_OPTIONS.filter(p => ids.includes(p.id)).map((p) => (
                   <TouchableOpacity
                     key={p.id}
+                    accessibilityRole="radio"
+                    accessibilityLabel={p.label}
+                    accessibilityState={{selected:localPreset===p.id,disabled:saving}}
+                    disabled={saving}
                     style={[styles.presetItem, localPreset === p.id && styles.presetItemActive]}
                     onPress={() => handleSelectPreset(p.id)}
                   >
-                    <Image source={p.source} style={styles.presetImage} resizeMode="cover" />
+                    <Image source={getAvatarPresetPortraitSource(p.id) || p.source} style={styles.presetImage} resizeMode="cover" />
                     <Text style={styles.presetLabel} numberOfLines={1}>{p.label}</Text>
                   </TouchableOpacity>
                 ))}
               </ScrollView>
             )}
 
-            <TouchableOpacity style={styles.closeBtn} onPress={() => setOpen(false)}>
+            <TouchableOpacity style={styles.closeBtn} disabled={saving} onPress={() => setOpen(false)}>
               <Text style={styles.closeBtnText}>Fechar</Text>
             </TouchableOpacity>
           </View>

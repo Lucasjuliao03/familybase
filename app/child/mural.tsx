@@ -10,15 +10,13 @@ import {
   ActivityIndicator,
   Alert,
 } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { useRouter } from 'expo-router';
 import { useAuth } from '../../src/contexts/AuthContext';
+import { ChildModuleHeader } from '../../src/components/child/ChildModuleHeader';
 import { Colors, Radii, Shadow, FontSize } from '../../src/theme';
 import { Card } from '../../src/components/ui/Card';
 import { Badge } from '../../src/components/ui/Badge';
 import api from '../../src/services/api';
 export default function ChildMuralScreen() {
-  const router = useRouter();
   const { childProfile } = useAuth();
 
   const [loading, setLoading] = useState<boolean>(true);
@@ -98,25 +96,10 @@ export default function ChildMuralScreen() {
 
   return (
     <View style={styles.root}>
-      <StatusBar barStyle="light-content" />
+      <StatusBar barStyle="dark-content" />
 
       {/* ── HEADER ──────────────────────────────── */}
-      <LinearGradient
-        colors={['#F59E0B', '#FBBF24', '#D97706']}
-        start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
-        style={styles.header}
-      >
-        <View style={styles.headerRow}>
-          <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
-            <Text style={styles.backBtnText}>‹</Text>
-          </TouchableOpacity>
-          <View style={{ flex: 1, alignItems: 'center' }}>
-            <Text style={styles.headerTitle}>Mural de Recados 📌</Text>
-            <Text style={styles.headerSub}>Fique por dentro de tudo na família! 📢</Text>
-          </View>
-          <View style={{ width: 36 }} />
-        </View>
-      </LinearGradient>
+      <ChildModuleHeader moduleId="mural" title="Mural" subtitle="Recados da família 📢" />
 
       {/* Filtros Rápidos */}
       <View style={styles.filterBar}>

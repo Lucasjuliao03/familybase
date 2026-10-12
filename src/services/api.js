@@ -1,7 +1,13 @@
+import { formField, saveFamilyAvatar, saveAvatarPhoto } from '../lib/familyAvatar';
+import { buildRewardPayload, mapRedemptionListRow } from '../lib/rewardStore';
+import { familyAssetUrl, warmFamilyAssets, warmResponseAssets } from '../lib/familyAssets';
+import { createLegacyMember, updateLegacyChild, updateLegacyMember } from '../lib/legacyFamilyMembers';
 import { supabase, fetchNoStore } from '../lib/supabase';
+import { buildMedicationLog, localDate, localDayBounds, localTime, medicationState, normalizeMedication } from '../lib/medicationSchedule';
 import { resolveSupabaseConfig } from '../lib/supabaseConfig';
 import { famDiagWarn } from '../shared/lib/famDiag';
 import { normalizeHex } from '../shared/lib/userDisplayColors';
+import { CHILD_AVATAR_IDS } from '../lib/childAvatarIds';
 import {
   canonicalMedalRequirementType,
   dedupeEarnedMedalsForDisplay,
@@ -29,25 +35,9 @@ import {
 
 const { url: BASE_URL, anonKey: ANON_KEY } = resolveSupabaseConfig();
 
-async function createManagedFamilyMember(body) {
-  const { data, error } = await supabase.functions.invoke('create-family-member', { body });
-  if (error) {
-    let message = error.message;
-    try { message = (await error.context.json()).error || message; } catch { /* resposta indisponível */ }
-    return { data: null, error: new Error(message) };
-  }
-  return { data, error: data?.error ? new Error(data.error) : null };
-}
 
 /** URL pública Supabase Storage (bucket path sem barra inicial). */
-export function publicAssetUrl(path) {
-  if (path == null || path === '') return '';
-  const s = String(path).trim();
-  if (s.startsWith('http://') || s.startsWith('https://')) return s;
-  if (!BASE_URL) return s;
-  const clean = s.replace(/^\/+/, '');
-  return `${BASE_URL}/storage/v1/object/public/${clean}`;
-}
+export function publicAssetUrl(path) { return familyAssetUrl(path,BASE_URL); }
 
 /** @deprecated Prefira `publicAssetUrl` — mantido para imports antigos. */
 export const apiOrigin = BASE_URL ? `${BASE_URL}/storage/v1/object/public` : '';
@@ -137,9 +127,8 @@ async function expandChildUuidFromJwtMetadataValidated(familyId, authUserId) {
       data: { session },
     } = await supabase.auth.getSession();
     if (!session?.user || session.user.id !== authUserId) return '';
-    const um = session.user.user_metadata || {};
     const am = session.user.app_metadata || {};
-    const raw = um.child_id ?? um.childId ?? am.child_id ?? am.childId;
+    const raw = am.child_id ?? am.childId;
     const meta = normalizeAuthChildUuid(raw);
     if (!meta) return '';
     const { data: chByMeta } = await supabase
@@ -147,6 +136,7 @@ async function expandChildUuidFromJwtMetadataValidated(familyId, authUserId) {
       .select('id')
       .eq('family_id', familyId)
       .eq('id', meta)
+      .eq('user_id', authUserId)
       .maybeSingle();
     return chByMeta?.id ? normalizeAuthChildUuid(chByMeta.id) : '';
   } catch {
@@ -372,86 +362,24 @@ function unwrapEmbeddedRow(v) {
   return Array.isArray(v) ? v[0] ?? null : v;
 }
 
-/** Soma dos custos em pontos de resgates `pending` desta criança (compromisso até aprovação/rejeição). */
-async function sumPendingRedemptionPointsForChild(supabaseClient, childId) {
-  if (!childId) return 0;
-  const { data: pending, error } = await supabaseClient
-    .from('redemptions')
-    .select('reward_id')
-    .eq('child_id', childId)
-    .eq('status', 'pending');
-  if (error) throw new Error(error.message);
-  const ids = [...new Set((pending || []).map((p) => p.reward_id).filter(Boolean))];
-  if (!ids.length) return 0;
-  const { data: rews, error: rewErr } = await supabaseClient.from('rewards').select('id, point_cost').in('id', ids);
-  if (rewErr) throw new Error(rewErr.message);
-  const costById = new Map((rews || []).map((r) => [r.id, Number(r.point_cost ?? 0)]));
-  return (pending || []).reduce((sum, p) => sum + (costById.get(p.reward_id) ?? 0), 0);
-}
-
-/**
- * Lista `/allowance/redemptions/list`: formato plano como o SQLite antigo (`reward_name`, `child_name`, ícone…).
- */
-function mapRedemptionListRow(raw) {
-  if (!raw || typeof raw !== 'object') return raw;
-  const rew = unwrapEmbeddedRow(raw.rewards);
-  const ch = unwrapEmbeddedRow(raw.children);
-  const { rewards: _rw, children: _chd, ...rest } = raw;
-  const pcMerge = rew?.point_cost ?? rest.point_cost;
-  const parsedCost =
-    pcMerge != null && pcMerge !== '' && Number.isFinite(Number(pcMerge)) ? Number(pcMerge) : null;
-  return {
-    ...rest,
-    reward_name: rew?.name || rest.reward_name || '',
-    icon: rew?.icon || '🎁',
-    /** null quando embed falhou — hydrate corrigiu depois ou UI usa "—" */
-    point_cost: parsedCost,
-    child_name: ch?.name || rest.child_name || '',
-  };
-}
-
-/** Nome/custo do resgate: join embutido pode vir null com conta criança (PostgREST/RLS). */
+/** Preserve request snapshots and batch the remaining display-name lookups. */
 async function hydrateRedemptionsListRows(supabase, familyId, rows) {
   const list = rows || [];
-  const ridSet = [...new Set(list.map((r) => r.reward_id).filter(Boolean))];
-  const cidSet = [...new Set(list.map((r) => r.child_id).filter(Boolean))];
-  const rmap = new Map();
-  const cmap = new Map();
-  if (ridSet.length) {
-    const { data: rews } = await supabase
-      .from('rewards')
-      .select('id,name,icon,point_cost,type')
-      .eq('family_id', familyId)
-      .in('id', ridSet);
-    (rews || []).forEach((x) => rmap.set(x.id, x));
-  }
-  if (cidSet.length) {
-    const { data: chs } = await supabase
-      .from('children')
-      .select('id,name')
-      .eq('family_id', familyId)
-      .in('id', cidSet);
-    (chs || []).forEach((x) => cmap.set(x.id, x));
-  }
-  return list.map((raw) => {
-    const embR = unwrapEmbeddedRow(raw.rewards);
-    const embC = unwrapEmbeddedRow(raw.children);
-    const rw =
-      embR && (embR.name != null || embR.point_cost != null || embR.icon != null)
-        ? embR
-        : raw.reward_id
-          ? rmap.get(raw.reward_id)
-          : null;
-    const chName =
-      embC?.name ??
-      cmap.get(raw.child_id)?.name ??
-      '';
-    return mapRedemptionListRow({
-      ...raw,
-      rewards: rw || null,
-      children: chName ? { name: chName } : null,
-    });
-  });
+  const rewardIds = [...new Set(list.filter((row) => row.reward_name == null || row.point_cost == null || row.reward_icon == null).map((row) => row.reward_id).filter(Boolean))];
+  const childIds = [...new Set(list.map((row) => row.child_id).filter(Boolean))];
+  const [rewardResult, childResult] = await Promise.all([
+    rewardIds.length ? supabase.from('rewards').select('id,name,icon,point_cost,type').eq('family_id', familyId).in('id', rewardIds) : Promise.resolve({ data: [] }),
+    childIds.length ? supabase.from('children').select('id,name').eq('family_id', familyId).in('id', childIds) : Promise.resolve({ data: [] }),
+  ]);
+  if (rewardResult.error) throw new Error(rewardResult.error.message);
+  if (childResult.error) throw new Error(childResult.error.message);
+  const rewards = new Map((rewardResult.data || []).map((row) => [row.id, row]));
+  const children = new Map((childResult.data || []).map((row) => [row.id, row]));
+  return list.map((row) => mapRedemptionListRow({
+    ...row,
+    rewards: row.rewards || rewards.get(row.reward_id),
+    children: row.children || children.get(row.child_id),
+  }));
 }
 
 /** Senha mínima para contas de criança criadas pelo gestor (login próprio). */
@@ -460,160 +388,32 @@ const CHILD_LOGIN_PASSWORD_MIN = 6;
 /** Altera a senha do utilizador autenticado (Auth API + flag must_change_password). */
 async function changeOwnPassword(newPassword, userId) {
   const pwd = String(newPassword || '');
-  if (pwd.length < 4) throw new Error('Senha inválida');
+  if (pwd.length < 6) throw new Error('Senha inválida');
   const { error } = await supabase.auth.updateUser({ password: pwd });
   if (error) throw new Error(error.message);
-  const { error: rpcErr } = await supabase.rpc('change_own_password', { p_new_password: pwd });
-  if (rpcErr && userId) {
-    await supabase.from('users').update({ must_change_password: false }).eq('id', userId);
-  }
+  const { error: saveError } = await supabase.from('users').update({ must_change_password: false }).eq('id',userId);
+  if (saveError) throw new Error('A senha foi alterada, mas não foi possível atualizar seu perfil. Tente novamente.');
 }
 
 /** Gestor altera e-mail de membro/filho (Edge Function + fallback RPC). */
-async function updateMemberEmail(targetUserId, newEmail, childId = null) {
-  const email = String(newEmail || '').trim().toLowerCase();
-  if (!email) throw new Error('E-mail inválido.');
-
-  const { data: { session } } = await supabase.auth.getSession();
-  if (!session?.access_token) throw new Error('Not authenticated');
-
-  if (BASE_URL && ANON_KEY) {
-    const res = await fetch(`${BASE_URL}/functions/v1/update-family-member-email`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${session.access_token}`,
-        apikey: ANON_KEY,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        target_user_id: targetUserId,
-        child_id: childId || undefined,
-        new_email: email,
-      }),
-    });
-    const payload = await res.json().catch(() => ({}));
-    if (res.ok && payload?.ok) return;
-    if (res.status !== 404 && res.status !== 502) {
-      const errMsg = payload?.error || '';
-      if (/email_already_in_use/i.test(errMsg)) throw new Error('Este e-mail já está em uso.');
-      throw new Error(errMsg || `Falha ao alterar e-mail (${res.status})`);
-    }
-    // 404/502: função ainda não publicada — fallback RPC abaixo
-  }
-
-  const { data, error: rpcErr } = await supabase.rpc('change_member_email', {
-    p_target_user_id: targetUserId,
-    p_new_email: email,
-  });
-  if (rpcErr) {
-    const msg = rpcErr.message || '';
-    if (/email_already_in_use/i.test(msg)) throw new Error('Este e-mail já está em uso.');
-    if (/invalid_email/i.test(msg)) throw new Error('E-mail inválido.');
-    throw new Error(rpcErr.message);
-  }
-  if (data && data.ok === false) throw new Error('Não foi possível alterar o e-mail.');
-}
-
-/** Gestor altera senha de outro membro da família (Edge Function + fallback RPC). */
 async function changeMemberPassword(targetUserId, newPassword, mustChangePassword, childId = null) {
-  const pwd = String(newPassword || '').trim();
-  if (pwd.length < 4) throw new Error('Senha inválida');
-
-  const { data: { session } } = await supabase.auth.getSession();
-  if (!session?.access_token) throw new Error('Not authenticated');
-
-  if (BASE_URL && ANON_KEY) {
-    const res = await fetch(`${BASE_URL}/functions/v1/reset-family-member-password`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${session.access_token}`,
-        apikey: ANON_KEY,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        target_user_id: targetUserId,
-        child_id: childId || undefined,
-        new_password: pwd,
-        must_change_password: !!mustChangePassword,
-      }),
-    });
-    const payload = await res.json().catch(() => ({}));
-    if (res.ok && payload?.ok) return;
-    if (res.status !== 404 && res.status !== 502) {
-      throw new Error(payload?.error || `Falha ao alterar senha (${res.status})`);
-    }
-    // 404/502: função ainda não publicada — fallback RPC abaixo
+  const password = String(newPassword || '');
+  if (password.length < 6) throw new Error('Use pelo menos 6 caracteres.');
+  const { data, error } = await supabase.functions.invoke('reset-family-member-password', { body: {
+    target_user_id: targetUserId, child_id: childId || undefined, new_password: password, must_change_password: !!mustChangePassword,
+  } });
+  if (error) {
+    let message = 'Não foi possível redefinir a senha. Verifique a conexão e tente novamente.';
+    try { message = (await error.context.json()).error || message; } catch { /* network error */ }
+    throw new Error(message);
   }
-
-  const { data, error: rpcErr } = await supabase.rpc('change_member_password', {
-    p_target_user_id: targetUserId,
-    p_new_password: pwd,
-    p_must_change_password: !!mustChangePassword,
-  });
-  if (rpcErr) throw new Error(rpcErr.message);
-  if (data && data.ok === false) throw new Error('Não foi possível alterar a senha.');
+  if (!data?.ok) throw new Error(data?.error || 'Não foi possível redefinir a senha.');
 }
 
 /**
  * Cria utilizador Auth + associa à família como role child (RPC).
  * Retorna o novo auth user id.
  */
-async function createLinkedChildAuthUser({
-  email,
-  password,
-  displayName,
-  familyId,
-  mustChangePassword,
-}) {
-
-  const normalizedEmail = String(email || '').trim().toLowerCase();
-  const pwd = String(password || '').trim();
-  if (!normalizedEmail) throw new Error('O email de acesso da criança é obrigatório.');
-  if (pwd.length < CHILD_LOGIN_PASSWORD_MIN) {
-    throw new Error(`A senha deve ter pelo menos ${CHILD_LOGIN_PASSWORD_MIN} caracteres.`);
-  }
-
-  const { data: signUpData, error: signUpError } = await createManagedFamilyMember({
-    email: normalizedEmail,
-    password: pwd,
-    name: displayName || normalizedEmail.split('@')[0],
-    role: 'child', must_change_password: !!mustChangePassword,
-  });
-
-  if (signUpError) {
-    const msg = signUpError.message || '';
-    if (/already registered|already exists|User already|duplicate/i.test(msg)) {
-      throw new Error('Este email já está registado. Use outro email ou peça ao utilizador para iniciar sessão com essa conta.');
-    }
-    throw new Error(signUpError.message);
-  }
-  if (!signUpData?.user?.id) {
-    throw new Error(
-      'Não foi possível criar a conta de acesso. No Supabase Dashboard → Authentication → Settings, ' +
-      'desative "Enable email confirmations" para cadastro imediato de filhos.',
-    );
-  }
-
-  const newUserId = signUpData.user.id;
-  const label = displayName || normalizedEmail.split('@')[0];
-
-  const backoffMs = [120, 280, 520, 900, 1400];
-  let lastRpcErr = null;
-  for (let i = 0; i <= backoffMs.length; i++) {
-    const { error: rpcErr } = await supabase.rpc('add_member_to_family', {
-      p_target_user_id: newUserId,
-      p_family_id: familyId,
-      p_role: 'child',
-      p_name: label,
-      p_must_change_password: !!mustChangePassword,
-    });
-    if (!rpcErr) return newUserId;
-    lastRpcErr = rpcErr;
-    if (i < backoffMs.length) await new Promise((r) => setTimeout(r, backoffMs[i]));
-  }
-  throw new Error(lastRpcErr?.message || 'Não foi possível associar o filho à família (RPC add_member_to_family).');
-}
-
 // Verifica e atribui medalhas à criança (tarefas, notas máximas, mesada, recompensas, etc.)
 async function loadMedalProgressSnapshot(supabase, childId) {
   const [taskRes, childRes, gradesRes, redemptionRes, cycleRes] = await Promise.all([
@@ -1651,6 +1451,7 @@ const MEDICATION_FIELDS = [
 ];
 
 function buildMedicationInsert(body, familyId, userId) {
+  body = normalizeMedication(body);
   const row = { id: uuidv4(), family_id: familyId, created_by: userId };
   MEDICATION_FIELDS.forEach((k) => {
     if (body[k] !== undefined) row[k] = body[k];
@@ -2157,20 +1958,24 @@ const api = {
       const uids = [...new Set(rows.map((c) => c.user_id).filter(Boolean))];
       let emailMap = {};
       if (uids.length) {
-        const { data: usRows } = await supabase.from('users').select('id, email').in('id', uids);
+        const { data: usRows } = await supabase.from('users').select('id, email, username, display_login, account_kind').in('id', uids);
         (usRows || []).forEach((u) => {
-          emailMap[u.id] = u.email;
+          emailMap[u.id] = u;
         });
       }
       const children = rows.map((c) => ({
         ...c,
-        user_email: c.user_id ? emailMap[c.user_id] ?? null : null,
+        user_email: c.user_id ? emailMap[c.user_id]?.email ?? null : null,
+        display_login: c.user_id ? emailMap[c.user_id]?.display_login ?? null : null,
+        username: c.user_id ? emailMap[c.user_id]?.username ?? null : null,
+        account_kind: c.user_id ? emailMap[c.user_id]?.account_kind ?? null : null,
       }));
       return { data: { family: family || {}, children } };
     }
 
     if (path === '/families/members') {
-      const { data } = await supabase.from('users').select('*').eq('family_id', familyId).not('role', 'eq', 'child').not('role', 'eq', 'master');
+      const { data, error } = await supabase.from('users').select('*').eq('family_id', familyId).not('role', 'eq', 'child').not('role', 'eq', 'master');
+      if (error) throw new Error(error.message);
       return { data: data || [] };
     }
 
@@ -2228,8 +2033,16 @@ const api = {
       return { data: await buildModulesPayload(familyId) };
     }
 
+    if (path === '/allowance/store-balance') {
+      const { data, error } = await supabase.rpc('reward_store_balance', { p_child_id: config.params?.child_id });
+      if (error) throw new Error(error.message);
+      if (!data) throw new Error('Não foi possível consultar o saldo deste perfil.');
+      return { data };
+    }
+
     if (path.startsWith('/allowance/rewards/list')) {
-      const { data } = await supabase.from('rewards').select('*').eq('family_id', familyId).order('created_at', { ascending: false });
+      const { data, error } = await supabase.from('rewards').select('*').eq('family_id', familyId).is('deleted_at', null).order('created_at', { ascending: false });
+      if (error) throw new Error(error.message);
       return { data: data || [] };
     }
 
@@ -2244,11 +2057,6 @@ const api = {
         const scopeRd = await resolveViewerChildScope(familyId, uidRed);
         if (!scopeRd) return { data: [] };
         redQ = redQ.eq('child_id', scopeRd);
-      } else {
-        const { data: kids } = await supabase.from('children').select('id').eq('family_id', familyId);
-        const childIds = (kids || []).map((c) => c.id);
-        if (!childIds.length) return { data: [] };
-        redQ = redQ.in('child_id', childIds);
       }
 
       const { data: rows, error: redErr } = await redQ;
@@ -2696,14 +2504,16 @@ const api = {
       let apptBase = supabase.from('health_appointments').select('*, children:child_id(name)').eq('family_id', familyId).eq('status', 'scheduled');
       if (patientUserId) apptBase = apptBase.eq('patient_user_id', patientUserId);
       else if (filterChildId) apptBase = apptBase.eq('child_id', filterChildId);
-      const today = new Date().toISOString().split('T')[0];
+      const today = localDate();
       const { data: upcomingRaw, error: appointmentsError } = await apptBase.gte('date', today).order('date', { ascending: true }).order('time', { ascending: true }).limit(8);
       if (appointmentsError) throw new Error(appointmentsError.message);
 
       let medBase = supabase.from('medications').select('*, children:child_id(name)').eq('family_id', familyId).eq('status', 'active');
       if (patientUserId) medBase = medBase.eq('patient_user_id', patientUserId);
       else if (filterChildId) medBase = medBase.eq('child_id', filterChildId);
-      const { data: activeMeds, error: medicationsError } = await medBase.order('name', { ascending: true }).limit(20);
+      const { data: activeMeds, error: medicationsError } = await medBase
+        .or(`start_date.is.null,start_date.lte.${today}`).or(`end_date.is.null,end_date.gte.${today}`)
+        .order('name', { ascending: true }).limit(20);
       if (medicationsError) throw new Error(medicationsError.message);
 
       const nameFor = (r) => r.children?.name || (r.patient_user_id && patientNames[r.patient_user_id]) || '—';
@@ -2765,16 +2575,18 @@ const api = {
       let q = supabase.from('medications').select('*, children:child_id(name)').eq('family_id', familyId);
       if (healthSearch.get('patient_user_id')) q = q.eq('patient_user_id', healthSearch.get('patient_user_id'));
       if (healthSearch.get('child_id')) q = q.eq('child_id', healthSearch.get('child_id'));
-      if (healthSearch.get('status')) q = q.eq('status', healthSearch.get('status'));
       const { data, error } = await q.order('created_at', { ascending: false });
       if (error) throw new Error(error.message);
-      return { data: (data || []).map((m) => ({ ...m, child_name: m.children?.name || '—' })) };
+      const status = ({ finished: 'completed', suspended: 'inactive' })[healthSearch.get('status')] || healthSearch.get('status');
+      return { data: (data || []).map((m) => ({ ...m, effective_status: medicationState(m), child_name: m.children?.name || '—' }))
+        .filter((m) => !status || m.effective_status === status) };
     }
 
     if (healthPath.startsWith('/health/medication-logs')) {
       let medIds = null;
       if (healthSearch.get('patient_user_id')) {
-        const { data: meds } = await supabase.from('medications').select('id').eq('family_id', familyId).eq('patient_user_id', healthSearch.get('patient_user_id'));
+        const { data: meds, error: medError } = await supabase.from('medications').select('id').eq('family_id', familyId).eq('patient_user_id', healthSearch.get('patient_user_id'));
+        if (medError) throw new Error(medError.message);
         medIds = (meds || []).map((m) => m.id);
         if (!medIds.length) return { data: [] };
       }
@@ -2784,8 +2596,8 @@ const api = {
         .eq('family_id', familyId);
       if (medIds) q = q.in('medication_id', medIds);
       if (healthSearch.get('child_id')) q = q.eq('child_id', healthSearch.get('child_id'));
-      if (healthSearch.get('from')) q = q.gte('taken_at', `${healthSearch.get('from')}T00:00:00`);
-      if (healthSearch.get('to')) q = q.lte('taken_at', `${healthSearch.get('to')}T23:59:59`);
+      if (healthSearch.get('from')) q = q.gte('taken_at', localDayBounds(healthSearch.get('from')).start);
+      if (healthSearch.get('to')) q = q.lt('taken_at', localDayBounds(healthSearch.get('to')).end);
       const { data, error } = await q.order('taken_at', { ascending: false });
       if (error) throw new Error(error.message);
       const loggedByIds = [...new Set((data || []).map((log) => log.logged_by).filter(Boolean))];
@@ -2800,8 +2612,8 @@ const api = {
           medication_name: l.medications?.name || '—',
           child_name: l.children?.name || '—',
           logged_by_name: logUserNames[l.logged_by] || null,
-          taken_date: l.taken_at ? String(l.taken_at).slice(0, 10) : '',
-          taken_time: l.taken_at && String(l.taken_at).length > 11 ? String(l.taken_at).slice(11, 19) : '',
+          taken_date: l.taken_at ? localDate(new Date(l.taken_at)) : '',
+          taken_time: l.taken_at ? localTime(new Date(l.taken_at)) : '',
         })),
       };
     }
@@ -2836,6 +2648,7 @@ const api = {
     if (!familyId) throw new Error('Not authenticated');
     const { data: { session } } = await supabase.auth.getSession();
     const userId = session?.user?.id;
+
     if (path.startsWith('/calendar') && !userId) throw new Error('Sessão inválida: inicie sessão novamente.');
 
     if (path.startsWith('/grades')) {
@@ -3006,8 +2819,8 @@ const api = {
     }
 
     if (path.startsWith('/health/upload')) {
-      if (!(body instanceof FormData) || !body.get('file')) throw new Error('Envie file em FormData');
-      const file = body.get('file');
+      if (!(body instanceof FormData) || !formField(body,'file')) throw new Error('Envie file em FormData');
+      const file = formField(body,'file');
       const ext = (file.name && String(file.name).split('.').pop().toLowerCase()) || 'jpg';
       const safeExt = ['jpg','jpeg','png','gif','webp','pdf'].includes(ext) ? ext : 'jpg';
       const filePath = `${familyId}/health/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${safeExt}`;
@@ -3053,23 +2866,19 @@ const api = {
     }
 
     if (path === '/health/medication-logs') {
-      const { data: med, error: mErr } = await supabase.from('medications').select('child_id').eq('id', body.medication_id).eq('family_id', familyId).single();
+      const { data: med, error: mErr } = await supabase.from('medications').select('*').eq('id', body.medication_id).eq('family_id', familyId).single();
       if (mErr || !med) throw new Error('Medicamento não encontrado');
-      const datePart = body.taken_date || toYMDLocal();
-      const timePart = (body.taken_time && String(body.taken_time).trim()) || '12:00';
-      const timeNorm = timePart.length <= 5 ? `${timePart}:00` : timePart;
-      const takenAt = `${datePart}T${timeNorm}`;
       const ins = omitUndefined({
         id: uuidv4(),
         family_id: familyId,
         child_id: med.child_id ?? null,
         medication_id: body.medication_id,
-        taken_at: takenAt,
-        status: body.status || 'taken',
+        ...buildMedicationLog(body, med),
         notes: body.notes ?? null,
         logged_by: userId,
       });
       const { data, error } = await supabase.from('health_medication_logs').insert([ins]).select().single();
+      if (error?.code === '23505') throw new Error('Esta dose já foi registrada. Atualize a lista para ver a tomada.');
       if (error) throw new Error(error.message);
       return { data };
     }
@@ -3381,68 +3190,23 @@ const api = {
     }
 
     if (path === '/allowance/rewards') {
-      const { data, error } = await supabase.from('rewards').insert([{ ...body, family_id: familyId, id: uuidv4() }]).select().single();
+      const { data, error } = await supabase.from('rewards').insert([{ ...buildRewardPayload(body), family_id: familyId, id: uuidv4() }]).select().single();
       if (error) throw new Error(error.message);
       return { data };
     }
 
     const redeemMatch = path.match(/^\/allowance\/rewards\/([^/]+)\/redeem$/);
     if (redeemMatch) {
-      const rewardId = redeemMatch[1];
-      const { data: rew, error: rewErr } = await supabase
-        .from('rewards')
-        .select('id,name,icon,point_cost,family_id,is_active,available')
-        .eq('id', rewardId)
-        .eq('family_id', familyId)
-        .maybeSingle();
-      if (rewErr) throw new Error(rewErr.message);
-      if (!rew?.id || rew.is_active === false || rew.available === false) {
-        throw new Error('Esta recompensa não está disponível neste momento.');
-      }
-
-      const resolvedChildId = await resolveAuthorizedChildUuidForWrites(
-        { ...body, child_id: body?.child_id ?? body?.childId },
-        familyId,
-        userId,
+      const childId = await resolveAuthorizedChildUuidForWrites(
+        { ...body, child_id: body?.child_id ?? body?.childId }, familyId, userId,
       );
-      if (!resolvedChildId) {
-        throw new Error(
-          'Não conseguimos identificar o perfil para o resgate. Aguarda uns segundos ou pede ao gestor para ligar a conta ao nome da criança na família.',
-        );
-      }
-
-      const { data: chRow } = await supabase
-        .from('children')
-        .select('points')
-        .eq('id', resolvedChildId)
-        .eq('family_id', familyId)
-        .maybeSingle();
-      if (!chRow) throw new Error('Perfil não encontrado nesta família.');
-      const cost = Number(rew.point_cost ?? 0);
-      const points = Number(chRow.points ?? 0);
-      const reservedPending = await sumPendingRedemptionPointsForChild(supabase, resolvedChildId);
-      const available = Math.max(0, points - reservedPending);
-      if (cost > available) {
-        if (cost > points) {
-          throw new Error('Pontos insuficientes para pedir esta recompensa.');
-        }
-        throw new Error(
-          'Saldo disponível não chega: parte dos pontos já está comprometida com outros resgates à espera de aprovação pelo gestor.',
-        );
-      }
-
-      const { data, error } = await supabase
-        .from('redemptions')
-        .insert([{ reward_id: rewardId, child_id: resolvedChildId, status: 'pending', id: uuidv4() }])
-        .select()
-        .single();
+      if (!childId) throw new Error('Não foi possível identificar o perfil para o resgate.');
+      const { data, error } = await supabase.rpc('request_reward_redemption', {
+        p_reward_id: redeemMatch[1], p_child_id: childId, p_request_id: body?.request_id || uuidv4(),
+      });
       if (error) throw new Error(error.message);
-      return {
-        data: mapRedemptionListRow({
-          ...data,
-          rewards: { name: rew.name, icon: rew.icon ?? '🎁', point_cost: rew.point_cost },
-        }),
-      };
+      if (!data?.id) throw new Error('O pedido não foi confirmado pelo servidor. Atualize a loja.');
+      return { data: mapRedemptionListRow(data) };
     }
 
     if (path === '/allowance/goals') {
@@ -3457,10 +3221,11 @@ const api = {
     }
 
     if (path === '/allowance/piggy-requests') {
-      // Resolver child_id e goal_title — a tabela não tem savings_goal_id
-      let childId = body.child_id || null;
+      const role = await getUserRole();
+      let childId = role === 'child'
+        ? await resolveViewerChildScope(familyId, userId)
+        : (body.child_id || null);
       let childName = body.child_name || null;
-      let goalTitle = body.goal_title || null;
 
       // Auto-injectar child_id via sessão actual (criança logada)
       if (!childId) {
@@ -3468,20 +3233,22 @@ const api = {
         if (cr?.id) { childId = cr.id; childName = cr.name; }
       }
       if (!childId) throw new Error('Perfil de criança não encontrado. Verifique a conta.');
-
-      // Buscar título da meta pelo savings_goal_id (se fornecido)
-      if (!goalTitle && body.savings_goal_id) {
-        const { data: goalRow } = await supabase.from('savings_goals').select('title').eq('id', body.savings_goal_id).maybeSingle();
-        goalTitle = goalRow?.title || null;
-      }
+      const amount = Number(body.requested_amount);
+      if (!Number.isFinite(amount) || amount <= 0) throw new Error('Informe um valor válido para guardar.');
+      if (!body.savings_goal_id) throw new Error('Escolha uma meta do cofrinho.');
+      const { data: goalRow, error: goalErr } = await supabase.from('savings_goals')
+        .select('id, title').eq('id', body.savings_goal_id)
+        .eq('child_id', childId).eq('family_id', familyId).maybeSingle();
+      if (goalErr || !goalRow) throw new Error('Meta de cofrinho não encontrada para este filho.');
 
       const ins = {
         id: uuidv4(),
         family_id: familyId,
         child_id: childId,
         child_name: childName,
-        goal_title: goalTitle,
-        requested_amount: Number(body.requested_amount) || 0,
+        goal_title: goalRow.title,
+        savings_goal_id: goalRow.id,
+        requested_amount: amount,
         message: body.message || null,
         status: 'pending',
       };
@@ -3490,134 +3257,11 @@ const api = {
       return { data };
     }
 
-    if (path === '/families/children') {
-      const emailRaw = body?.email != null ? String(body.email).trim().toLowerCase() : '';
-      if (!emailRaw) {
-        throw new Error('Email e senha são obrigatórios para o filho poder iniciar sessão.');
-      }
-
-      const newUserId = await createLinkedChildAuthUser({
-        email: emailRaw,
-        password: body.password,
-        displayName: body.name || emailRaw.split('@')[0],
-        familyId,
-        mustChangePassword: !!body.must_change_password,
-      });
-
-      const childId = uuidv4();
-      const { data, error } = await supabase
-        .from('children')
-        .insert([{
-          id: childId,
-          name: body.name,
-          age: body.age != null && body.age !== '' ? Number(body.age) : null,
-          birthday: body.birthday || null,
-          color: body.color || '#6C5CE7',
-          avatar_preset: body.avatar_preset || 'menino1',
-          nickname: body.nickname || null,
-          emoji: body.emoji || null,
-          notes: body.notes || null,
-          family_id: familyId,
-          user_id: newUserId,
-        }])
-        .select()
-        .single();
-      if (error) throw new Error(error.message);
+    if (['/families/children','/families/members','/families/relatives'].includes(path)) {
+      const role = path === '/families/children' ? 'child' : path === '/families/relatives' ? 'relative' : 'parent';
+      const data = await createLegacyMember(supabase,familyId,body,role);
+      await warmFamilyAssets(supabase,[data.avatar_url]);
       return { data };
-    }
-
-    if (path === '/families/relatives') {
-      const email = String(body?.email || '').trim().toLowerCase();
-      if (!email) throw new Error('Email é obrigatório para criar um parente/auxiliar.');
-
-
-      const password = String(body.password || '').trim() || '123456';
-      const { data: signUpData, error: signUpError } = await createManagedFamilyMember({
-        email,
-        password,
-        name: body.name || email.split('@')[0], role: 'relative', must_change_password: !!body.must_change_password,
-      });
-      if (signUpError) throw new Error(signUpError.message);
-      if (!signUpData?.user?.id) {
-        throw new Error(
-          'Não foi possível criar a conta. ' +
-          'No Supabase Dashboard → Authentication → Settings, desative "Enable email confirmations".',
-        );
-      }
-      const newUserId = signUpData.user.id;
-
-      await new Promise((r) => setTimeout(r, 400));
-
-      const { error: rpcErr } = await supabase.rpc('add_member_to_family', {
-        p_target_user_id: newUserId,
-        p_family_id: familyId,
-        p_role: 'relative',
-        p_name: body.name || email.split('@')[0],
-        p_must_change_password: !!body.must_change_password,
-        p_relationship: body.relationship || null,
-        p_access_profile: body.access_profile || null,
-        p_phone: body.phone || null,
-        p_emoji: body.emoji || null,
-        p_display_color: body.display_color || null,
-      });
-      if (rpcErr) throw new Error(rpcErr.message);
-
-      if (Array.isArray(body.linked_child_ids) && body.linked_child_ids.length) {
-        const rows = body.linked_child_ids.map((cid) => ({
-          id: uuidv4(),
-          relative_user_id: newUserId,
-          child_id: cid,
-          family_id: familyId,
-        }));
-        const { error: relChildErr } = await supabase.from('relative_children').insert(rows);
-        if (relChildErr && __DEV__) console.warn('[families] relative_children:', relChildErr.message);
-      }
-
-      await new Promise((r) => setTimeout(r, 200));
-      const { data: newUser } = await supabase.from('users').select('*').eq('id', newUserId).maybeSingle();
-      return { data: newUser || { id: newUserId, name: body.name, email, role: 'relative', family_id: familyId } };
-    }
-
-    if (path === '/families/members') {
-      const email = String(body?.email || '').trim().toLowerCase();
-      if (!email) throw new Error('Email é obrigatório para criar um responsável.');
-
-
-      const password = String(body.password || '').trim() || '123456';
-      const { data: signUpData, error: signUpError } = await createManagedFamilyMember({
-        email,
-        password,
-        name: body.name || email.split('@')[0], role: body.role === 'relative' ? 'relative' : 'parent',
-        access_profile: body.access_profile, must_change_password: !!body.must_change_password,
-      });
-      if (signUpError) throw new Error(signUpError.message);
-      if (!signUpData?.user?.id) {
-        throw new Error(
-          'Não foi possível criar a conta. ' +
-          'No Supabase Dashboard → Authentication → Settings, desative "Enable email confirmations".',
-        );
-      }
-      const newUserId = signUpData.user.id;
-
-      await new Promise((r) => setTimeout(r, 400));
-
-      const memberRole = ['parent', 'relative'].includes(body.role) ? body.role : 'parent';
-      const { error: rpcErr } = await supabase.rpc('add_member_to_family', {
-        p_target_user_id: newUserId,
-        p_family_id: familyId,
-        p_role: memberRole,
-        p_name: body.name || email.split('@')[0],
-        p_must_change_password: !!body.must_change_password,
-        p_access_profile: body.access_profile || null,
-        p_phone: body.phone || null,
-        p_emoji: body.emoji || null,
-        p_display_color: body.display_color || null,
-      });
-      if (rpcErr) throw new Error(rpcErr.message);
-
-      await new Promise((r) => setTimeout(r, 200));
-      const { data: newUser } = await supabase.from('users').select('*').eq('id', newUserId).maybeSingle();
-      return { data: newUser || { id: newUserId, name: body.name, email, role: memberRole, family_id: familyId } };
     }
 
     if (path === '/gamification/medals') {
@@ -3951,6 +3595,58 @@ const api = {
     const { data: { session } } = await supabase.auth.getSession();
     const userId = session?.user?.id;
 
+    if (path === '/children/me/avatar-preset') {
+      if (!userId) throw new Error('Faça login para escolher um avatar.');
+      const familyId = await getFamilyId();
+      if (!familyId) throw new Error('Família não encontrada.');
+      const presetId = String(body?.avatar_preset || '').toLowerCase();
+      if (!CHILD_AVATAR_IDS.includes(presetId)) throw new Error('Escolha um avatar válido.');
+      const role = await getUserRole();
+      const childId = role === 'child'
+        ? await resolveViewerChildScope(familyId, userId)
+        : (role === 'parent' || role === 'master' ? body?.child_id : null);
+      if (!childId) throw new Error('Perfil do filho não encontrado.');
+      return {data:await saveFamilyAvatar(supabase,{familyId,presetId,childId,kind:'child'})};
+    }
+
+    if (path === '/children/me/mascot') {
+      if (!userId) throw new Error('Faça login para escolher um mascote.');
+      const familyId = await getFamilyId();
+      if (!familyId) throw new Error('Família não encontrada.');
+      const mascotId = String(body?.mascot_id || '').toLowerCase();
+      if (!['lili', 'tobe', 'pipo', 'luca'].includes(mascotId)) {
+        throw new Error('Escolha um mascote válido.');
+      }
+      const role = await getUserRole();
+      const childId = role === 'child'
+        ? await resolveViewerChildScope(familyId, userId)
+        : (role === 'parent' || role === 'master' ? body?.child_id : null);
+      if (!childId) throw new Error('Perfil do filho não encontrado.');
+      const { data, error } = await supabase.from('children')
+        .update({ mascot_id: mascotId }).eq('id', childId).eq('family_id', familyId)
+        .select('id, mascot_id').single();
+      if (error) throw new Error(error.message);
+      return { data };
+    }
+
+    if (path === '/children/me/color') {
+      if (!userId) throw new Error('Faça login para escolher uma cor.');
+      const familyId = await getFamilyId();
+      if (!familyId) throw new Error('Família não encontrada.');
+      const role = await getUserRole();
+      const color = String(body?.color || '').toUpperCase();
+      if (!/^#[0-9A-F]{6}$/.test(color)) throw new Error('Escolha uma cor válida.');
+      const childId = role === 'child'
+        ? await resolveViewerChildScope(familyId, userId)
+        : (role === 'parent' || role === 'master' ? body?.child_id : null);
+      if (!childId) throw new Error('Perfil do filho não encontrado.');
+      const { data, error } = await supabase.from('children')
+        .update({ color }).eq('id', childId).eq('family_id', familyId)
+        .select('id, color').single();
+      if (error) throw new Error(error.message);
+      return { data };
+    }
+
     if (path.startsWith('/master/')) {
       const role = await getUserRole();
       if (role !== 'master') throw new Error('Acesso negado');
@@ -3989,9 +3685,14 @@ const api = {
         }
       }
 
+      const role=await getUserRole();
+      if(targetChildId && !['parent','master'].includes(role) && targetChildId!==await resolveViewerChildScope(familyId,userId)) throw new Error('Você não pode alterar este perfil.');
+      const chosen=formField(body,'avatar_preset');
+      if(chosen && !formField(body,'avatar')) return {data:await saveFamilyAvatar(supabase,{familyId,presetId:chosen,childId:targetChildId,memberId:userId,kind:targetChildId ? 'child':'adult'})};
+
       if (body instanceof FormData) {
-        const preset = body.get('avatar_preset');
-        const file = body.get('avatar');
+        const preset = formField(body,'avatar_preset');
+        const file = formField(body,'avatar');
         const upload = file ? await normalizeAvatarUpload(file) : null;
         if (upload) {
           const ext = (upload.name && String(upload.name).split('.').pop()) || 'jpg';
@@ -4000,12 +3701,9 @@ const api = {
             : `${familyId}/user-${userId}-${Date.now()}.${ext}`;
           const rel = await uploadAvatarToStorage(familyId, filePath, file);
 
-          if (targetChildId) {
-            await supabase.from('children').update({ avatar_url: rel, avatar_preset: null }).eq('id', targetChildId).eq('family_id', familyId);
-          } else {
-            await supabase.from('users').update({ avatar_url: rel, avatar_preset: null }).eq('id', userId);
-          }
-          return { data: { avatar_url: rel, avatar_preset: preset || null } };
+          const saved=await saveAvatarPhoto(supabase,{familyId,avatarUrl:rel,childId:targetChildId,memberId:userId});
+          await warmFamilyAssets(supabase,[rel]);
+          return {data:saved};
         }
         if (preset) {
           if (targetChildId) {
@@ -4064,20 +3762,24 @@ const api = {
       // Permite que o próprio utilizador altere o seu avatar
       const isSelf = String(targetUserId) === String(userId);
       if (!isSelf && role !== 'parent') throw new Error('Apenas responsáveis podem alterar o avatar de outros membros.');
-      const { data: target } = await supabase.from('users').select('id').eq('id', targetUserId).eq('family_id', familyId).maybeSingle();
+      const { data: target } = await supabase.from('users').select('id,role').eq('id', targetUserId).eq('family_id', familyId).maybeSingle();
       if (!target) throw new Error('Utilizador não encontrado na família.');
 
+      const chosen=formField(body,'avatar_preset');
+      if(chosen && !formField(body,'avatar')) return {data:await saveFamilyAvatar(supabase,{familyId,presetId:chosen,memberId:targetUserId,kind:target.role==='child' ? 'child':'adult'})};
+
       if (body instanceof FormData) {
-        const preset = body.get('avatar_preset');
-        const file = body.get('avatar');
+        const preset = formField(body,'avatar_preset');
+        const file = formField(body,'avatar');
         const upload = file ? await normalizeAvatarUpload(file) : null;
         if (upload) {
           const ext = (upload.name && String(upload.name).split('.').pop()) || 'jpg';
           const filePath = `${familyId}/user-${targetUserId}-${Date.now()}.${ext}`;
           const rel = await uploadAvatarToStorage(familyId, filePath, file);
 
-          await supabase.from('users').update({ avatar_url: rel, avatar_preset: null }).eq('id', targetUserId).eq('family_id', familyId);
-          return { data: { avatar_url: rel, avatar_preset: preset || null } };
+          const saved=await saveAvatarPhoto(supabase,{familyId,avatarUrl:rel,memberId:targetUserId});
+          await warmFamilyAssets(supabase,[rel]);
+          return {data:saved};
         }
         if (preset) {
           await supabase.from('users').update({ avatar_preset: preset, avatar_url: null }).eq('id', targetUserId).eq('family_id', familyId);
@@ -4090,165 +3792,25 @@ const api = {
       throw new Error('Envie avatar (ficheiro) ou avatar_preset');
     }
 
-    const childPwMatch = path.match(/^\/families\/children\/([^/]+)\/password$/);
-    if (childPwMatch) {
-      const childId = childPwMatch[1];
-      const { data: ch } = await supabase.from('children').select('user_id').eq('id', childId).eq('family_id', familyId).maybeSingle();
-      if (!ch?.user_id) throw new Error('Esta criança não tem conta de login. Defina email ao criar ou use convite.');
-      const targetUid = ch.user_id;
-      const pwd = body?.password;
-      const must = !!body?.must_change_password;
-      if (pwd && String(pwd).length >= 4) {
-        if (targetUid === userId) {
-          await changeOwnPassword(pwd, userId);
-        } else {
-          await changeMemberPassword(targetUid, pwd, must, childId);
-        }
-      } else if (must) {
-        const { error: uErr } = await supabase
-          .from('users')
-          .update({ must_change_password: must })
-          .eq('id', targetUid)
-          .eq('family_id', familyId);
-        if (uErr) throw new Error(uErr.message);
-      }
-      return { data: { ok: true } };
-    }
-
-    const memberPwMatch = path.match(/^\/families\/members\/([^/]+)\/password$/);
-    if (memberPwMatch) {
-      const targetUid = memberPwMatch[1];
-      const pwd = body?.password;
-      const must = !!body?.must_change_password;
-      const { data: tgt } = await supabase.from('users').select('id').eq('id', targetUid).eq('family_id', familyId).maybeSingle();
-      if (!tgt) throw new Error('Membro não encontrado.');
-      if (pwd && String(pwd).length >= 4) {
-        if (targetUid === userId) {
-          await changeOwnPassword(pwd, userId);
-        } else {
-          await changeMemberPassword(targetUid, pwd, must);
-        }
-      } else if (must) {
-        const { error: uErr } = await supabase
-          .from('users')
-          .update({ must_change_password: must })
-          .eq('id', targetUid)
-          .eq('family_id', familyId);
-        if (uErr) throw new Error(uErr.message);
-      }
-      return { data: { ok: true } };
+    const passwordMatch = path.match(/^\/families\/(children|members)\/([^/]+)\/password$/);
+    if (passwordMatch) {
+      const isChild = passwordMatch[1] === 'children'; const id = passwordMatch[2];
+      const { data: target,error: lookupError } = await supabase.from(isChild ? 'children' : 'users').select(isChild ? 'user_id' : 'id').eq('id',id).eq('family_id',familyId).maybeSingle();
+      const targetId = isChild ? target?.user_id : target?.id;
+      if (lookupError || !targetId) throw new Error('Membro não encontrado ou sem acesso próprio.');
+      await changeMemberPassword(targetId,body?.password,!!body?.must_change_password,isChild ? id : null);
+      return { data: { ok:true } };
     }
 
     const childPutMatch = path.match(/^\/families\/children\/([^/]+)$/);
-    if (childPutMatch) {
-      const childId = childPutMatch[1];
-      const { data: existing, error: exErr } = await supabase
-        .from('children')
-        .select('id, user_id')
-        .eq('id', childId)
-        .eq('family_id', familyId)
-        .maybeSingle();
-      if (exErr || !existing) throw new Error('Criança não encontrada.');
+    if (childPutMatch) return { data: await updateLegacyChild(supabase,familyId,childPutMatch[1],body) };
 
-      let linkedUserId = existing.user_id;
-      const emailRaw = body.email != null ? String(body.email).trim().toLowerCase() : '';
-
-      if (!linkedUserId && emailRaw) {
-        linkedUserId = await createLinkedChildAuthUser({
-          email: emailRaw,
-          password: body.password,
-          displayName: body.name || emailRaw.split('@')[0],
-          familyId,
-          mustChangePassword: !!body.must_change_password,
-        });
-      } else if (linkedUserId && emailRaw) {
-        const { data: uRow } = await supabase.from('users').select('email').eq('id', linkedUserId).maybeSingle();
-        const currentEmail = String(uRow?.email || '').trim().toLowerCase();
-        if (emailRaw !== currentEmail) {
-          await updateMemberEmail(linkedUserId, emailRaw, childId);
-        }
-        if (body.name) {
-          await supabase.from('users').update({ name: body.name }).eq('id', linkedUserId).eq('family_id', familyId);
-        }
-      }
-
-      const patch = omitUndefined({
-        name: body.name,
-        nickname: body.nickname,
-        age: body.age === '' || body.age === undefined ? null : Number(body.age),
-        color: body.color,
-        emoji: body.emoji,
-        notes: body.notes,
-        birthday: body.birthday === '' ? null : body.birthday,
-        avatar_preset: body.avatar_preset,
-        user_id: linkedUserId || undefined,
-      });
-      const { data, error } = await supabase.from('children').update(patch).eq('id', childId).eq('family_id', familyId).select().single();
-      if (error) throw new Error(error.message);
-      return { data };
-    }
-
-    const memberPutMatch = path.match(/^\/families\/members\/([^/]+)$/);
-    if (memberPutMatch) {
-      const uid = memberPutMatch[1];
-      if (body.access_profile !== undefined) {
-        const { error } = await supabase.rpc('update_member_access_profile', { p_member_id: uid, p_access_profile: body.access_profile });
-        if (error) throw new Error(error.message);
-      }
-      const patch = omitUndefined({
-        name: body.name,
-        phone: body.phone,
-        emoji: body.emoji,
-        display_color: body.display_color,
-      });
-      if (body.email !== undefined) patch.email = body.email;
-      const { data, error } = await supabase.from('users').update(patch).eq('id', uid).eq('family_id', familyId).not('role', 'eq', 'master').select().single();
-      if (error) throw new Error(error.message);
-      return { data };
-    }
-
-    const relativePutMatch = path.match(/^\/families\/relatives\/([^/]+)$/);
-    if (relativePutMatch) {
-      const uid = relativePutMatch[1];
-      if (body.access_profile !== undefined) {
-        const { error } = await supabase.rpc('update_member_access_profile', { p_member_id: uid, p_access_profile: body.access_profile });
-        if (error) throw new Error(error.message);
-      }
-      const patch = omitUndefined({
-        name: body.name,
-        phone: body.phone,
-        emoji: body.emoji,
-        display_color: body.display_color,
-      });
-      if (body.email !== undefined) patch.email = body.email;
-      const { data, error } = await supabase.from('users').update(patch).eq('id', uid).eq('family_id', familyId).eq('role', 'relative').select().single();
-      if (error) throw new Error(error.message);
-      if (body.relationship != null) {
-        const { error: famMemErr } = await supabase.from('family_members').upsert(
-          { family_id: familyId, user_id: uid, relationship: body.relationship },
-          { onConflict: 'family_id,user_id' },
-        );
-        if (famMemErr && __DEV__) console.warn('[families] family_members:', famMemErr.message);
-      }
-      if (Array.isArray(body.linked_child_ids)) {
-        await supabase.from('relative_children').delete().eq('relative_user_id', uid).eq('family_id', familyId);
-        const rows = body.linked_child_ids.map((cid) => ({
-          id: uuidv4(),
-          relative_user_id: uid,
-          child_id: cid,
-          family_id: familyId,
-        }));
-        if (rows.length) {
-          const { error: relRowsErr } = await supabase.from('relative_children').insert(rows);
-          if (relRowsErr && __DEV__) console.warn('[families] relative_children:', relRowsErr.message);
-        }
-      }
-      return { data };
-    }
+    const memberPutMatch = path.match(/^\/families\/(members|relatives)\/([^/]+)$/);
+    if (memberPutMatch) return { data: await updateLegacyMember(supabase,familyId,memberPutMatch[2],body,memberPutMatch[1]==='members'?'parent':'relative') };
 
     if (path === '/families/logo') {
-      if (!(body instanceof FormData) || !body.get('logo')) throw new Error('Envie logo (FormData)');
-      const file = body.get('logo');
+      if (!(body instanceof FormData) || !formField(body,'logo')) throw new Error('Envie logo (FormData)');
+      const file = formField(body,'logo');
       const upload = await normalizeAvatarUpload(file);
       if (!upload) throw new Error('Ficheiro de logo inválido');
       const ext = (upload.name && String(upload.name).split('.').pop()) || 'png';
@@ -4257,6 +3819,7 @@ const api = {
       if (upErr) throw new Error(upErr.message);
       const rel = `family-images/${filePath}`;
       await supabase.from('families').update({ logo_url: rel }).eq('id', familyId);
+      await warmFamilyAssets(supabase,[rel]);
       return { data: { logo_url: rel } };
     }
 
@@ -4297,8 +3860,11 @@ const api = {
         return { data: mapAppointmentFromDb(data, null) };
       }
       if (healthPut.table === 'medications') {
-        const patch = { ...body };
-        ['kind', 'patient_mode', 'child_name', 'created_at', 'updated_at', 'id', 'family_id', 'children'].forEach((k) => delete patch[k]);
+        const { data: existing, error: readError } = await supabase.from('medications').select('*').eq('id', healthPut.id).eq('family_id', familyId).single();
+        if (readError) throw new Error(readError.message);
+        const patch = {};
+        MEDICATION_FIELDS.forEach((k) => { if (body[k] !== undefined) patch[k] = body[k]; });
+        Object.assign(patch, normalizeMedication(patch, existing));
         if (patch.child_id === '') patch.child_id = null;
         if (patch.patient_user_id === '') patch.patient_user_id = null;
         if (Array.isArray(patch.scheduled_times)) patch.scheduled_times = JSON.stringify(patch.scheduled_times);
@@ -4572,7 +4138,7 @@ const api = {
 
     if (path.match(/^\/allowance\/rewards\/[^/]+$/)) {
       const rid = parts[2];
-      const { data, error } = await supabase.from('rewards').update({ ...body }).eq('id', rid).eq('family_id', familyId).select().single();
+      const { data, error } = await supabase.from('rewards').update({ ...buildRewardPayload(body), updated_at: new Date().toISOString() }).eq('id', rid).eq('family_id', familyId).is('deleted_at', null).select().single();
       if (error) throw new Error(error.message);
       return { data };
     }
@@ -4585,93 +4151,20 @@ const api = {
     }
 
     if (path.match(/^\/allowance\/redemptions\/[^/]+\/approve$/)) {
-      const roleAppr = await getUserRole();
-      if (roleAppr !== 'master' && roleAppr !== 'parent' && roleAppr !== 'relative') {
-        throw new Error('Sem permissão para aprovar resgates.');
+      if (typeof body?.approved !== 'boolean') throw new Error('Informe se o pedido foi aprovado ou recusado.');
+      const { data, error } = await supabase.rpc('review_reward_redemption', {
+        p_redemption_id: parts[2], p_approved: body.approved,
+      });
+      if (error) throw new Error(error.message);
+      if (!data?.id) throw new Error('A decisão não foi confirmada pelo servidor. Atualize a loja.');
+      // Medals are optional; a committed approval must never be reported as failed.
+      if (body.approved) {
+        try {
+          const { data: child } = await supabase.from('children').select('streak_current').eq('id', data.child_id).maybeSingle();
+          await checkAndAwardMedals(supabase, data.child_id, familyId, child?.streak_current || 0, { omitSpendableBonus: true });
+        } catch (medalError) { console.warn('[redemptions] medalhas:', medalError.message); }
       }
-
-      const rid = parts[2];
-      const { data: redemption, error: rdmErr } = await supabase
-        .from('redemptions')
-        .select('*')
-        .eq('id', rid)
-        .maybeSingle();
-      if (rdmErr) throw new Error(rdmErr.message);
-      if (!redemption) throw new Error('Pedido não encontrado.');
-
-      const { data: reward, error: rwErr } = await supabase
-        .from('rewards')
-        .select('id,name,icon,point_cost,family_id')
-        .eq('id', redemption.reward_id)
-        .eq('family_id', familyId)
-        .maybeSingle();
-      if (rwErr) throw new Error(rwErr.message);
-      if (!reward) throw new Error('Recompensa não encontrada nesta família.');
-
-      const { data: childRow } = await supabase
-        .from('children')
-        .select('id,family_id,name')
-        .eq('id', redemption.child_id)
-        .maybeSingle();
-      if (!childRow || childRow.family_id !== familyId) throw new Error('Pedido não pertence à tua família.');
-
-      const wasPending = redemption.status === 'pending';
-      const approved = !!body?.approved;
-      const patch = {
-        status: approved ? 'approved' : 'rejected',
-        approved_by: userId ?? null,
-        approved_at: new Date().toISOString(),
-      };
-
-      const { data: updatedRed, error: updRedErr } = await supabase
-        .from('redemptions')
-        .update(patch)
-        .eq('id', rid)
-        .select()
-        .maybeSingle();
-      if (updRedErr) throw new Error(updRedErr.message);
-
-      if (approved && wasPending && updatedRed?.child_id) {
-        const cost = Number(reward.point_cost ?? 0);
-        if (cost > 0) {
-          const { data: ptsRow } = await supabase
-            .from('children')
-            .select('points')
-            .eq('id', redemption.child_id)
-            .maybeSingle();
-          const currentPts = Number(ptsRow?.points ?? 0);
-          const nextPts = currentPts - cost;
-          await supabase.from('children').update({ points: nextPts }).eq('id', redemption.child_id);
-
-          const { error: txErr } = await supabase.from('allowance_transactions').insert({
-            id: uuidv4(),
-            family_id: familyId,
-            child_id: redemption.child_id,
-            reward_id: reward.id,
-            type: 'debit',
-            origin: 'reward',
-            description: `Resgate: ${reward.name}`,
-            amount: cost,
-            status: 'approved',
-            approved_by: userId ?? null,
-            balance_after: 0,
-          });
-          if (txErr && __DEV__) console.warn('[redemptions] lançamento mesada:', txErr.message);
-        }
-
-        const { data: chAfter } = await supabase.from('children').select('streak_current').eq('id', redemption.child_id).maybeSingle();
-        await checkAndAwardMedals(supabase, redemption.child_id, familyId, chAfter?.streak_current || 0, {
-          omitSpendableBonus: true,
-        });
-      }
-
-      return {
-        data: mapRedemptionListRow({
-          ...updatedRed,
-          rewards: reward,
-          children: { name: childRow?.name ?? '' },
-        }),
-      };
+      return { data: mapRedemptionListRow(data) };
     }
 
     if (path.startsWith('/allowance/settings/')) {
@@ -4704,113 +4197,28 @@ const api = {
         .single();
       if (reqErr) throw new Error(reqErr.message);
 
-      const newStatus = body.approved ? 'approved' : 'rejected';
-
       // 2. Se for rejeição: actualizar apenas o status e retornar
       if (!body.approved) {
         const { data: rejData, error: rejErr } = await supabase
           .from('piggy_requests')
           .update({ status: 'rejected', review_note: body.review_note ?? null })
-          .eq('id', reqId).eq('family_id', familyId).select().single();
+          .eq('id', reqId).eq('family_id', familyId).eq('status', 'pending').select().single();
         if (rejErr) throw new Error(rejErr.message);
         return { data: rejData };
       }
 
-      // 3. Aprovação — tentar primeiro via RPC atómica
-      try {
-        const { data: rpcData, error: rpcErr } = await supabase
-          .rpc('approve_piggy_request', { p_request_id: reqId, p_family_id: familyId });
-        if (!rpcErr && rpcData?.ok) {
-          // Actualizar note de revisão se fornecida
-          if (body.review_note) {
-            await supabase.from('piggy_requests')
-              .update({ review_note: body.review_note })
-              .eq('id', reqId);
-          }
-          return { data: { ...reqRow, status: 'approved' } };
-        }
-      } catch (_) { /* RPC não existe ainda, continua com fallback */ }
-
-      // Fallback manual (caso a RPC ainda não tenha sido criada no Supabase)
-      const { data: updatedReq, error: updErr } = await supabase
-        .from('piggy_requests')
-        .update({ status: 'approved', review_note: body.review_note ?? null })
-        .eq('id', reqId)
-        .eq('family_id', familyId)
-        .select()
-        .single();
-      if (updErr) throw new Error(updErr.message);
-
-      // Se aprovado: creditar meta + debitar mesada
-      if (reqRow.child_id && reqRow.requested_amount > 0) {
-        const amount = Number(reqRow.requested_amount);
-
-        // 3a. Creditar a meta do cofrinho (procurar por child_id + title)
-        try {
-          const { data: goalRows } = await supabase
-            .from('savings_goals')
-            .select('id, current_amount, target_amount')
-            .eq('child_id', reqRow.child_id)
-            .eq('family_id', familyId)
-            .ilike('title', reqRow.goal_title ?? '')
-            .limit(1);
-
-          const goal = goalRows?.[0];
-          if (goal) {
-            const newCurrentAmount = Number(goal.current_amount || 0) + amount;
-            const reachedTarget = goal.target_amount && newCurrentAmount >= Number(goal.target_amount);
-            await supabase
-              .from('savings_goals')
-              .update({
-                current_amount: newCurrentAmount,
-                ...(reachedTarget ? { status: 'completed' } : {}),
-              })
-              .eq('id', goal.id);
-          }
-        } catch (_) { /* não bloqueia se meta não encontrada */ }
-
-        // 3b. Debitar da mesada: ajustar o ciclo aberto da criança
-        // NOTA: a tabela allowance_cycles tem (month, year), não period_start
-        let openCycleId = null;
-        try {
-          const { data: openCycle } = await supabase
-            .from('allowance_cycles')
-            .select('id, manual_adjustments')
-            .eq('child_id', reqRow.child_id)
-            .eq('family_id', familyId)
-            .eq('status', 'open')
-            .order('year', { ascending: false })
-            .order('month', { ascending: false })
-            .limit(1)
-            .maybeSingle();
-
-          if (openCycle) {
-            openCycleId = openCycle.id;
-            await supabase
-              .from('allowance_cycles')
-              .update({ manual_adjustments: Number(openCycle.manual_adjustments || 0) - amount })
-              .eq('id', openCycle.id);
-          }
-        } catch (_) { /* não bloqueia */ }
-
-        // 3c. Registar transacção para histórico (type: 'debit' — não 'deduction')
-        try {
-          await supabase
-            .from('allowance_transactions')
-            .insert([{
-              id: uuidv4(),
-              family_id: familyId,
-              child_id: reqRow.child_id,
-              cycle_id: openCycleId,
-              type: 'debit',
-              amount: Math.abs(amount),
-              description: `Cofrinho: ${reqRow.goal_title || 'Meta'}`,
-              created_at: new Date().toISOString(),
-            }]);
-        } catch (_) { /* não bloqueia */ }
+      // A RPC é transacional: pedido, saldo, meta e extrato são gravados juntos.
+      const { data: rpcData, error: rpcErr } = await supabase
+        .rpc('approve_piggy_request', { p_request_id: reqId, p_family_id: familyId });
+      if (rpcErr) throw new Error(rpcErr.message);
+      if (!rpcData?.ok) throw new Error('Transferência não confirmada pelo banco.');
+      if (body.review_note) {
+        const { error: noteErr } = await supabase.from('piggy_requests')
+          .update({ review_note: String(body.review_note).slice(0, 500) })
+          .eq('id', reqId).eq('family_id', familyId);
+        if (noteErr) console.warn('[allowance] Nota da aprovação não foi gravada:', noteErr.message);
       }
-
-      return { data: updatedReq };
+      return { data: { ...reqRow, status: 'approved', ...rpcData } };
     }
 
     const occUpdateOnly = path.match(/^\/tasks\/occurrences\/([^/]+)$/);
@@ -4937,10 +4345,13 @@ const api = {
       return { data: { success: true } };
     }
 
-    if (path.startsWith('/allowance/rewards/')) {
-      const rid = parts[2];
-      await supabase.from('rewards').delete().eq('id', rid).eq('family_id', familyId);
-      return { data: { success: true } };
+    if (/^\/allowance\/rewards\/[^/]+$/.test(path)) {
+      const { data, error } = await supabase.from('rewards')
+        .update({ deleted_at: new Date().toISOString(), is_active: false, available: false })
+        .eq('id', parts[2]).eq('family_id', familyId).select('id').single();
+      if (error) throw new Error(error.message);
+      if (!data?.id) throw new Error('Recompensa não encontrada ou sem permissão.');
+      return { data: { success: true, archived: true } };
     }
 
     const healthDel = parseHealthSubResource(path);
@@ -5018,4 +4429,6 @@ api.put = __wrapMutation(api.put, 'put');
 api.post = __wrapMutation(api.post, 'post');
 api.delete = __wrapMutation(api.delete, 'delete');
 
+const signedAssetGet = api.get;
+api.get = async (...args) => { const result = await signedAssetGet.apply(api,args); await warmResponseAssets(supabase,result?.data); return result; };
 export default api;

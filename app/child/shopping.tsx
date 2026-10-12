@@ -6,7 +6,7 @@ import {
 } from 'react-native';
 import { useAuth } from '../../src/contexts/AuthContext';
 import { Colors, Shadow, Radii, FontSize, Spacing } from '../../src/theme';
-import { ShoppingModuleHeader } from '../../src/components/shopping/ShoppingModuleHeader';
+import { ChildModuleHeader } from '../../src/components/child/ChildModuleHeader';
 import api from '../../src/services/api';
 
 const COMMON_SUGGESTIONS = ['Leite', 'Pão', 'Ovos', 'Carne', 'Frango', 'Frutas', 'Legumes', 'Arroz', 'Feijão', 'Café'];
@@ -100,13 +100,15 @@ export default function ChildShoppingScreen() {
 
   return (
     <View style={s.screen}>
-      <StatusBar barStyle="light-content" backgroundColor="#059669" />
+      <StatusBar barStyle="dark-content" backgroundColor={Colors.bg} />
 
-      <ShoppingModuleHeader
-        backgroundColor="#059669"
-        title="Lista de Compras"
-        subtitle="Veja e contribua com as compras da família"
-        onAdd={() => { setForm(INIT_FORM); setShowAddModal(true); }}
+      <ChildModuleHeader
+        moduleId="compras"
+        title="Compras"
+        subtitle="Lista da família"
+        actionLabel="Adicionar"
+        actionIcon="add"
+        onAction={() => { setForm(INIT_FORM); setShowAddModal(true); }}
       />
 
       {/* Stats */}

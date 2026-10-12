@@ -4,7 +4,6 @@ import {
   View,
   Text,
   TouchableOpacity,
-  StatusBar,
 } from "react-native";
 import { useEventListener } from "expo";
 import {
@@ -66,14 +65,12 @@ export function IntroVideo({ onFinish }: Props) {
     // Renderiza container vazio enquanto o useEffect processa o desvio para a próxima tela
     return (
       <View style={styles.container}>
-        <StatusBar hidden />
       </View>
     );
   }
 
   return (
     <View style={styles.container}>
-      <StatusBar hidden />
       <VideoView
         player={player}
         style={StyleSheet.absoluteFill}

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -17,6 +17,7 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuth } from '../../src/contexts/AuthContext';
+import { ChildModuleHeader } from '../../src/components/child/ChildModuleHeader';
 import { Colors, Shadow, Radii, FontSize } from '../../src/theme';
 import { Card } from '../../src/components/ui/Card';
 import { Badge } from '../../src/components/ui/Badge';
@@ -51,7 +52,10 @@ function fmtPts(n: number | null | undefined): string {
 
 export default function ChildGradesScreen() {
   const router = useRouter();
-  const { childProfile, family, refreshProfile } = useAuth();
+  const { childProfile, family, refreshProfile,profileLoading } = useAuth();
+  const scope = `${family?.id || ''}:${childProfile?.id || ''}`;
+  const scopeRef=useRef(scope); scopeRef.current=scope;
+  const [loadError,setLoadError]=useState('');
 
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
@@ -78,14 +82,17 @@ export default function ChildGradesScreen() {
   const [isNewSubject, setIsNewSubject] = useState<boolean>(false);
 
   const loadBundle = useCallback(async (isRefresh = false) => {
+    if (profileLoading || !family?.id || !childProfile?.id) return;
+    const requestedScope=scope;
     try {
+      setLoadError('');
       if (!isRefresh) setLoading(true);
 
       const [gradesRes, subjectsRes] = await Promise.all([
         api.get('/grades'),
         api.get('/grades/subjects'),
       ]);
-
+      if (requestedScope!==scopeRef.current) return;
       setGrades(gradesRes?.data || []);
 
       const extra = (subjectsRes?.data || []).filter((s: string) => {
@@ -102,6 +109,7 @@ export default function ChildGradesScreen() {
           .eq('family_id', family.id)
           .eq('child_id', cid)
           .maybeSingle();
+        if (requestedScope!==scopeRef.current) return;
         if (cfg) setSettings(cfg);
 
         const { data: sgpRows } = await supabase
@@ -110,19 +118,23 @@ export default function ChildGradesScreen() {
           .eq('family_id', family.id)
           .eq('child_id', cid)
           .order('period_number', { ascending: true });
+        if (requestedScope!==scopeRef.current) return;
         if (sgpRows) setPeriods(sgpRows);
       }
     } catch (err) {
+      if (requestedScope!==scopeRef.current) return;
+      setLoadError('Não foi possível carregar suas notas. Verifique a conexão e tente novamente.');
       console.error('[ChildGrades] Erro ao carregar notas:', err);
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (requestedScope===scopeRef.current) { setLoading(false); setRefreshing(false); }
     }
-  }, [childProfile?.id, family?.id]);
+  }, [childProfile?.id, family?.id,profileLoading,scope]);
 
   useEffect(() => {
+    scopeRef.current=scope;
     loadBundle();
-  }, [loadBundle]);
+    return () => { scopeRef.current=''; };
+  }, [loadBundle,scope]);
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
@@ -231,16 +243,16 @@ export default function ChildGradesScreen() {
   return (
     <View style={styles.root}>
       <StatusBar barStyle="dark-content" backgroundColor={Colors.bg} />
+      {!!loadError && <View style={{ padding:16 }}><Text accessibilityRole="alert" style={{ color:'#b91c1c' }}>{loadError}</Text><TouchableOpacity onPress={() => { void loadBundle(); }} style={{ paddingVertical:12 }}><Text style={{ color:Colors.primary }}>Tentar novamente</Text></TouchableOpacity></View>}
       
       {/* Header */}
-      <View style={styles.header}>
-        <View>
-          <Text style={styles.headerTitle}>Minhas Notas 📚</Text>
-          <Text style={styles.headerSubtitle}>Acompanhe suas médias e avaliações</Text>
-        </View>
-        <TouchableOpacity
-          style={styles.addBtn}
-          onPress={() => {
+      <ChildModuleHeader
+        moduleId="notas"
+        title="Notas"
+        subtitle="Médias e avaliações"
+        actionLabel="Nova nota"
+        actionIcon="add"
+        onAction={() => {
             setForm({
               subject: '',
               type: 'test',
@@ -253,12 +265,8 @@ export default function ChildGradesScreen() {
             });
             setIsNewSubject(false);
             setShowModal(true);
-          }}
-          activeOpacity={0.8}
-        >
-          <Text style={styles.addBtnText}>+ Nota</Text>
-        </TouchableOpacity>
-      </View>
+        }}
+      />
 
       {loading && !refreshing ? (
         <View style={styles.loaderContainer}>

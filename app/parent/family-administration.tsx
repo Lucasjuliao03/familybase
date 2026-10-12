@@ -318,6 +318,7 @@ export default function FamilyAdministrationScreen() {
           {tab === 'family' && (
             <View style={s.card}>
               <Text style={s.cardTitle}>Dados da família</Text>
+              {!!familyForm.family_code && <View style={{ marginBottom:16 }}><Text style={s.fieldLabel}>Código da família</Text><Text selectable style={{ color:Colors.primary,fontSize:21,fontWeight:'800',paddingVertical:8 }}>{familyForm.family_code}</Text><Text style={{ color:Colors.textMuted,fontSize:12 }}>Para os membros entrarem com seu login e senha.</Text></View>}
               <FormField label="Nome" value={familyForm.name || ''} onChangeText={(v) => setFamilyForm((p: any) => ({ ...p, name: v }))} />
               <FormField label="E-mail de contacto" value={familyForm.contact_email || ''} onChangeText={(v) => setFamilyForm((p: any) => ({ ...p, contact_email: v }))} keyboardType="email-address" />
               <FormField label="Telefone" value={familyForm.contact_phone || ''} onChangeText={(v) => setFamilyForm((p: any) => ({ ...p, contact_phone: v }))} />
@@ -382,10 +383,10 @@ export default function FamilyAdministrationScreen() {
               <SectionTitle title="Filhos" />
               {children.map((c) => (
                 <View key={c.id} style={[s.memberCard, { borderTopColor: c.color || Colors.primary, borderTopWidth: 4 }]}>
-                  <AvatarPicker currentAvatarUrl={c.avatar_url} currentPreset={c.avatar_preset} name={c.name} endpoint={`/auth/avatar/child/${c.id}`} size={56} onSave={() => loadAll(true)} />
+                  <AvatarPicker currentAvatarUrl={c.avatar_url} currentPreset={c.avatar_preset} name={c.name} endpoint={`/auth/avatar/child/${c.id}`} size={56} ringColor={c.color || Colors.primary} onSave={() => loadAll(true)} />
                   <View style={{ flex: 1 }}>
                     <Text style={s.memberName}>{c.emoji ? `${c.emoji} ` : ''}{c.name}</Text>
-                    <Text style={s.memberMeta}>{c.user_email || 'Sem login'} · Nível {c.level ?? 1}</Text>
+                    <Text style={s.memberMeta}>{c.username || c.display_login || c.user_email || 'Sem login'} · Nível {c.level ?? 1}</Text>
                   </View>
                   <View style={{ flexDirection: 'row', gap: 10, alignItems: 'center' }}>
                     <TouchableOpacity onPress={() => setChildModal(c)}><Text style={s.link}>Editar</Text></TouchableOpacity>
@@ -507,7 +508,7 @@ function MemberRow({ member, canEditAvatar, onRefresh, onEdit, onPassword, onDel
       )}
       <View style={{ flex: 1 }}>
         <Text style={s.memberName}>{member.name}</Text>
-        <Text style={s.memberMeta}>{member.email || '—'} · {subtitle}</Text>
+        <Text style={s.memberMeta}>{member.display_login || member.email || '—'} · {subtitle}</Text>
       </View>
       <View style={{ flexDirection: 'row', gap: 10, alignItems: 'center' }}>
         <TouchableOpacity onPress={onEdit}><Text style={s.link}>Editar</Text></TouchableOpacity>

@@ -17,7 +17,9 @@ import {
   getChildProxy,
 } from '../lib/childProxy';
 import { makeProxySession, canActAsChild } from '../lib/proxyAudit';
-import { uploadAvatarBase64 } from '../lib/uploadAvatar';
+import { loadExistingFamilyProfile, registerLegacyFamilyAccount as registerFamilyAccount, signInExistingAccount as signInFamilyAccount } from '../lib/legacyFamilyAuth';
+import * as ExpoLinking from 'expo-linking';
+import { clearFamilyAssets, warmFamilyProfileAssets } from '../lib/familyAssets';
 import { BILLING_ENABLED } from '../lib/features';
 import { stopLocationSharing } from '../lib/locationBackgroundTask';
 
@@ -41,6 +43,7 @@ export interface UserProfile {
 
 export interface FamilyData {
   id: string;
+  family_code?: string;
   name?: string;
   subscription_status?: string;
   trial_ends_at?: string;
@@ -69,14 +72,13 @@ export interface RegisterFamilyInput {
   name: string;
   email: string;
   password: string;
+  accepted?: boolean;
   profileType: 'pai' | 'mae';
-  phone?: string;
-  address?: string;
+  phone: string;
+  avatarPreset: string;
   /** Data de nascimento no formato YYYY-MM-DD. */
   dateOfBirth?: string;
-  /** Imagem do avatar em base64 (opcional). */
-  avatarBase64?: string | null;
-  avatarExt?: string;
+
 }
 
 export interface AuthContextValue {
@@ -95,9 +97,9 @@ export interface AuthContextValue {
   actingAsChild: any | null;
   /** true quando o utilizador autenticado está a atuar como um filho. */
   isChildProxy: boolean;
-  login: (email: string, password: string) => Promise<void>;
+  login: (email: string, password: string, familyCode?: string) => Promise<void>;
   /** Cadastro seguro de uma nova família (responsável pai/mãe = gestor). */
-  register: (data: RegisterFamilyInput) => Promise<{ family_id?: string }>;
+  register: (data: RegisterFamilyInput) => Promise<{ family_id?: string; family_code?: string; status: string }>;
   logout: () => Promise<void>;
   refreshProfile: () => Promise<void>;
   clearMustChangePassword: () => void;
@@ -251,6 +253,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const isMountedRef = useRef(true);
   const inflightRef = useRef<Promise<void> | null>(null);
+  const inflightUserRef = useRef<string | null>(null);
+  const profileGenerationRef = useRef(0);
+  useEffect(() => {
+    if (!user?.id || !family?.id) return;
+    let active=true;
+    const timer=setInterval(() => { void warmFamilyProfileAssets(supabase,family.id,family,true).then(() => {
+      if (active) setFamily(p => p?.id===family.id ? { ...p }:p);
+    }).catch(console.warn); },20*60*1000);
+    return () => { active=false; clearInterval(timer); };
+  },[user?.id,family?.id]);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -262,28 +274,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const loadProfile = useCallback(async (userId: string, emailHint?: string, opts: { awaitReady?: boolean; awaitFull?: boolean } = {}): Promise<void> => {
-    if (inflightRef.current) {
+    if (inflightRef.current && inflightUserRef.current === userId) {
       if (opts.awaitFull || opts.awaitReady) await inflightRef.current;
       return;
     }
 
+    const generation = ++profileGenerationRef.current;
+    const current = () => isMountedRef.current && generation === profileGenerationRef.current;
+    if (inflightUserRef.current !== userId) clearFamilyAssets();
+    inflightUserRef.current = userId;
     const promise = (async () => {
       setProfileLoading(true);
       try {
-        const { data: initialProfile, error: profileErr } = await supabase
-          .from('users')
-          .select('*')
-          .eq('id', userId)
-          .single();
+        const profileRow = await loadExistingFamilyProfile(supabase,userId);
 
-        let profileRow = initialProfile;
+        if (!current()) return;
 
-        if (!isMountedRef.current) return;
-
-        if (profileErr || !profileRow) {
+        if (!profileRow) {
           setUser(null); setFamily(null); setModules({}); setChildProfile(null);
           setEffectiveSubscription(null);
-          throw profileErr || new Error('Não foi possível carregar seu perfil. Tente entrar novamente.');
+          throw new Error('Não foi possível carregar seu perfil. Tente entrar novamente.');
         }
 
         // Cadastro com confirmação de e-mail só ganha família no primeiro login.
@@ -291,28 +301,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           await supabase.auth.signOut();
           throw new Error('Acesso suspenso. Entre em contato com o administrador.');
         }
-        if (!profileRow.family_id && profileRow.role !== 'master') {
-          const { data: authData } = await supabase.auth.getUser();
-          const meta = authData.user?.user_metadata;
-          if (authData.user?.id === userId && meta?.family_name) {
-            const { error: registrationError } = await supabase.rpc('register_family_and_user', {
-              p_family_name: meta.family_name,
-              p_user_name: meta.name || null,
-              p_profile_type: meta.profile_type === 'mae' ? 'mae' : 'pai',
-              p_phone: meta.phone || null,
-              p_address: meta.address || null,
-              p_date_of_birth: meta.date_of_birth || null,
-            });
-            if (registrationError) throw registrationError;
-            const { data: refreshed, error: refreshError } = await supabase.from('users').select('*').eq('id', userId).single();
-            if (refreshError || !refreshed) throw refreshError || new Error('profile_not_found');
-            profileRow = refreshed;
-          }
-        }
 
         const userObj: UserProfile = {
           ...profileRow,
-          email: emailHint || (profileRow.email as string) || '',
+          email: (profileRow.display_login as string) || (profileRow.email as string) || emailHint || '',
         } as UserProfile;
 
         const fid = profileRow.family_id as string | undefined;
@@ -330,7 +322,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             : Promise.resolve({ data: null }),
         ]);
 
-        if (!isMountedRef.current) return;
+        if (!current()) return;
 
         let effectiveChildRow = childResult?.data;
         if (!effectiveChildRow && wantsChildRow && fid) {
@@ -372,6 +364,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         ((modulesResult.data ?? []) as { module_key: string; is_enabled: boolean }[])
           .forEach((r) => { if (r.module_key) mergedMods[r.module_key] = !!r.is_enabled; });
 
+        await warmFamilyProfileAssets(supabase,fid,resolvedFamily);
+        if (!current()) return;
         setUser(userObj);
         setFamily(resolvedFamily);
         setModules(mergedMods);
@@ -390,14 +384,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         } catch { /* storage cheio */ }
       } catch (err) {
         console.error('[Auth] loadProfile erro:', err);
-        if (isMountedRef.current) {
+        if (current()) {
           setUser(null); setFamily(null); setModules({}); setChildProfile(null);
           setEffectiveSubscription(null);
         }
         throw err;
       } finally {
-        inflightRef.current = null;
-        if (isMountedRef.current) setProfileLoading(false);
+        if (current()) { inflightRef.current = null; setProfileLoading(false); }
       }
     })();
 
@@ -496,6 +489,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (event === 'INITIAL_SESSION' || event === 'TOKEN_REFRESHED') return;
 
         if (event === 'SIGNED_OUT' || !session?.user) {
+          profileGenerationRef.current++; inflightRef.current=null; inflightUserRef.current=null; clearFamilyAssets();
           try { await clearChildProxy(); } catch { /* noop */ }
           if (isMountedRef.current) {
             setUser(null); setFamily(null); setModules({}); setChildProfile(null);
@@ -520,94 +514,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, [loadProfile, safeSetLoading]);
 
-  const login = useCallback(async (email: string, password: string): Promise<void> => {
+  const login = useCallback(async (email: string, password: string, familyCode?: string): Promise<void> => {
     try {
-      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) throw new Error(error.message);
-      if (!data.user) throw new Error('Utilizador não encontrado após login.');
-      await loadProfile(data.user.id, email, { awaitReady: true });
-    } catch (e) {
-      throw mapAuthNetworkError(e);
-    }
+      const data = await signInFamilyAccount(supabase, email, password, familyCode);
+      if (!data.user) throw new Error('Não foi possível iniciar a sessão.');
+      await loadProfile(data.user.id, undefined, { awaitFull: true });
+    } catch (e) { throw mapAuthNetworkError(e); }
   }, [loadProfile]);
 
-  const register = useCallback(async (data: RegisterFamilyInput): Promise<{ family_id?: string }> => {
-    const email = String(data.email || '').trim().toLowerCase();
-    const password = String(data.password || '');
-    const familyName = (data.familyName || '').trim() || null;
-    const name = (data.name || '').trim() || null;
-    const profileType = (String(data.profileType || 'pai').toLowerCase() === 'mae') ? 'mae' : 'pai';
-
+  const register = useCallback(async (data: RegisterFamilyInput): Promise<{ family_id?: string; family_code?: string; status: string }> => {
     try {
-      safeSetLoading(true);
-
-      // 1) Criar utilizador no Supabase Auth (senha cifrada pelo Supabase).
-      const { data: signUpData, error: signUpErr } = await supabase.auth.signUp({
-        email,
-        password,
-        options: { data: { name, family_name: familyName, profile_type: profileType,
-          phone: data.phone?.trim() || null, address: data.address?.trim() || null,
-          date_of_birth: data.dateOfBirth || null } },
-      });
-      if (signUpErr) {
-        let hint = '';
-        if (signUpErr.message?.includes('already registered') || (signUpErr as any).code === 'user_already_exists') {
-          hint = ' Este email já tem conta — faça login ou use outro email.';
-        }
-        throw new Error(`${signUpErr.message}${hint}`);
-      }
-
-      // 2) Garantir sessão (se a confirmação de email estiver ativa, não vem sessão).
-      let session = signUpData.session;
-      if (!session) {
-        const { data: signInData, error: signInErr } = await supabase.auth.signInWithPassword({ email, password });
-        if (signInErr) {
-          throw new Error(
-            signInErr.code === 'email_not_confirmed'
-              ? 'Confira seu e-mail, confirme o cadastro e depois entre com sua senha. A família será criada no primeiro acesso.'
-              : 'Não foi possível iniciar sessão após o cadastro. Verifique email e senha e tente entrar.',
-          );
-        }
-        session = signInData.session;
-      }
-      if (!session?.user?.id) throw new Error('Não foi possível iniciar sessão após o cadastro.');
-
-      const uid = session.user.id;
-
-      // 3) Avatar opcional → upload para o bucket público (best-effort).
-      let avatarUrl: string | null = null;
-      if (data.avatarBase64) {
-        try {
-          avatarUrl = await uploadAvatarBase64(uid, data.avatarBase64, data.avatarExt || 'jpg');
-        } catch (e) {
-          console.warn('[Auth] upload de avatar falhou (ignorado):', (e as Error)?.message);
-        }
-      }
-
-      // 4) RPC: cria família com trial de 7 dias + perfil do responsável (gestor).
-      const { error: rpcErr } = await supabase.rpc('register_family_and_user', {
-        p_family_name: familyName,
-        p_user_name: name,
-        p_profile_type: profileType,
-        p_phone: data.phone?.trim() || null,
-        p_address: data.address?.trim() || null,
-        p_date_of_birth: data.dateOfBirth || null,
-        p_avatar_url: avatarUrl,
-        p_contact_email: email,
-      });
-      if (rpcErr) throw new Error(rpcErr.message);
-
-      // 5) Carregar o perfil já com família resolvida.
-      await loadProfile(uid, email, { awaitFull: true });
-      return { family_id: undefined };
-    } catch (e) {
-      throw mapAuthNetworkError(e);
-    } finally {
-      safeSetLoading(false);
-    }
-  }, [loadProfile, safeSetLoading]);
+      const result = await registerFamilyAccount(supabase, data,ExpoLinking.createURL('/auth-confirm'));
+      if (result.status === 'registered') { profileGenerationRef.current++; inflightRef.current=null; await loadProfile(result.userId, undefined, { awaitFull: true }); }
+      return result;
+    } catch (e) { throw mapAuthNetworkError(e); }
+  }, [loadProfile]);
 
   const logout = useCallback(async (): Promise<void> => {
+    profileGenerationRef.current++; inflightRef.current=null; inflightUserRef.current=null; clearFamilyAssets();
     try { await stopLocationSharing(); } catch { /* noop */ }
     try { await clearChildProxy(); } catch { /* noop */ }
     try {
@@ -638,7 +562,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     const { data: { session } } = await supabase.auth.getSession();
     if (!session?.user) return;
-    await loadProfile(session.user.id, session.user.email || '');
+    await loadProfile(session.user.id, session.user.email || '', { awaitFull: true });
   }, [loadProfile]);
 
   const enterChildProxy = useCallback(async (child: any): Promise<void> => {
@@ -703,9 +627,8 @@ async function fetchChildProfileRowByAuth(userId: string, familyId: string): Pro
   const { data: sessWrap, error: sessErr } = await supabase.auth.getSession();
   if (sessErr || !sessWrap?.session?.user || sessWrap.session.user.id !== userId) return null;
   const { user } = sessWrap.session;
-  const um = user.user_metadata || {};
   const am = user.app_metadata || {};
-  const raw = um.child_id || um.childId || am.child_id || am.childId;
+  const raw = am.child_id || am.childId;
   const meta = raw != null ? String(raw).trim() : '';
   if (!meta || meta === 'undefined') return null;
 
@@ -714,6 +637,7 @@ async function fetchChildProfileRowByAuth(userId: string, familyId: string): Pro
     .select('*')
     .eq('family_id', familyId)
     .eq('id', meta)
+    .eq('user_id', userId)
     .maybeSingle();
   return byMeta || null;
 }

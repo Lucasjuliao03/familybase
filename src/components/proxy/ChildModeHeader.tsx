@@ -13,7 +13,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { publicAssetUrl } from '../../lib/api';
-import { getAvatarPresetSource } from '../../lib/avatarCatalog';
+import { getAvatarPresetPortraitSource } from '../../lib/avatarCatalog';
 
 const C = {
   purpleDark: '#1F0B4D',
@@ -46,7 +46,7 @@ function HeaderAvatar({
   childName: string;
 }) {
   const remote = avatarUri ? publicAssetUrl(avatarUri) : '';
-  const preset = !remote && avatarPreset ? getAvatarPresetSource(avatarPreset) : undefined;
+  const preset = !remote && avatarPreset ? getAvatarPresetPortraitSource(avatarPreset) : undefined;
 
   if (remote) {
     return (

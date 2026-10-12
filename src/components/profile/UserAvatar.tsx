@@ -1,7 +1,7 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { View, Text, Image, StyleSheet, ViewStyle, ImageResizeMode } from 'react-native';
 import { publicAssetUrl } from '../../lib/api';
-import { getAvatarPresetSource } from '../../lib/avatarCatalog';
+import { getAvatarPresetPortraitSource, getAvatarPresetSource } from '../../lib/avatarCatalog';
 import { Colors } from '../../theme';
 
 interface UserAvatarProps {
@@ -12,6 +12,7 @@ interface UserAvatarProps {
   style?: ViewStyle;
   bordered?: boolean;
   backgroundColor?: string;
+  ringColor?: string;
   /** circle = recorte redondo; character = PNG completo sem círculo (ex.: header) */
   presentation?: 'circle' | 'character';
 }
@@ -24,13 +25,20 @@ export function UserAvatar({
   style,
   bordered = true,
   backgroundColor,
+  ringColor,
   presentation = 'circle',
 }: UserAvatarProps) {
   const isCharacter = presentation === 'character';
-  const remoteSrc = avatarUrl ? publicAssetUrl(avatarUrl) : '';
-  const presetSource = !remoteSrc && avatarPreset ? getAvatarPresetSource(avatarPreset) : undefined;
+  const [failedUri,setFailedUri]=useState('');
+  const requestedSrc=avatarUrl ? publicAssetUrl(avatarUrl):'';
+  const remoteSrc = requestedSrc!==failedUri ? requestedSrc:'';
+  const presetSource = !remoteSrc && avatarPreset
+    ? (isCharacter ? getAvatarPresetSource(avatarPreset) : getAvatarPresetPortraitSource(avatarPreset))
+    : undefined;
   const initial = name ? name.charAt(0).toUpperCase() : '?';
   const fallbackBg = backgroundColor || Colors.primaryLighter;
+  const identityColor = ringColor || (backgroundColor && /^#[0-9a-f]{6}/i.test(backgroundColor)
+    ? backgroundColor.slice(0, 7) : undefined);
   const hasImage = !!(remoteSrc || presetSource);
 
   const width = size;
@@ -49,13 +57,14 @@ export function UserAvatar({
           height,
           borderRadius: radius,
           backgroundColor: hasImage ? 'transparent' : fallbackBg,
-          borderWidth: bordered && !isCharacter ? 3 : 0,
+          borderWidth: !isCharacter && identityColor ? 2 : (bordered && !isCharacter ? 3 : 0),
+          borderColor: identityColor || Colors.primary,
         },
         style,
       ]}
     >
       {remoteSrc ? (
-        <Image source={{ uri: remoteSrc }} style={imageStyle} resizeMode={resizeMode} />
+        <Image source={{ uri: remoteSrc }} style={imageStyle} resizeMode={resizeMode} onError={() => setFailedUri(remoteSrc)} />
       ) : presetSource ? (
         <Image source={presetSource} style={imageStyle} resizeMode={resizeMode} />
       ) : (

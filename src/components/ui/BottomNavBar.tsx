@@ -13,14 +13,15 @@ import {
   Easing,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useWindowSafeAreaInsets } from './AppSafeArea';
+import { useBottomNavigationLayout } from '../../contexts/BottomNavigationContext';
 import { useRouter, usePathname } from 'expo-router';
 import { Colors, Shadow, FontSize, Radii } from '../../theme';
 import { useAuth } from '../../contexts/AuthContext';
 import { moduleAllowed, anyModuleAllowed } from '../../shared/lib/familyModules';
 
 /** Altura reservada para padding inferior do conteúdo */
-export const BOTTOM_NAV_HEIGHT = Platform.OS === 'ios' ? 88 : 72;
+export { BOTTOM_NAV_HEIGHT } from '../../contexts/BottomNavigationContext';
 
 const mesadaIcon = require('../../../icon/cofrinho.png');
 const homeIcon = require('../../../icon/home.png');
@@ -196,7 +197,8 @@ interface Props {
 }
 
 export function BottomNavBar({ role = 'parent' }: Props) {
-  const insets = useSafeAreaInsets();
+  const insets = useWindowSafeAreaInsets();
+  const onNavigationLayout = useBottomNavigationLayout();
   const router = useRouter();
   const pathname = usePathname();
   const { modules } = useAuth();
@@ -238,12 +240,13 @@ export function BottomNavBar({ role = 'parent' }: Props) {
 
   const navigateTo = (route: string) => {
     setDrawerOpen(false);
+    if (pathname === route) return;
     router.push(route as any);
   };
 
   return (
     <View style={styles.wrapper} pointerEvents="box-none">
-      <View style={styles.container}>
+      <View style={styles.container} onLayout={onNavigationLayout} testID="bottom-navigation">
         {pinnedItems.map((tab) => {
           const active = tab.end
             ? pathname === tab.route

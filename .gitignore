@@ -11,6 +11,8 @@ web-build/
 expo-env.d.ts
 
 # Native
+credentials.json
+credentials/
 .kotlin/
 *.orig.*
 *.jks
@@ -44,3 +46,6 @@ yarn-error.*
 
 # Gradle cache local (build APK)
 .gradle-home/
+
+# APKs locais entregues ao usuário (artefatos do EAS)
+/releases/*.apk

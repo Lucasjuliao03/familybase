@@ -14,13 +14,17 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { useRouter } from 'expo-router';
 import { useAuth } from '../../src/contexts/AuthContext';
+import { ChildModuleHeader } from '../../src/components/child/ChildModuleHeader';
 import { Colors, Radii, Shadow, FontSize } from '../../src/theme';
 import { Card } from '../../src/components/ui/Card';
 import { Badge } from '../../src/components/ui/Badge';
 import api from '../../src/services/api';
+import { ActionCelebration, CelebrationEvent } from '../../src/components/child/ActionCelebration';
+import { indexMedicationLogs, isMedicationActive, localDate, medicationDoses } from '../../src/lib/medicationSchedule';
+import { useMedicationClock } from '../../src/lib/useMedicationClock';
+import { MedicationDayPicker } from '../../src/components/health/MedicationDayPicker';
+import { MedicationDoseModal } from '../../src/components/health/MedicationDoseModal';
 const RECORD_TYPES = [
   { id: 'headache', label: 'Dor de Cabeça 🤕' },
   { id: 'fever', label: 'Febre 🌡️' },
@@ -40,20 +44,26 @@ const SEVERITIES = [
 ];
 
 export default function ChildHealthScreen() {
-  const router = useRouter();
   const { childProfile } = useAuth();
+  const now = useMedicationClock();
+  const today = localDate(now);
+  const [selectedDoseDate, setSelectedDoseDate] = useState<string | null>(null);
+  const doseDate = selectedDoseDate || today;
+  const [doseToLog, setDoseToLog] = useState<{ med: any; dose: any } | null>(null);
 
   const [tab, setTab] = useState<'medications' | 'symptoms' | 'appointments'>('medications');
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [savingSymptom, setSavingSymptom] = useState(false);
-  const [savingDose, setSavingDose] = useState(false);
+  const [celebration, setCelebration] = useState<CelebrationEvent | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   // Dados da API
   const [medications, setMedications] = useState<any[]>([]);
   const [appointments, setAppointments] = useState<any[]>([]);
   const [logs, setLogs] = useState<any[]>([]);
+  const logsByMedication = useMemo(() => indexMedicationLogs(logs), [logs]);
+  const activeMedications = medications.filter((m) => isMedicationActive(m, doseDate));
 
   // Formulário de Sintoma
   const [symptomForm, setSymptomForm] = useState({
@@ -100,39 +110,8 @@ export default function ChildHealthScreen() {
     loadData(true);
   }, [loadData]);
 
-  // Registrar que tomou uma dose
-  const handleLogDose = async (medId: string, medName: string) => {
-    Alert.alert(
-      'Confirmar Dose 💊',
-      `Confirma que você já tomou o remédio "${medName}" agora?`,
-      [
-        { text: 'Não', style: 'cancel' },
-        {
-          text: 'Sim, já tomei!',
-          onPress: async () => {
-            try {
-              setSavingDose(true);
-              const now = new Date();
-              await api.post('/health/medication-logs', {
-                medication_id: medId,
-                child_id: childProfile?.id,
-                taken_date: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`,
-                taken_time: now.toTimeString().slice(0, 5),
-                status: 'taken',
-                notes: 'Registrado pelo próprio filho no celular',
-              });
-
-              Alert.alert('Muito bem! 🌟', 'Dose registrada com sucesso! Seus pais foram notificados.');
-              loadData(true);
-            } catch (err: any) {
-              Alert.alert('Erro', err.message || 'Não foi possível registrar a dose.');
-            } finally {
-              setSavingDose(false);
-            }
-          },
-        },
-      ]
-    );
+  const handleLogDose = (medId: string, medName: string, dose: any) => {
+    if (!dose.log) setDoseToLog({ med: { id: medId, name: medName }, dose });
   };
 
   // Enviar Sintoma
@@ -191,25 +170,10 @@ export default function ChildHealthScreen() {
 
   return (
     <View style={styles.root}>
-      <StatusBar barStyle="light-content" />
+      <StatusBar barStyle="dark-content" />
 
       {/* ── HEADER ──────────────────────────────── */}
-      <LinearGradient
-        colors={['#EC4899', '#D946EF', '#A855F7']}
-        start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}
-        style={styles.header}
-      >
-        <View style={styles.headerRow}>
-          <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
-            <Text style={styles.backBtnText}>‹</Text>
-          </TouchableOpacity>
-          <View style={{ flex: 1, alignItems: 'center' }}>
-            <Text style={styles.headerTitle}>Meu Diário de Saúde ❤️</Text>
-            <Text style={styles.headerSub}>Estou me cuidando super bem! 🌟</Text>
-          </View>
-          <View style={{ width: 36 }} />
-        </View>
-      </LinearGradient>
+      <ChildModuleHeader moduleId="saude" title="Saúde" subtitle="Estou me cuidando super bem! 🌟" />
 
       {loadError && (
         <TouchableOpacity onPress={() => { void loadData(); }} style={{ padding: 12, backgroundColor: '#FEF2F2' }}>
@@ -256,16 +220,19 @@ export default function ChildHealthScreen() {
           {/* ── TAB 1: MEUS REMÉDIOS ── */}
           {tab === 'medications' && (
             <View>
+              <MedicationDayPicker date={doseDate} today={today} onChange={setSelectedDoseDate} />
               <Text style={styles.sectionTitle}>Remédios de Hoje</Text>
-              {medications.filter(m => m.status === 'active').length === 0 ? (
+              {activeMedications.length === 0 ? (
                 <View style={styles.emptyState}>
                   <Text style={{ fontSize: 44, marginBottom: 8 }}>🎉</Text>
                   <Text style={styles.emptyTextTitle}>Nenhum remédio ativo!</Text>
-                  <Text style={styles.emptyTextSub}>Você não tem medicamentos programados para hoje.</Text>
+                  <Text style={styles.emptyTextSub}>Você não tem medicamentos programados para esta data.</Text>
                 </View>
               ) : (
-                medications.filter(m => m.status === 'active').map((m) => {
-                  const myLogs = logs.filter(l => l.medication_id === m.id).slice(0, 3);
+                activeMedications.map((m) => {
+                  const medLogs = logsByMedication.get(m.id) || [];
+                  const myLogs = medLogs.filter((l: any) => ['taken', 'late'].includes(l.status)).slice(0, 3);
+                  const doses = medicationDoses(m, medLogs, doseDate, now);
                   return (
                     <Card key={m.id} style={styles.medCard}>
                       <View style={styles.flexRowBetween}>
@@ -277,21 +244,24 @@ export default function ChildHealthScreen() {
                           </View>
                           {m.notes ? <Text style={styles.medNotes}>Obs: {m.notes}</Text> : null}
                         </View>
-                        <TouchableOpacity
-                          style={styles.btnDose}
-                          onPress={() => handleLogDose(m.id, m.name)}
-                          disabled={savingDose}
-                          activeOpacity={0.8}
-                        >
-                          <Text style={styles.btnDoseText}>Já tomei! 👍</Text>
-                        </TouchableOpacity>
                       </View>
+
+                      {doses.map((dose: any) => (
+                        <View key={dose.time || 'livre'} style={[styles.flexRowBetween, { marginTop: 12, gap: 8 }]}>
+                          <Text style={[styles.logText, { flex: 1 }, dose.state === 'overdue' && { color: Colors.danger }]}>
+                            {dose.time || 'Dose de hoje'} · {dose.log ? `Tomado em ${new Date(dose.log.taken_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}` : dose.state === 'overdue' ? 'Atrasado' : 'Pendente'}
+                          </Text>
+                          {!dose.log && <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Registrar dose de ${m.name}${dose.time ? ` das ${dose.time}` : ''}`} style={styles.btnDose} onPress={() => handleLogDose(m.id, m.name, dose)} activeOpacity={0.8}>
+                            <Text style={styles.btnDoseText}>Já tomei! 👍</Text>
+                          </TouchableOpacity>}
+                        </View>
+                      ))}
 
                       {/* Histórico das últimas doses */}
                       {myLogs.length > 0 && (
                         <View style={styles.logBox}>
                           <Text style={styles.logTitle}>Últimas doses tomadas:</Text>
-                          {myLogs.map((l) => (
+                          {myLogs.map((l: any) => (
                             <Text key={l.id} style={styles.logText}>
                               ✅ {l.taken_at ? new Date(l.taken_at).toLocaleString('pt-BR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—'}
                             </Text>
@@ -435,6 +405,12 @@ export default function ChildHealthScreen() {
           <View style={{ height: 100 }} />
         </ScrollView>
       )}
+
+      <ActionCelebration event={celebration} onFinish={() => setCelebration(null)} />
+      {doseToLog && <MedicationDoseModal medication={doseToLog.med} dose={doseToLog.dose} onClose={() => setDoseToLog(null)} onSaved={async () => {
+        setCelebration({ id: Date.now(), kind: 'medicine', message: 'Dose registrada com sucesso!' });
+        await loadData(true);
+      }} />}
 
     </View>
   );

@@ -9,6 +9,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { Colors, FontSize, Radii } from '../../theme';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const comprasHeaderImg = require('../../../icon/fcompras.png');
 const comprasAsset = Platform.OS === 'web' ? comprasHeaderImg : Image.resolveAssetSource(comprasHeaderImg);
@@ -38,6 +39,7 @@ export function ShoppingModuleHeader({
   showAdd = true,
   onAdd,
 }: ShoppingModuleHeaderProps) {
+  const insets = useSafeAreaInsets();
   const { width: screenW } = useWindowDimensions();
   const imgSize = useMemo(() => {
     const baseH = Math.round(Math.min(112, screenW * 0.27));
@@ -52,7 +54,7 @@ export function ShoppingModuleHeader({
   }, [screenW]);
 
   return (
-    <View style={[styles.header, { backgroundColor }]}>
+    <View style={[styles.header, { backgroundColor, paddingTop: Math.max(insets.top + 18, Platform.OS === 'ios' ? 56 : 44) }]}>
       <View
         style={[
           styles.headerImgSlot,

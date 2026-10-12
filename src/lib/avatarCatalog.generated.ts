@@ -10,11 +10,19 @@ export interface AvatarOption {
 }
 
 export const AVATAR_OPTIONS: AvatarOption[] = [
+  { id: 'bia', label: 'Bia', source: require('../../icon/avatar/bia.png') },
+  { id: 'caio', label: 'Caio', source: require('../../icon/avatar/caio.png') },
+  { id: 'davi', label: 'Davi', source: require('../../icon/avatar/davi.png') },
   { id: 'homem1', label: 'Homem 1', source: require('../../icon/avatar/homem1.png') },
   { id: 'homem2', label: 'Homem 2', source: require('../../icon/avatar/homem2.png') },
+  { id: 'lia', label: 'Lia', source: require('../../icon/avatar/lia.png') },
+  { id: 'lua', label: 'Lua', source: require('../../icon/avatar/lua.png') },
+  { id: 'lumi', label: 'Lumi', source: require('../../icon/avatar/lumi.png') },
   { id: 'menina1', label: 'Menina 1', source: require('../../icon/avatar/menina1.png') },
   { id: 'menina2', label: 'Menina 2', source: require('../../icon/avatar/menina2.png') },
   { id: 'menino1', label: 'Menino 1', source: require('../../icon/avatar/menino1.png') },
+  { id: 'nina', label: 'Nina', source: require('../../icon/avatar/nina.png') },
+  { id: 'theo', label: 'Theo', source: require('../../icon/avatar/theo.png') },
 ];
 
 export const DEFAULT_AVATAR_PRESET = 'menino1';

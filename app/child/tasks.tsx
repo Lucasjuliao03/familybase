@@ -16,9 +16,10 @@ import {
   Dimensions,
 } from 'react-native';
 import { Colors, Shadow, Radii, FontSize } from '../../src/theme';
-import { useRouter } from 'expo-router';
 import { useAuth } from '../../src/contexts/AuthContext';
+import { ChildModuleHeader } from '../../src/components/child/ChildModuleHeader';
 import api from '../../src/services/api';
+import { ActionCelebration, CelebrationEvent } from '../../src/components/child/ActionCelebration';
 import { enrichOccurrencesStatus, minutesToDeadline } from '../../src/shared/lib/taskStatus';
 import { taskIcon } from '../../src/lib/tasksHelpers';
 // taskHistoryStatus not needed here — closure logic is handled by isAutoRejected()
@@ -83,7 +84,6 @@ const tbStyles = StyleSheet.create({
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function ChildTasksScreen() {
-  const router = useRouter();
   const { childProfile, refreshProfile } = useAuth();
 
   const [loading, setLoading] = useState(true);
@@ -98,6 +98,7 @@ export default function ChildTasksScreen() {
   const [completeModalVisible, setCompleteModalVisible] = useState(false);
   const [selectedOcc, setSelectedOcc] = useState<any>(null);
   const [observationText, setObservationText] = useState('');
+  const [celebration, setCelebration] = useState<CelebrationEvent | null>(null);
 
   // Modal sugestão
   const [suggestModalVisible, setSuggestModalVisible] = useState(false);
@@ -244,14 +245,12 @@ export default function ChildTasksScreen() {
       const isDelayed = occ.isDelayed || occ.status === 'delayed';
       const payload = isDelayed ? { completed_late: true } : {};
       const res = await api.put(`/tasks/occurrences/${occId}/complete`, payload);
-      Alert.alert(
-        'Sucesso! 🎉',
-        res.data?.status === 'waiting_approval'
-          ? 'Tarefa enviada para aprovação! 📤'
-          : 'Tarefa concluída! Parabéns! 🎉',
-      );
       setCompleteModalVisible(false);
       setObservationText('');
+      setCelebration({
+        id: Date.now(), kind: 'task',
+        message: res.data?.status === 'waiting_approval' ? 'Enviada para aprovação!' : 'Tarefa concluída. Parabéns!',
+      });
       loadData(true);
     } catch (err: any) {
       Alert.alert('Erro', err.message || 'Não foi possível concluir a tarefa.');
@@ -264,7 +263,11 @@ export default function ChildTasksScreen() {
     try {
       setLoading(true);
       await api.put(`/tasks/occurrences/${occId}/complete`, { health_intake: intake });
-      Alert.alert('Registrado!', intake === 'taken' ? 'Medicamento tomado! 💊' : 'Registrado como não tomado.');
+      if (intake === 'taken') {
+        setCelebration({ id: Date.now(), kind: 'medicine', message: 'Remédio registrado com sucesso.' });
+      } else {
+        Alert.alert('Registrado', 'Marcado como não tomado.');
+      }
       loadData(true);
     } catch (err: any) {
       Alert.alert('Erro', err.message || 'Não foi possível registrar.');
@@ -296,21 +299,17 @@ export default function ChildTasksScreen() {
   // ─── Render ───────────────────────────────────────────────────────────────
   return (
     <View style={s.root}>
-      <StatusBar barStyle="light-content" backgroundColor={Colors.gradStart} />
+      <StatusBar barStyle="dark-content" backgroundColor={Colors.bg} />
 
       {/* ── Header ── */}
-      <View style={s.header}>
-        <TouchableOpacity onPress={() => router.back()} style={s.backBtn}>
-          <Text style={s.backBtnText}>‹</Text>
-        </TouchableOpacity>
-        <View style={{ flex: 1 }}>
-          <Text style={s.headerTitle}>Minhas Tarefas 🏅</Text>
-          <Text style={s.headerSub}>{todayStr.split('-').reverse().join('/')}</Text>
-        </View>
-        <TouchableOpacity style={s.suggestBtn} onPress={() => setSuggestModalVisible(true)} activeOpacity={0.8}>
-          <Text style={s.suggestBtnText}>+ Sugerir</Text>
-        </TouchableOpacity>
-      </View>
+      <ChildModuleHeader
+        moduleId="tarefas"
+        title="Tarefas"
+        subtitle={todayStr.split('-').reverse().join('/')}
+        actionLabel="Sugerir"
+        actionIcon="add"
+        onAction={() => setSuggestModalVisible(true)}
+      />
 
       <ScrollView
         style={s.scroll}
@@ -628,6 +627,7 @@ export default function ChildTasksScreen() {
         </KeyboardAvoidingView>
       </Modal>
 
+      <ActionCelebration event={celebration} onFinish={() => setCelebration(null)} />
     </View>
   );
 }

@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { Stack, useRouter, useSegments, useRootNavigationState } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaProvider, initialWindowMetrics } from 'react-native-safe-area-context';
 import {
   AuthProvider,
   useAuth,
@@ -12,18 +12,20 @@ import '../src/lib/locationBackgroundTask';
 import { FirstAccessPasswordModal } from '../src/components/auth/FirstAccessPasswordModal';
 import { AppErrorBoundary } from '../src/components/ui/AppErrorBoundary';
 import { AppSettingsProvider, AppAnnouncement } from '../src/contexts/AppSettingsContext';
+import { AppSafeArea } from '../src/components/ui/AppSafeArea';
 
 function RootLayoutNav() {
-  const { user, family, effectiveSubscription, loading, isChildProxy } = useAuth();
+  const { user, family, effectiveSubscription, loading, profileLoading, isChildProxy } = useAuth();
   const segments: readonly string[] = useSegments();
   const router = useRouter();
   const navigationState = useRootNavigationState();
 
   useEffect(() => {
-    if (loading || !navigationState?.key) return;
+    if (loading || profileLoading || !navigationState?.key) return;
 
     const currentSegment = segments[0] as string | undefined;
-    const publicRoutes = ['login', 'onboarding', 'register', 'index'];
+    if (currentSegment === 'auth-confirm') return;
+    const publicRoutes = ['login', 'onboarding', 'register', 'index','auth-confirm'];
     const billingRoutes = ['subscribe', 'billing-wait-gestor'];
 
     if (!user) {
@@ -33,6 +35,10 @@ function RootLayoutNav() {
       return;
     }
 
+    if (!user.family_id && user.role !== 'master') {
+      if (currentSegment !== 'register') router.replace('/register');
+      return;
+    }
     if (user.role === 'parent' && !user.has_onboarded) {
       if (currentSegment !== 'parent' || segments[1] !== 'onboarding') {
         router.replace('/parent/onboarding');
@@ -84,7 +90,7 @@ function RootLayoutNav() {
     if (currentSegment !== target) {
       router.replace(`/${target}` as '/parent' | '/child' | '/master');
     }
-  }, [user, family, effectiveSubscription, loading, isChildProxy, segments, router, navigationState?.key]);
+  }, [user, family, effectiveSubscription, loading, profileLoading, isChildProxy, segments, router, navigationState?.key]);
 
   return (
     <>
@@ -102,17 +108,17 @@ function RootLayoutNav() {
 
 export default function RootLayout() {
   return (
-    <AppErrorBoundary>
-    <SafeAreaProvider>
-      <AuthProvider>
-        <AppSettingsProvider>
-        <StatusBar style="light" />
-        <SafeAreaView style={{ flex: 1, backgroundColor: '#ffffff' }} edges={['bottom', 'left', 'right']}>
-          <RootLayoutNav />
-        </SafeAreaView>
-        </AppSettingsProvider>
-      </AuthProvider>
+    <SafeAreaProvider initialMetrics={initialWindowMetrics}>
+      <AppSafeArea>
+        <StatusBar style="dark" hidden={false} />
+        <AppErrorBoundary>
+          <AuthProvider>
+            <AppSettingsProvider>
+              <RootLayoutNav />
+            </AppSettingsProvider>
+          </AuthProvider>
+        </AppErrorBoundary>
+      </AppSafeArea>
     </SafeAreaProvider>
-    </AppErrorBoundary>
   );
 }

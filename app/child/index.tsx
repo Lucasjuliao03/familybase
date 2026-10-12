@@ -9,68 +9,42 @@ import {
   RefreshControl,
   ActivityIndicator,
   Alert,
+  Image,
+  useWindowDimensions,
 } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter, useFocusEffect } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../src/contexts/AuthContext';
-import { Colors, Radii, Shadow, FontSize } from '../../src/theme';
+import { Colors, Radii, FontSize } from '../../src/theme';
 import { Card } from '../../src/components/ui/Card';
 import { Badge } from '../../src/components/ui/Badge';
 import { ProgressBar } from '../../src/components/ui/ProgressBar';
-import { PiggyPopoutCard } from '../../src/components/allowance/PiggyPopoutCard';
 import api from '../../src/services/api';
-import { UserAvatar } from '../../src/components/profile/UserAvatar';
 import { enrichOccurrencesStatus } from '../../src/shared/lib/taskStatus';
 import { taskIcon } from '../../src/lib/tasksHelpers';
 import { moduleAllowed, anyModuleAllowed } from '../../src/shared/lib/familyModules';
-import { formatDateBR, formatLocalYMD, todayLocalYMD } from '../../src/shared/lib/familyCalendarRange';
+import { formatDateBR, formatLocalYMD } from '../../src/shared/lib/familyCalendarRange';
+import { HomeSceneHeader } from '../../src/components/child/HomeSceneHeader';
+import { indexMedicationLogs, isMedicationActive, localDate, medicationDoses } from '../../src/lib/medicationSchedule';
+import { useMedicationClock } from '../../src/lib/useMedicationClock';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const cofrinhoImg = require('../../icon/cofrinho.png');
-
-const HEADER_AVATAR_SIZE = 68;
 
 function formatCurrency(val: number, currency = 'BRL') {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency }).format(val ?? 0);
 }
 
-function parseScheduledTimes(med: any): string[] {
-  const raw = med?.scheduled_times ?? med?.scheduled_time;
-  if (!raw) return [];
-  if (Array.isArray(raw)) return raw.map(String);
-  if (typeof raw === 'string') {
-    try {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) return parsed.map(String);
-    } catch {
-      return raw.includes(',') ? raw.split(',').map((s) => s.trim()) : [raw.trim()];
-    }
-  }
-  return [];
-}
-
-function medTimesLabel(med: any): string {
-  const times = parseScheduledTimes(med);
-  if (times.length) return times.map((t) => t.slice(0, 5)).join(', ');
-  if (med?.frequency) return String(med.frequency);
-  return 'Conforme orientação';
-}
-
-function isMedActiveToday(med: any, todayStr: string): boolean {
-  if (med?.status !== 'active') return false;
-  if (med.start_date && med.start_date > todayStr) return false;
-  if (med.end_date && med.end_date < todayStr) return false;
-  return true;
-}
-
-function wasTakenToday(medId: string, logs: any[], todayStr: string): boolean {
-  return logs.some(
-    (l) => l.medication_id === medId && (l.taken_date === todayStr || String(l.taken_at || '').slice(0, 10) === todayStr),
-  );
-}
-
 export default function ChildHomeScreen() {
-  const { user, family, childProfile, logout, refreshProfile, modules, isChildProxy } = useAuth();
+  const insets = useSafeAreaInsets();
+  const { user, family, childProfile, logout, refreshProfile, modules } = useAuth();
   const router = useRouter();
+  const { width: viewportWidth } = useWindowDimensions();
+  const sceneWidth = Math.min(viewportWidth, 650);
+  const sceneHeight = Math.min(sceneWidth * 0.94, 530);
+  const piggyWidth = Math.min(viewportWidth - 28, 580);
+  const piggySize = Math.min(sceneWidth * 0.28, 136);
+  const piggyLift = Math.round(piggySize * 0.4);
 
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
@@ -93,7 +67,10 @@ export default function ChildHomeScreen() {
   familyRef.current = family;
   refreshProfileRef.current = refreshProfile;
 
-  const todayStr = useMemo(() => todayLocalYMD(), []);
+  const now = useMedicationClock();
+  const todayStr = localDate(now);
+  const doseSaveRef = useRef(false);
+  const [savingDose, setSavingDose] = useState(false);
 
   const firstName = childProfile?.name?.split(' ')[0] ?? user?.name?.split(' ')[0] ?? 'Criança';
 
@@ -209,6 +186,8 @@ export default function ChildHomeScreen() {
     loadData({ silent: true, syncProfile: true });
   }, [loadData]);
 
+  useEffect(() => { if (hasLoadedOnce.current) void loadData({ silent: true }); }, [todayStr, loadData]);
+
   const tasksStats = useMemo(() => {
     if (!occurrences.length) return { total: 0, completed: 0, percentage: 100 };
     const total = occurrences.length;
@@ -226,34 +205,43 @@ export default function ChildHomeScreen() {
   }, [occurrences]);
 
   const todayMeds = useMemo(
-    () => medications.filter((m) => isMedActiveToday(m, todayStr)),
+    () => medications.filter((m) => isMedicationActive(m, todayStr)),
     [medications, todayStr],
   );
 
-  const pendingMeds = useMemo(
-    () => todayMeds.filter((m) => !wasTakenToday(m.id, medLogs, todayStr)),
-    [todayMeds, medLogs, todayStr],
-  );
+  const todayDoses = useMemo(() => {
+    const index = indexMedicationLogs(medLogs);
+    return todayMeds.flatMap((med) => medicationDoses(med, index.get(med.id) || [], todayStr, now).map((dose: any) => ({ ...dose, med })));
+  }, [todayMeds, medLogs, todayStr, now]);
+  const pendingDoses = todayDoses.filter((dose) => !dose.log);
 
-  const handleLogDose = (medId: string, medName: string) => {
+  const handleLogDose = (medId: string, medName: string, dose: any) => {
+    if (doseSaveRef.current) return;
     Alert.alert('Confirmar dose', `Já tomou "${medName}"?`, [
       { text: 'Não', style: 'cancel' },
       {
         text: 'Sim, já tomei!',
         onPress: async () => {
+          if (doseSaveRef.current) return;
+          doseSaveRef.current = true;
+          setSavingDose(true);
           try {
             const now = new Date();
             await api.post('/health/medication-logs', {
               medication_id: medId,
               child_id: childProfile?.id,
-              taken_date: now.toISOString().split('T')[0],
-              taken_time: now.toTimeString().slice(0, 5),
+              taken_at: now.toISOString(),
+              scheduled_date: dose.time ? dose.date : null,
+              scheduled_time: dose.time || null,
               status: 'taken',
               notes: 'Registrado na home',
             });
-            loadData({ silent: true });
+            await loadData({ silent: true });
           } catch (err: any) {
             Alert.alert('Erro', err.message || 'Não foi possível registrar a dose.');
+          } finally {
+            doseSaveRef.current = false;
+            setSavingDose(false);
           }
         },
       },
@@ -270,91 +258,7 @@ export default function ChildHomeScreen() {
 
   return (
     <View style={styles.root}>
-      <StatusBar barStyle="light-content" />
-
-      <LinearGradient
-        colors={[Colors.gradStart, Colors.gradMid, Colors.gradEnd]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={[styles.header, isChildProxy && styles.headerWithProxy]}
-      >
-        <View style={styles.headerRow}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.greeting} numberOfLines={1}>Olá, {firstName}!</Text>
-            <Text style={styles.familyName} numberOfLines={1}>{family?.name ?? 'Minha Família'}</Text>
-          </View>
-          <TouchableOpacity
-            style={styles.headerAvatar}
-            onPress={() => router.push('/child/profile')}
-            activeOpacity={0.85}
-            accessibilityRole="button"
-            accessibilityLabel="Abrir meu perfil"
-          >
-            <UserAvatar
-              avatarUrl={childProfile?.avatar_url}
-              avatarPreset={childProfile?.avatar_preset}
-              name={childProfile?.name ?? user?.name}
-              size={HEADER_AVATAR_SIZE}
-              bordered={false}
-              presentation="character"
-            />
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.balanceRow}>
-          <View style={styles.balanceChip}>
-            <Text style={styles.balanceChipLabel}>Estrelas</Text>
-            <Text style={styles.balanceChipValue}>{childProfile?.coins ?? 0}</Text>
-          </View>
-          <View style={styles.balanceChip}>
-            <Text style={styles.balanceChipLabel}>XP</Text>
-            <Text style={styles.balanceChipValue}>{childProfile?.points ?? 0}</Text>
-          </View>
-          <View style={styles.balanceChip}>
-            <Text style={styles.balanceChipLabel}>Nível</Text>
-            <Text style={styles.balanceChipValue}>{childProfile?.level ?? 1}</Text>
-          </View>
-        </View>
-
-      </LinearGradient>
-
-      {showAllowanceCard && (hasLoadedOnce.current || !loading) && (
-        <View style={styles.piggyTouchable}>
-          <TouchableOpacity
-            onPress={() => router.push('/child/allowance')}
-            activeOpacity={0.9}
-          >
-            <PiggyPopoutCard imageSource={cofrinhoImg}>
-            <View style={styles.piggyInfoRow}>
-              <View style={styles.piggyInfo}>
-                <Text style={styles.piggyLabel}>Meu Cofrinho</Text>
-                <Text style={styles.piggyBalance} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
-                  {formatCurrency(Number(allowanceBalance?.balance ?? 0), allowanceCurrency)}
-                </Text>
-              </View>
-              <Text style={styles.piggyChevron}>›</Text>
-            </View>
-
-            {(allowanceCycle || allowanceBalance) && (
-              <View style={styles.piggyBonusRow}>
-                <View style={styles.piggyBonusBox}>
-                  <Text style={styles.piggyBonusLabel}>Bônus</Text>
-                  <Text style={[styles.piggyBonusVal, { color: Colors.success }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
-                    + {formatCurrency(bonusTotal, allowanceCurrency)}
-                  </Text>
-                </View>
-                <View style={styles.piggyBonusBox}>
-                  <Text style={styles.piggyBonusLabel}>Descontos</Text>
-                  <Text style={[styles.piggyBonusVal, { color: Colors.danger }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
-                    − {formatCurrency(discountTotal, allowanceCurrency)}
-                  </Text>
-                </View>
-              </View>
-            )}
-          </PiggyPopoutCard>
-          </TouchableOpacity>
-        </View>
-      )}
+      <StatusBar barStyle="dark-content" />
 
       {loading && !hasLoadedOnce.current ? (
         <View style={styles.loaderContainer}>
@@ -370,6 +274,84 @@ export default function ChildHomeScreen() {
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[Colors.primary]} />
           }
         >
+          <HomeSceneHeader
+            sceneWidth={sceneWidth}
+            avatarId={childProfile?.avatar_preset}
+            mascotId={childProfile?.mascot_id}
+            onChooseAvatar={() => router.push('/child/avatar' as any)}
+            onChooseMascot={() => router.push('/child/mascot' as any)}
+            style={[styles.headerScene, { width: sceneWidth, height: sceneHeight }]}
+          >
+            <View style={[styles.headerRow, { paddingTop: Math.max(insets.top + 10, 17) }]}>
+              <View style={styles.headerIdentity}>
+                <Text style={[styles.greeting, viewportWidth < 360 && styles.greetingCompact]} numberOfLines={1}>Olá, {firstName}!</Text>
+                <Text style={[styles.familyName, viewportWidth < 360 && styles.familyNameCompact]} numberOfLines={1}>{family?.name ?? 'Minha Família'}</Text>
+              </View>
+              <View style={styles.headerKpis}>
+                <View style={[styles.headerKpi, viewportWidth < 360 && styles.headerKpiCompact]} accessible accessibilityLabel={`Estrelas: ${childProfile?.coins ?? 0}`}>
+                  <Ionicons name="star" size={14} color="#EBAA18" />
+                  <Text style={styles.headerKpiValue}>{childProfile?.coins ?? 0}</Text>
+                </View>
+                <View style={[styles.headerKpi, viewportWidth < 360 && styles.headerKpiCompact]} accessible accessibilityLabel={`XP: ${childProfile?.points ?? 0}`}>
+                  <Ionicons name="flash" size={14} color={Colors.primary} />
+                  <Text style={styles.headerKpiValue}>{childProfile?.points ?? 0}</Text>
+                </View>
+                <View style={[styles.headerKpi, viewportWidth < 360 && styles.headerKpiCompact]} accessible accessibilityLabel={`Nível: ${childProfile?.level ?? 1}`}>
+                  <Ionicons name="trophy" size={14} color="#399B88" />
+                  <Text style={styles.headerKpiValue}>{childProfile?.level ?? 1}</Text>
+                </View>
+              </View>
+            </View>
+          </HomeSceneHeader>
+
+          {showAllowanceCard && (
+            <View style={[styles.piggyTouchable, { width: piggyWidth }]}>
+              <TouchableOpacity
+                style={[styles.piggyCard, { paddingTop: Math.max(32, piggySize - piggyLift - 24) }]}
+                onPress={() => router.push('/child/allowance')}
+                activeOpacity={0.9}
+                accessibilityRole="button"
+                accessibilityLabel={`Meu Cofrinho. Saldo ${formatCurrency(Number(allowanceBalance?.balance ?? 0), allowanceCurrency)}`}
+              >
+                <Image
+                  source={cofrinhoImg}
+                  resizeMode="contain"
+                  style={[styles.piggyImage, {
+                    width: piggySize,
+                    height: piggySize,
+                    top: -piggyLift,
+                    left: (piggyWidth - piggySize) / 2,
+                  }]}
+                  accessibilityIgnoresInvertColors
+                />
+                <View style={styles.piggyTitleRow}>
+                  <Text style={styles.piggyLabel}>Meu Cofrinho</Text>
+                  <Text style={styles.piggyChevron}>›</Text>
+                </View>
+                <View style={styles.piggyKpis}>
+                  <View style={styles.piggyKpi}>
+                    <Text style={styles.piggyKpiLabel}>Saldo</Text>
+                    <Text style={styles.piggyKpiValue} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
+                      {formatCurrency(Number(allowanceBalance?.balance ?? 0), allowanceCurrency)}
+                    </Text>
+                  </View>
+                  <View style={styles.piggyKpi}>
+                    <Text style={styles.piggyKpiLabel}>Bônus</Text>
+                    <Text style={[styles.piggyKpiValue, { color: Colors.success }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
+                      + {formatCurrency(bonusTotal, allowanceCurrency)}
+                    </Text>
+                  </View>
+                  <View style={styles.piggyKpi}>
+                    <Text style={styles.piggyKpiLabel}>Descontos</Text>
+                    <Text style={[styles.piggyKpiValue, { color: Colors.danger }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
+                      − {formatCurrency(discountTotal, allowanceCurrency)}
+                    </Text>
+                  </View>
+                </View>
+              </TouchableOpacity>
+            </View>
+          )}
+
           {/* Tarefas do dia */}
           {moduleAllowed(modules, 'tasks') && (
             <Card style={styles.summaryCard} shadow="sm">
@@ -469,22 +451,25 @@ export default function ChildHomeScreen() {
                 </TouchableOpacity>
               </View>
 
-              {pendingMeds.length === 0 ? (
+              {pendingDoses.length === 0 ? (
                 <Text style={styles.emptyLine}>Todos os remédios de hoje já foram tomados!</Text>
               ) : (
-                pendingMeds.map((m) => (
-                  <View key={m.id} style={styles.compactRow}>
+                pendingDoses.map((dose) => (
+                  <View key={`${dose.med.id}:${dose.time}`} style={styles.compactRow}>
                     <Text style={styles.rowIcon}>💊</Text>
                     <View style={{ flex: 1 }}>
-                      <Text style={styles.rowTitle} numberOfLines={1}>{m.name}</Text>
-                      <Text style={styles.rowSub}>
-                        {medTimesLabel(m)}
-                        {m.dosage ? ` · ${m.dosage}` : ''}
+                      <Text style={styles.rowTitle} numberOfLines={1}>{dose.med.name}</Text>
+                      <Text style={[styles.rowSub, dose.state === 'overdue' && { color: Colors.danger }]}>
+                        {dose.time || 'Conforme orientação'} · {dose.state === 'overdue' ? 'Atrasado' : 'Pendente'}
+                        {dose.med.dosage ? ` · ${dose.med.dosage}` : ''}
                       </Text>
                     </View>
                     <TouchableOpacity
                       style={styles.doseBtn}
-                      onPress={() => handleLogDose(m.id, m.name)}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Registrar dose de ${dose.med.name} ${dose.time}`}
+                      onPress={() => handleLogDose(dose.med.id, dose.med.name, dose)}
+                      disabled={savingDose}
                       activeOpacity={0.8}
                     >
                       <Text style={styles.doseBtnText}>Tomei</Text>
@@ -493,9 +478,9 @@ export default function ChildHomeScreen() {
                 ))
               )}
 
-              {todayMeds.length > pendingMeds.length && (
+              {todayDoses.length > pendingDoses.length && (
                 <Text style={styles.takenHint}>
-                  {todayMeds.length - pendingMeds.length} remédio(s) já registrado(s) hoje
+                  {todayDoses.length - pendingDoses.length} dose(s) já registrada(s) hoje
                 </Text>
               )}
             </Card>
@@ -516,116 +501,118 @@ export default function ChildHomeScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: Colors.bg, overflow: 'visible' },
 
-  header: {
-    paddingTop: 52,
-    paddingBottom: 18,
-    paddingHorizontal: 18,
-    borderBottomLeftRadius: 24,
-    borderBottomRightRadius: 24,
-    overflow: 'hidden',
-    position: 'relative',
-  },
-  headerWithProxy: {
-    paddingTop: 10,
-    marginTop: -10,
-    borderTopLeftRadius: 0,
-    borderTopRightRadius: 0,
-  },
-  headerAvatar: {
-    width: 82,
-    height: 82,
-    marginLeft: 12,
-    borderRadius: 22,
-    alignItems: 'center',
-    justifyContent: 'center',
-    overflow: 'hidden',
-    backgroundColor: 'rgba(255,255,255,0.16)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.3)',
+  headerScene: {
+    alignSelf: 'center',
   },
   headerRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 14,
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    paddingHorizontal: 18,
+    paddingTop: 17,
+    gap: 8,
   },
-  greeting: { fontSize: FontSize.lg, fontWeight: '800', color: '#fff' },
-  familyName: { fontSize: FontSize.xs, color: 'rgba(255,255,255,0.85)', marginTop: 2 },
-
-  balanceRow: { flexDirection: 'row', gap: 6, zIndex: 2, position: 'relative' },
-  balanceChip: {
-    flex: 1,
-    backgroundColor: 'rgba(255,255,255,0.18)',
-    borderRadius: Radii.sm,
-    paddingVertical: 6,
-    paddingHorizontal: 8,
-    alignItems: 'center',
+  headerIdentity: {
+    flexShrink: 1,
+    maxWidth: 230,
+    minWidth: 0,
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(255,255,255,0.78)',
+    borderRadius: 15,
+    paddingHorizontal: 11,
+    paddingVertical: 8,
   },
-  balanceChipLabel: { fontSize: 9, color: 'rgba(255,255,255,0.8)', fontWeight: '600' },
-  balanceChipValue: { fontSize: FontSize.sm, fontWeight: '900', color: '#fff', marginTop: 1 },
-
-  scroll: { flex: 1 },
-  content: { padding: 14, paddingTop: 10, gap: 10, paddingBottom: 110 },
-
-  piggyTouchable: {
-    zIndex: 5,
-    overflow: 'visible',
-    marginTop: 2,
-  },
-  piggyInfoRow: {
+  greeting: { fontSize: FontSize.lg, fontWeight: '800', color: Colors.text },
+  greetingCompact: { fontSize: 15 },
+  familyName: { fontSize: FontSize.xs, color: Colors.textMuted, marginTop: 2 },
+  familyNameCompact: { fontSize: 9 },
+  headerKpis: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 5,
   },
-  piggyInfo: {
-    flex: 1,
+  headerKpi: {
+    minWidth: 48,
+    height: 42,
+    backgroundColor: 'rgba(255,255,255,0.84)',
+    borderRadius: 12,
+    paddingHorizontal: 6,
+    alignItems: 'center',
     justifyContent: 'center',
   },
+  headerKpiCompact: { minWidth: 44, height: 40, paddingHorizontal: 4 },
+  headerKpiValue: { fontSize: 11, fontWeight: '900', color: Colors.text, marginTop: 1 },
+
+  scroll: { flex: 1 },
+  content: { padding: 14, paddingTop: 0, gap: 12, paddingBottom: 110 },
+
+  piggyTouchable: {
+    alignSelf: 'center',
+    zIndex: 5,
+    overflow: 'visible',
+    marginTop: -42,
+  },
+  piggyCard: {
+    position: 'relative',
+    overflow: 'visible',
+    paddingHorizontal: 12,
+    paddingBottom: 0,
+  },
+  piggyImage: {
+    position: 'absolute',
+    zIndex: 2,
+  },
+  piggyTitleRow: {
+    minHeight: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    position: 'relative',
+  },
   piggyLabel: {
-    fontSize: 9,
-    fontWeight: '700',
+    fontSize: 11,
+    fontWeight: '800',
     color: Colors.textMuted,
     textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    lineHeight: 12,
-  },
-  piggyBalance: {
-    fontSize: FontSize.lg,
-    fontWeight: '900',
-    color: Colors.text,
-    lineHeight: 22,
+    letterSpacing: 0.6,
   },
   piggyChevron: {
+    position: 'absolute',
+    right: 2,
     fontSize: 20,
     color: Colors.primary,
     fontWeight: '700',
-    marginLeft: 4,
     lineHeight: 22,
   },
-  piggyBonusRow: {
+  piggyKpis: {
     flexDirection: 'row',
-    gap: 6,
-    marginTop: 6,
+    gap: 7,
+    marginTop: 8,
   },
-  piggyBonusBox: {
+  piggyKpi: {
     flex: 1,
     minWidth: 0,
-    backgroundColor: Colors.bg,
-    borderRadius: Radii.sm,
-    paddingVertical: 4,
-    paddingHorizontal: 6,
+    minHeight: 50,
+    backgroundColor: 'rgba(255,255,255,0.9)',
+    borderRadius: 12,
+    paddingVertical: 7,
+    paddingHorizontal: 4,
     borderWidth: 1,
-    borderColor: Colors.borderLight,
+    borderColor: '#EEE9F6',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  piggyBonusLabel: {
-    fontSize: 7,
-    fontWeight: '700',
+  piggyKpiLabel: {
+    fontSize: 8,
+    fontWeight: '800',
     color: Colors.textMuted,
     textTransform: 'uppercase',
-    letterSpacing: 0.3,
+    letterSpacing: 0.4,
   },
-  piggyBonusVal: {
-    fontSize: 9,
-    fontWeight: '800',
-    marginTop: 1,
+  piggyKpiValue: {
+    fontSize: 12,
+    fontWeight: '900',
+    color: Colors.text,
+    marginTop: 3,
   },
 
   loaderContainer: {

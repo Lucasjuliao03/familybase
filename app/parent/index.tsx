@@ -22,6 +22,7 @@ import { Colors, Shadow, Radii, FontSize } from '../../src/theme';
 import { UserAvatar } from '../../src/components/profile/UserAvatar';
 import { ParentModuleIcon } from '../../src/components/ui/ParentModuleIcon';
 import { ChildProfileSwitcher } from '../../src/components/proxy/ChildProfileSwitcher';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 // ─── Componentes Auxiliares ──────────────────────────────────────────────────
 
@@ -54,6 +55,7 @@ function ChildCard({ child }: ChildCardProps) {
               size={48}
               bordered={false}
               backgroundColor={`${cardColor}15`}
+              ringColor={cardColor}
             />
             <View style={styles.childInfoText}>
               <Text style={styles.childName}>{child.name}</Text>
@@ -128,6 +130,7 @@ function QuickAction({ iconKey, label, color, route }: QuickActionProps) {
 // ─── Componente Principal ────────────────────────────────────────────────────
 
 export default function ParentHomeScreen() {
+  const insets = useSafeAreaInsets();
   const { user, family, logout, modules } = useAuth();
   const router = useRouter();
   const { width: windowWidth } = useWindowDimensions();
@@ -212,7 +215,7 @@ export default function ParentHomeScreen() {
       <StatusBar barStyle="dark-content" backgroundColor={Colors.bg} />
       <ScrollView
         style={styles.container}
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[styles.content, { paddingTop: Math.max(insets.top + 18, 45) }]}
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={Colors.primary} colors={[Colors.primary]} />
@@ -404,6 +407,7 @@ export default function ParentHomeScreen() {
                       size={40}
                       bordered={false}
                       backgroundColor={`${histColor}10`}
+                      ringColor={histColor}
                       style={styles.activityAvatarBg}
                     />
                     <View style={styles.activityBody}>

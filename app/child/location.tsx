@@ -4,6 +4,7 @@ import {
   ActivityIndicator, Alert, Platform, ScrollView,
 } from 'react-native';
 import { useAuth } from '../../src/contexts/AuthContext';
+import { ChildModuleHeader } from '../../src/components/child/ChildModuleHeader';
 import { Colors, Shadow, Radii, FontSize } from '../../src/theme';
 import { supabase } from '../../src/lib/supabase';
 import { useGeolocation, sendLocationForceUpdate } from '../../src/hooks/useGeolocation';
@@ -82,17 +83,17 @@ export default function ChildLocationScreen() {
 
   return (
     <View style={s.screen}>
-      <StatusBar barStyle="light-content" backgroundColor={accent} />
+      <StatusBar barStyle="dark-content" backgroundColor={Colors.bg} />
 
-      <View style={s.header}>
-        <View style={{ flex: 1 }}>
-          <Text style={s.headerTitle}>📍 Localização</Text>
-          <Text style={s.headerSub}>Veja onde sua família está agora</Text>
-        </View>
-        <TouchableOpacity style={s.refreshBtn} onPress={handleRefresh} disabled={refreshing}>
-          {refreshing ? <ActivityIndicator size="small" color={Colors.white} /> : <Text style={{ fontSize: 18 }}>🔄</Text>}
-        </TouchableOpacity>
-      </View>
+      <ChildModuleHeader
+        moduleId="localizacao"
+        title="Localização"
+        subtitle="Veja onde sua família está agora"
+        actionLabel={refreshing ? 'Atualizando' : 'Atualizar'}
+        actionIcon="refresh"
+        onAction={handleRefresh}
+        actionDisabled={refreshing}
+      />
 
       <View style={s.infoBanner}>
         <Text style={s.infoText}>📡 Sua localização está sempre compartilhada com seus responsáveis</Text>
@@ -108,6 +109,7 @@ export default function ChildLocationScreen() {
               name: childProfile?.name || user?.name,
               avatar_url: childProfile?.avatar_url || user?.avatar_url,
               avatar_preset: childProfile?.avatar_preset || user?.avatar_preset,
+              display_color: childProfile?.color || user?.display_color,
             }}
             userPosition={position ? { lat: position.lat, lng: position.lng } : null}
             accentColor={accent}
@@ -147,6 +149,7 @@ export default function ChildLocationScreen() {
                   size={36}
                   bordered={false}
                   backgroundColor={loc.user_id === user?.id ? accent : MEMBER_COLORS[idx % MEMBER_COLORS.length]}
+                  ringColor={loc.users?.display_color || (loc.user_id === user?.id ? childProfile?.color : undefined)}
                 />
                 <View>
                   <Text style={s.memberName}>{loc.user_id === user?.id ? 'Eu' : (loc.users?.name?.split(' ')[0] || 'Membro')}</Text>

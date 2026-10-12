@@ -18,8 +18,13 @@ import { useAuth, userCanManageFamilyBilling } from '../../src/contexts/AuthCont
 import { useRouter } from 'expo-router';
 import api from '../../src/services/api';
 import { BILLING_ENABLED } from '../../src/lib/features';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { FamilyAccessPanel } from '../../src/components/auth/FamilyAccessPanel';
+import { deviceLogin } from '../../src/lib/deviceLogin';
+import { disableBiometricLogin } from '../../src/lib/biometrics';
 
 export default function ParentProfileScreen() {
+  const insets = useSafeAreaInsets();
   const { user, family, isGestor, effectiveSubscription, logout, refreshProfile } = useAuth();
   const canBilling = BILLING_ENABLED && userCanManageFamilyBilling(user, effectiveSubscription);
   const router = useRouter();
@@ -30,8 +35,8 @@ export default function ParentProfileScreen() {
   const [pwLoading, setPwLoading] = useState(false);
 
   const handleUpdatePassword = async () => {
-    if (newPassword.length < 4) {
-      return Alert.alert('Erro', 'A senha deve ter pelo menos 4 caracteres.');
+    if (newPassword.length < 6) {
+      return Alert.alert('Erro', 'A senha deve ter pelo menos 6 caracteres.');
     }
     if (newPassword !== confirmPassword) {
       return Alert.alert('Erro', 'As senhas não coincidem.');
@@ -39,6 +44,7 @@ export default function ParentProfileScreen() {
     setPwLoading(true);
     try {
       await api.put('/auth/password', { newPassword });
+      await disableBiometricLogin();
       Alert.alert('Sucesso', 'Senha atualizada com sucesso!');
       setPwModalVisible(false);
       setNewPassword('');
@@ -55,7 +61,7 @@ export default function ParentProfileScreen() {
   return (
     <View style={styles.root}>
       <StatusBar barStyle="dark-content" backgroundColor={Colors.bg} />
-      <ScrollView style={styles.container} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView style={styles.container} contentContainerStyle={[styles.content, { paddingTop: Math.max(insets.top + 18, 45) }]} showsVerticalScrollIndicator={false}>
         <View style={styles.header}>
           <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
             <Text style={styles.backBtnText}>‹</Text>
@@ -139,6 +145,8 @@ export default function ParentProfileScreen() {
           </View>
         </View>
 
+        {family?.id && (isGestor || user?.role === 'parent') && <FamilyAccessPanel key={family.id} family={family}/>}
+
         <Text style={styles.sectionTitle}>Segurança</Text>
         <TouchableOpacity
           style={styles.adminBtn}
@@ -149,6 +157,18 @@ export default function ParentProfileScreen() {
           <View style={{ flex: 1 }}>
             <Text style={styles.adminBtnTitle}>Alterar minha senha</Text>
             <Text style={styles.adminBtnSub}>Mantenha sua conta segura redefinindo sua senha</Text>
+          </View>
+          <Text style={styles.adminChevron}>›</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity accessibilityRole="button" style={styles.adminBtn} onPress={async () => {
+          try { await deviceLogin.clear(); await disableBiometricLogin(); await logout(); }
+          catch { Alert.alert('Dados do aparelho', 'Não foi possível apagar a sugestão salva. Tente novamente antes de compartilhar o aparelho.'); }
+        }}>
+          <Text style={styles.adminBtnIcon}>📱</Text>
+          <View style={{flex:1}}>
+            <Text style={styles.adminBtnTitle}>Esquecer dados deste aparelho</Text>
+            <Text style={styles.adminBtnSub}>Apagar a sugestão e a biometria e sair da conta</Text>
           </View>
           <Text style={styles.adminChevron}>›</Text>
         </TouchableOpacity>

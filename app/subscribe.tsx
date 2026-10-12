@@ -198,7 +198,7 @@ export default function SubscribeScreen() {
 
   return (
     <View style={s.screen}>
-      <StatusBar barStyle="light-content" />
+      <StatusBar barStyle="dark-content" />
       <ScrollView contentContainerStyle={s.content} showsVerticalScrollIndicator={false}>
         <AppLogo size={96} containerStyle={{ alignSelf: 'center', marginBottom: 12 }} />
         <Text style={s.title}>{isGestorContext ? 'Assinatura e Pagamento' : expired ? 'Renove sua assinatura' : 'Planos Tudo de Família'}</Text>

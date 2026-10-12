@@ -34,16 +34,16 @@ function isRouteAllowed(modules: Record<string, boolean>, keys: string | string[
  * Guard centralizado — usar nos layouts parent/child.
  */
 export function useRouteModuleGuard(homePath: '/parent' | '/child') {
-  const { modules, loading, user } = useAuth();
+  const { modules, loading, profileLoading, user } = useAuth();
   const pathname = usePathname();
   const router = useRouter();
 
   useEffect(() => {
-    if (loading || !user) return;
+    if (loading || profileLoading || !user) return;
     const required = ROUTE_MODULES[pathname];
     if (!required) return;
     if (!isRouteAllowed(modules as Record<string, boolean>, required)) {
       router.replace(homePath);
     }
-  }, [pathname, modules, loading, user, router, homePath]);
+  }, [pathname, modules, loading, profileLoading, user, router, homePath]);
 }
