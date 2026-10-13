@@ -669,6 +669,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             email,
             password,
             options: {
+              emailRedirectTo: "https://verify.tudodefamilia.online",
               data: {
                 name,
                 family_name: familyName,
