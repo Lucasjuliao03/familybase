@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { getDeviceId, getDeviceType, getDeviceName } from '../lib/device';
 
@@ -18,6 +18,7 @@ function haversineMeters(lat1, lon1, lat2, lon2) {
 
 const MIN_DISTANCE_M = 20;
 const MIN_INTERVAL_MS = 30_000;
+const REFRESH_MS=5*60_000;
 
 /**
  * Hook de geolocalização do browser.
@@ -27,7 +28,7 @@ const MIN_INTERVAL_MS = 30_000;
  */
 export function useGeolocation({ familyId, userId, enabled = true }) {
   const [position, setPosition] = useState(null);
-  const [error, setError] = useState(null);
+  const [error, setError] = useState(() => enabled && familyId && userId && typeof navigator !== 'undefined' && !navigator.geolocation ? 'Geolocalização não suportada neste browser.' : null);
   const [permissionDenied, setPermissionDenied] = useState(false);
   const [sending, setSending] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -35,10 +36,24 @@ export function useGeolocation({ familyId, userId, enabled = true }) {
   const lastSentRef = useRef({ lat: 0, lng: 0, ts: 0 });
   const watchIdRef = useRef(null);
   const sendingRef = useRef(false);
+  const scopeRef=useRef(enabled?`${familyId}/${userId}`:'');
+  useLayoutEffect(()=>{scopeRef.current=enabled?`${familyId}/${userId}`:'';},[enabled,familyId,userId]);
+  const [previousInputs, setPreviousInputs] = useState({ enabled, familyId, userId });
+  if (previousInputs.enabled !== enabled || previousInputs.familyId !== familyId || previousInputs.userId !== userId) {
+    setPreviousInputs({ enabled, familyId, userId });
+    setPosition(null);
+    setError(enabled && familyId && userId && typeof navigator !== 'undefined' && !navigator.geolocation ? 'Geolocalização não suportada neste browser.' : null);
+    setSending(false);
+    setRefreshing(false);
+  }
+  useEffect(() => {
+    lastSentRef.current = { lat: 0, lng: 0, ts: 0 };
+    sendingRef.current = false;
+  }, [enabled, familyId, userId]);
 
   const sendToSupabase = useCallback(
-    async (lat, lng, accuracy, speed, heading) => {
-      if (!familyId || !userId || sendingRef.current) return;
+    async (lat, lng, accuracy, speed, heading, capturedAt) => {
+      if (!familyId || !userId || sendingRef.current || scopeRef.current!==`${familyId}/${userId}` || (await supabase.auth.getSession()).data.session?.user.id!==userId) return;
       const last = lastSentRef.current;
       const now = Date.now();
       const dist = last.lat ? haversineMeters(last.lat, last.lng, lat, lng) : Infinity;
@@ -51,18 +66,23 @@ export function useGeolocation({ familyId, userId, enabled = true }) {
       try {
         const deviceId = getDeviceId();
         const deviceType = getDeviceType();
+        const existing=await supabase.from('family_member_devices').select('is_location_enabled').eq('family_id',familyId).eq('user_id',userId).eq('device_id',deviceId).maybeSingle();
+        if(existing.error)throw existing.error;
+        if(existing.data?.is_location_enabled===false||scopeRef.current!==`${familyId}/${userId}`)return;
         
         // Registrar/atualizar dispositivo (fire and forget ou await)
-        await supabase.from('family_member_devices').upsert({
+        const device=await supabase.from('family_member_devices').upsert({
           family_id: familyId,
           user_id: userId,
           device_id: deviceId,
           device_name: getDeviceName(),
           device_type: deviceType,
           last_seen_at: new Date().toISOString(),
-          is_primary_location_device: deviceType === 'mobile', // Celular tem prioridade
+          ...(!existing.data?{is_location_enabled:true,is_primary_location_device:deviceType==='mobile'}:{}),
         }, { onConflict: 'family_id,user_id,device_id' });
+        if(device.error)throw device.error;
 
+        if(scopeRef.current!==`${familyId}/${userId}` || (await supabase.auth.getSession()).data.session?.user.id!==userId)return;
         const row = {
           family_id: familyId,
           user_id: userId,
@@ -70,9 +90,10 @@ export function useGeolocation({ familyId, userId, enabled = true }) {
           latitude: lat,
           longitude: lng,
           accuracy: accuracy ?? null,
-          speed: speed ?? null,
+          speed: typeof speed==='number'&&speed>=0?speed:null,
+          captured_at:new Date(capturedAt).toISOString(),battery_level:null,battery_charging:null,
           heading: heading ?? null,
-          source: (deviceType !== 'mobile' && accuracy > 1000) ? 'approximate' : 'gps',
+          source: 'gps_v2',
           status: speed != null && speed > 1.5 ? 'moving' : 'home',
           updated_at: new Date().toISOString(),
         };
@@ -80,12 +101,11 @@ export function useGeolocation({ familyId, userId, enabled = true }) {
           .from('family_locations')
           .upsert(row, { onConflict: 'family_id,user_id,device_id' });
         if (upErr) console.warn('[geo] upsert:', upErr.message);
-        else lastSentRef.current = { lat, lng, ts: now };
+        else if(scopeRef.current===`${familyId}/${userId}`)lastSentRef.current = { lat, lng, ts: now };
       } catch (e) {
         console.warn('[geo] send:', e);
       } finally {
-        sendingRef.current = false;
-        setSending(false);
+        if(scopeRef.current===`${familyId}/${userId}`){sendingRef.current = false;setSending(false);}
       }
     },
     [familyId, userId],
@@ -94,19 +114,20 @@ export function useGeolocation({ familyId, userId, enabled = true }) {
   useEffect(() => {
     if (!enabled || !familyId || !userId) return undefined;
     if (!navigator.geolocation) {
-      setError('Geolocalização não suportada neste browser.');
       return undefined;
     }
 
     const onSuccess = (pos) => {
+      if(scopeRef.current!==`${familyId}/${userId}`)return;
       const { latitude, longitude, accuracy, speed, heading } = pos.coords;
-      setPosition({ lat: latitude, lng: longitude, accuracy, speed, heading, ts: Date.now() });
+      setPosition({ lat: latitude, lng: longitude, accuracy, speed, heading, ts: pos.timestamp });
       setError(null);
       setPermissionDenied(false);
-      sendToSupabase(latitude, longitude, accuracy, speed, heading);
+      sendToSupabase(latitude, longitude, accuracy, speed, heading,pos.timestamp);
     };
 
     const onError = (err) => {
+      if(scopeRef.current!==`${familyId}/${userId}`)return;
       if (err.code === 1) {
         setPermissionDenied(true);
         setError('Permissão de localização negada.');
@@ -128,34 +149,6 @@ export function useGeolocation({ familyId, userId, enabled = true }) {
     };
   }, [enabled, familyId, userId, sendToSupabase]);
 
-  // Listen for force update requests via Supabase Realtime Broadcast
-  useEffect(() => {
-    if (!enabled || !familyId || !userId) return undefined;
-    
-    const channel = supabase.channel(`location_updates:${familyId}`);
-    channel.on('broadcast', { event: 'force_update' }, (payload) => {
-      if (payload.payload?.user_id === userId) {
-        if (navigator.geolocation) {
-          navigator.geolocation.getCurrentPosition(
-            (pos) => {
-              const { latitude, longitude, accuracy, speed, heading } = pos.coords;
-              setPosition({ lat: latitude, lng: longitude, accuracy, speed, heading, ts: Date.now() });
-              // Force send by resetting the throttle ref
-              lastSentRef.current = { lat: 0, lng: 0, ts: 0 };
-              sendToSupabase(latitude, longitude, accuracy, speed, heading);
-            },
-            () => {},
-            { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
-          );
-        }
-      }
-    }).subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [enabled, familyId, userId, sendToSupabase]);
-
   /**
    * Força uma atualização imediata da localização do usuário atual.
    * Ignora o throttle de distância/tempo e envia direto ao Supabase.
@@ -163,6 +156,8 @@ export function useGeolocation({ familyId, userId, enabled = true }) {
    */
   const forceRefresh = useCallback(() => {
     return new Promise((resolve, reject) => {
+      const scope=`${familyId}/${userId}`;
+      if(!familyId||!userId||scopeRef.current!==scope){resolve(null);return;}
       if (!navigator.geolocation) {
         reject(new Error('Geolocalização não suportada'));
         return;
@@ -170,17 +165,19 @@ export function useGeolocation({ familyId, userId, enabled = true }) {
       setRefreshing(true);
       navigator.geolocation.getCurrentPosition(
         (pos) => {
+          if(scopeRef.current!==scope){resolve(null);return;}
           const { latitude, longitude, accuracy, speed, heading } = pos.coords;
-          setPosition({ lat: latitude, lng: longitude, accuracy, speed, heading, ts: Date.now() });
+          setPosition({ lat: latitude, lng: longitude, accuracy, speed, heading, ts: pos.timestamp });
           setError(null);
           setPermissionDenied(false);
           // Zera o throttle para forçar envio imediato
           lastSentRef.current = { lat: 0, lng: 0, ts: 0 };
-          sendToSupabase(latitude, longitude, accuracy, speed, heading)
-            .finally(() => setRefreshing(false));
+          sendToSupabase(latitude, longitude, accuracy, speed, heading,pos.timestamp)
+            .finally(() => {if(scopeRef.current===scope)setRefreshing(false);});
           resolve({ lat: latitude, lng: longitude, accuracy });
         },
         (err) => {
+          if(scopeRef.current!==scope){resolve(null);return;}
           setRefreshing(false);
           if (err.code === 1) {
             setPermissionDenied(true);
@@ -193,7 +190,14 @@ export function useGeolocation({ familyId, userId, enabled = true }) {
         { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
       );
     });
-  }, [sendToSupabase]);
+  }, [sendToSupabase, familyId, userId]);
 
+  useEffect(()=>{
+    if(!enabled||!familyId||!userId)return;
+    const check=async()=>{const {data}=await supabase.from('family_location_refresh_requests').select('id').eq('family_id',familyId).eq('target_user_id',userId).is('completed_at',null).gt('expires_at',new Date().toISOString()).limit(1);if(data?.length&&scopeRef.current===`${familyId}/${userId}`)await forceRefresh().catch(()=>{});};
+    const channel=supabase.channel('web-location-request-'+userId+'-'+Date.now()).on('postgres_changes',{event:'INSERT',schema:'public',table:'family_location_refresh_requests',filter:'target_user_id=eq.'+userId},()=>void check()).subscribe();
+    const timer=setInterval(()=>{if(document.visibilityState==='visible')void forceRefresh().catch(()=>{});},REFRESH_MS);
+    return()=>{clearInterval(timer);void supabase.removeChannel(channel);};
+  },[enabled,familyId,userId,forceRefresh]);
   return { position, error, permissionDenied, sending, refreshing, forceRefresh };
 }

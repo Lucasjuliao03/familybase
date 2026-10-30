@@ -1,3 +1,4 @@
+import ModuleTitle from '../components/web/ModuleTitle';
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../contexts/LanguageContext';
@@ -54,9 +55,10 @@ export default function MuralBoard() {
       if (filters.status) q.set('status', filters.status);
       if (filters.type) q.set('type', filters.type);
       if (filters.priority) q.set('priority', filters.priority);
-      const { data } = await api.get(`/mural/notices?${q}`);
-      const sorted = [...(data || [])].sort((a, b) => (b.is_pinned || 0) - (a.is_pinned || 0));
-      setNotices(sorted);
+      await api.get(`/mural/notices?${q}`).then(({ data }) => {
+        const sorted = [...(data || [])].sort((a, b) => (b.is_pinned || 0) - (a.is_pinned || 0));
+        setNotices(sorted);
+      });
     } catch {
       toast.error(t('error_occurred'));
     }
@@ -208,7 +210,7 @@ export default function MuralBoard() {
     <div className="animate-fade-in">
       <div className="page-header flex-between flex-wrap gap-16">
         <div>
-          <h1 className="page-title">📌 {t('mural_page_title')}</h1>
+          <ModuleTitle className="page-title" icon="mural" nativeIcon="📌">{t('mural_page_title')}</ModuleTitle>
           <p className="page-subtitle">{t('mural_page_subtitle')}</p>
         </div>
         {canCreate && (

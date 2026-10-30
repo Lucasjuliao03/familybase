@@ -1,5 +1,6 @@
 /** Ícones SVG do painel do responsável (sem emojis). */
 const ICONS = {
+  eye: (<><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z" stroke="currentColor" strokeWidth="1.75" fill="none"/><circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.75" fill="none"/></>),
   dashboard: (
     <path d="M4 10.5 12 4l8 6.5V20a1 1 0 0 1-1 1h-5v-6H10v6H5a1 1 0 0 1-1-1v-9.5Z" stroke="currentColor" strokeWidth="1.75" strokeLinejoin="round" fill="none" />
   ),

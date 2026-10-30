@@ -1,3 +1,4 @@
+import ModuleTitle, { ModuleIcon } from '../../components/web/ModuleTitle';
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useLanguage } from '../../contexts/LanguageContext';
@@ -27,30 +28,30 @@ export default function MyAllowance() {
   const fetchData = useCallback(async () => {
     try {
       const goalParams = childProfile?.id ? { params: { child_id: childProfile.id } } : {};
-      const [rSet, rTrans, rGoals] = await Promise.all([
+      await Promise.all([
         api.get('/allowance/settings').catch(() => ({ data: [] })),
         api.get('/allowance/transactions').catch(() => ({ data: [] })),
         api.get('/allowance/goals', goalParams).catch(() => ({ data: [] })),
-      ]);
+      ]).then(async ([rSet, rTrans, rGoals]) => {
+        const mySetting =
+          Array.isArray(rSet.data)
+            ? rSet.data.find((s) => String(s?.child_id) === String(childProfile.id))
+            : null;
+        setSettings(mySetting);
+        setTransactions(rTrans.data);
+        setGoals(rGoals.data);
 
-      const mySetting =
-        Array.isArray(rSet.data)
-          ? rSet.data.find((s) => String(s?.child_id) === String(childProfile.id))
-          : null;
-      setSettings(mySetting);
-      setTransactions(rTrans.data);
-      setGoals(rGoals.data);
-
-      if (childProfile?.id) {
-        const rCyc = await api.post('/allowance/cycles/current', { child_id: childProfile.id }).catch(() => ({ data: null }));
-        setCycle(rCyc.data);
-        const rPig = await api.get('/allowance/piggy-requests').catch(() => ({ data: [] }));
-        setPiggyRequests(rPig.data || []);
-      }
+        if (childProfile?.id) {
+          const rCyc = await api.post('/allowance/cycles/current', { child_id: childProfile.id }).catch(() => ({ data: null }));
+          setCycle(rCyc.data);
+          const rPig = await api.get('/allowance/piggy-requests').catch(() => ({ data: [] }));
+          setPiggyRequests(rPig.data || []);
+        }
+      });
     } catch (e) {
       console.error(e);
     }
-  }, [childProfile?.id]);
+  }, [childProfile]);
 
   useEffect(() => { if (childProfile) fetchData(); }, [childProfile, fetchData]);
   /** Reforço ao regressar ao app (sem duplicar o mount/rota quando childProfile atualiza). */
@@ -64,7 +65,7 @@ export default function MyAllowance() {
       setShowGoalModal(false);
       setGoalForm({ title: '', target_amount: '' });
       fetchData();
-    } catch (err) {
+    } catch {
       toast.error(t('error_occurred'));
     }
   };
@@ -91,7 +92,7 @@ export default function MyAllowance() {
 
   return (
     <div className="animate-fade-in">
-      <h1 className="page-title mb-8">💰 {t('my_allowance')}</h1>
+      <ModuleTitle className="page-title mb-8" icon="allowance" nativeIcon="💰">{t('my_allowance')}</ModuleTitle>
       <p className="page-subtitle mb-24">{t('allowance_subtitle_child')}</p>
 
       <div className="tabs mb-24" style={{ flexWrap: 'wrap', gap: 8 }}>
@@ -115,7 +116,7 @@ export default function MyAllowance() {
               <h3 style={{ margin: 0 }}>Extrato de Entradas e Saídas</h3>
             </div>
             {transactions.length === 0 ? (
-              <div className="empty-state" style={{ padding: 40 }}><div className="empty-icon">🧾</div><h3>Nenhuma movimentação</h3></div>
+              <div className="empty-state" style={{ padding: 40 }}><div className="empty-icon"><ModuleIcon icon="allowance" nativeIcon="🧾" size={28}/></div><h3>Nenhuma movimentação</h3></div>
             ) : (
               <div style={{ overflowX: 'auto' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>

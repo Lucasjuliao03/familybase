@@ -1,0 +1,1 @@
+function e(e,t){return!e||typeof e!=`object`?!1:e[t]===!0}function t(t,n){return n?.length?n.some(n=>e(t,n)):!0}export{e as n,t};

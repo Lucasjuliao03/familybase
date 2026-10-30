@@ -2,6 +2,9 @@ import { createContext, useContext, useState, useEffect, useRef, useCallback } f
 import { supabase, mapAuthNetworkError, reconnectSupabaseRealtime, shouldReconnectSupabaseRealtime } from '../lib/supabase';
 import { dispatchFamiliaControlledResume } from '../lib/appResumeEvents';
 import { famDiag } from '../lib/famDiag';
+import { loadExistingFamilyProfile, registerLegacyFamilyAccount as registerFamilyAccount, signInExistingAccount as signInFamilyAccount } from '../lib/legacyFamilyAuth';
+import { clearFamilyAssets, warmFamilyProfileAssets } from '../lib/familyAssets';
+import { loadFamilyEntitlement, unavailableFamilyAccess } from '../lib/familyWebAccess';
 
 const AuthContext = createContext(null);
 
@@ -10,6 +13,8 @@ const CACHE_KEY = 'familia_profile_cache';
 const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutos
 /** Tempo máximo para verificar sessão no arranque (login aparece logo se expirar). */
 const SESSION_CHECK_MS = 3_000;
+const PROFILE_FRESH_TTL_MS = 5 * 60 * 1000;
+const PROFILE_LOAD_TIMEOUT_MS = 30_000;
 
 function saveProfileCache(payload) {
   try {
@@ -66,9 +71,8 @@ async function fetchChildProfileRowByAuth(supabaseClient, userId, familyId) {
   const { data: sessWrap, error: sessErr } = await supabaseClient.auth.getSession();
   if (sessErr || !sessWrap?.session?.user || sessWrap.session.user.id !== userId) return null;
   const { user } = sessWrap.session;
-  const um = user.user_metadata || {};
   const am = user.app_metadata || {};
-  const raw = um.child_id || um.childId || am.child_id || am.childId;
+  const raw = am.child_id || am.childId;
   const meta = raw != null ? String(raw).trim() : '';
   if (!meta || meta === 'undefined') return null;
 
@@ -77,69 +81,9 @@ async function fetchChildProfileRowByAuth(supabaseClient, userId, familyId) {
     .select('*')
     .eq('family_id', familyId)
     .eq('id', meta)
+    .eq('user_id', userId)
     .maybeSingle();
   return byMeta || null;
-}
-
-/** Fallback cliente se RPC get_effective_subscription ainda não estiver deployado. */
-function buildEffectiveSubscriptionFallback(profileRow, resolvedFamily, userId) {
-  const fam = resolvedFamily;
-  if (!fam || !profileRow?.family_id) {
-    return {
-      ok: true,
-      has_access: false,
-      reason: 'no_family',
-      family_id: profileRow?.family_id ?? null,
-      gestor_id: null,
-      subscription_status: null,
-      trial_ends_at: null,
-      can_manage_billing: false,
-      is_billing_contact: false,
-    };
-  }
-  const sub = fam.subscription_status || 'trial';
-  let hasAccess = false;
-  let reason = 'no_subscription';
-  const endsTs = fam.trial_ends_at ? new Date(fam.trial_ends_at).getTime() : null;
-  const trialAlive = endsTs != null && !Number.isNaN(endsTs) ? endsTs >= Date.now() : false;
-
-  if (sub === 'active') {
-    hasAccess = true;
-    reason = 'subscription_active';
-  } else if (sub === 'trial') {
-    if (trialAlive || fam.trial_ends_at == null) {
-      hasAccess = true;
-      reason = 'trial_active';
-    } else {
-      reason = 'trial_expired';
-    }
-  } else if (sub === 'past_due') {
-    reason = 'subscription_past_due';
-  } else if (sub === 'expired' || sub === 'cancelled') {
-    reason = 'subscription_blocked';
-  }
-
-  let canManage = false;
-  if (profileRow.role === 'parent') {
-    const ap = profileRow.access_profile ?? profileRow.accessProfile ?? 'gestor';
-    const isGestProf = ap === 'gestor';
-    if (isGestProf) {
-      const gid = fam.gestor_user_id;
-      canManage = !gid ? true : gid === userId;
-    }
-  }
-
-  return {
-    ok: true,
-    has_access: hasAccess,
-    reason,
-    family_id: fam.id,
-    gestor_id: fam.gestor_user_id ?? null,
-    subscription_status: fam.subscription_status,
-    trial_ends_at: fam.trial_ends_at,
-    can_manage_billing: canManage,
-    is_billing_contact: canManage,
-  };
 }
 
 /**
@@ -173,7 +117,7 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
   const [profileLoading, setProfileLoading] = useState(false);
 
-  const [effectiveSubscription, setEffectiveSubscription] = useState(initialCache?.effectiveSubscription ?? null);
+  const [effectiveSubscription, setEffectiveSubscription] = useState(null);
   const profileInflightRef = useRef(null);
   const profileLoadGenerationRef = useRef(0);
   /**
@@ -189,20 +133,25 @@ export function AuthProvider({ children }) {
   /** Partilha a mesma Promessa se `performControlledResume` é chamado em paralelo. */
   const controlledResumeInflightRef = useRef(null);
 
-  // TTL do perfil "fresco": 5 minutos
-  const PROFILE_FRESH_TTL_MS = 5 * 60 * 1000;
-  // Timeout total de carregamento de perfil
-  const PROFILE_LOAD_TIMEOUT_MS = 30_000;
-
   useEffect(() => {
     userRef.current = user;
   }, [user]);
+  useEffect(() => {
+    if (!user?.id || !family?.id) return;
+    let active = true;
+    const timer = setInterval(() => { void warmFamilyProfileAssets(supabase,family.id,family,true).then(() => {
+      if (active) setFamily(p => p?.id===family.id ? { ...p }:p);
+    }).catch(console.warn); },20*60*1000);
+    return () => { active=false; clearInterval(timer); };
+  },[user?.id,family]);
 
   useEffect(() => {
     loadingRef.current = loading;
   }, [loading]);
 
   const clearState = useCallback(() => {
+    profileLoadGenerationRef.current += 1;
+    clearFamilyAssets();
     clearProfileCache();
     profileFreshRef.current = { uid: null, at: 0 };
     setUser(null);
@@ -210,6 +159,8 @@ export function AuthProvider({ children }) {
     setChildProfile(null);
     setModules({});
     setEffectiveSubscription(null);
+    setProfileLoading(false);
+    setMustChangePassword(false);
   }, []);
 
   /**
@@ -221,7 +172,7 @@ export function AuthProvider({ children }) {
     setUser(cached.user);
     setFamily(cached.family ?? null);
     setModules(cached.modules ?? { ...DEFAULT_MODULES });
-    setEffectiveSubscription(cached.effectiveSubscription ?? null);
+    setEffectiveSubscription(null); // Cached UI data never authorizes a family route.
     setChildProfile(cached.childProfile ?? null);
     setMustChangePassword(!!cached.user.must_change_password);
     return true;
@@ -254,64 +205,17 @@ export function AuthProvider({ children }) {
 
     const promise = (async () => {
       setProfileLoading(true);
+      setEffectiveSubscription(null);
       try {
-        const { data: profile, error } = await supabase
-          .from('users')
-          .select('*')
-          .eq('id', userId)
-          .single();
-
-        let profileRow = profile;
-
-        if (error?.code === 'PGRST116') {
-          const { error: rpcErr } = await supabase.rpc('register_family_and_user', {
-            p_family_name: null,
-            p_user_name: null,
-          });
-          const retry = await supabase.from('users').select('*').eq('id', userId).single();
-          if (!rpcErr && !retry.error && retry.data) {
-            profileRow = retry.data;
-          } else {
-            console.warn('[auth] Sem linha em public.users (registo?):', rpcErr?.message || retry.error?.message || '');
-            if (generation === profileLoadGenerationRef.current) clearState();
-            return;
-          }
-        } else if (error) {
-          console.error('Erro ao carregar public.users:', error.code, error.message);
-          await supabase.auth.signOut({ scope: 'local' }).catch(() => {});
-          throw new Error(
-            'Não foi possível ler o perfil na base de dados (erro do servidor). ' +
-              'No Supabase, execute o script supabase_baas_complete_fix.sql no SQL Editor.',
-          );
-        }
-
-        if (!profileRow) {
-          if (generation === profileLoadGenerationRef.current) clearState();
-          return;
-        }
-
-        if (!profileRow.family_id) {
-          const { error: provErr } = await supabase.rpc('register_family_and_user', {
-            p_family_name: null,
-            p_user_name: null,
-          });
-          if (provErr) {
-            console.error('[auth] RPC register_family:', provErr.message);
-          } else {
-            const refill = await supabase.from('users').select('*').eq('id', userId).single();
-            if (!refill.error && refill.data) {
-              profileRow = refill.data;
-            }
-          }
-        }
-
-        if (!profileRow?.family_id) {
-          console.warn('[auth] Conta sem família; complete registo ou SQL de correção.');
+        const profileRow = await loadExistingFamilyProfile(supabase,userId);
+        if (profileRow.status !== 'active') {
+          await supabase.auth.signOut({ scope: 'local' });
+          throw new Error('Acesso indisponível. Fale com o gestor da família.');
         }
 
         if (generation !== profileLoadGenerationRef.current) return;
 
-        const emailResolved = emailHint || profileRow.email || '';
+        const emailResolved = profileRow.display_login || profileRow.email || emailHint || '';
         const userObj = { ...profileRow, email: emailResolved };
         const fid = profileRow.family_id;
         const wantsChildRow = profileRow.role === 'child';
@@ -321,12 +225,13 @@ export function AuthProvider({ children }) {
         setMustChangePassword(!!profileRow.must_change_password);
         resolveReady?.();
 
-        await Promise.race([
+        return await Promise.race([
           (async () => {
-            const [{ data: familyData }, { data: fmRows }, { data: cData }] = await Promise.all([
+            const [{ data: familyData }, { data: fmRows }, { data: cData }, effData] = await Promise.all([
               fid ? supabase.from('families').select('*').eq('id', fid).maybeSingle() : Promise.resolve({ data: null }),
               fid ? supabase.from('family_modules').select('module_key, is_enabled').eq('family_id', fid) : Promise.resolve({ data: [] }),
-              wantsChildRow ? supabase.from('children').select('*').eq('user_id', userId).maybeSingle() : Promise.resolve({ data: null }),
+              wantsChildRow ? supabase.from('children').select('*').eq('user_id', userId).eq('family_id', fid).maybeSingle() : Promise.resolve({ data: null }),
+              loadFamilyEntitlement(supabase, profileRow).catch(() => unavailableFamilyAccess(fid)),
             ]);
 
             if (generation !== profileLoadGenerationRef.current) return;
@@ -338,26 +243,13 @@ export function AuthProvider({ children }) {
 
             let resolvedFamily = familyData;
 
-            try {
-              const rpcRes = await raceMs(supabase.rpc('get_effective_subscription'), 2500);
-              const { data: effData, error: effErr } = rpcRes ?? {};
-              if (!effErr && effData != null && typeof effData === 'object') {
-                if (generation !== profileLoadGenerationRef.current) return;
-                setEffectiveSubscription(effData);
-                const fidEFF = effData.family_id ?? fid;
-                if (resolvedFamily && fidEFF && String(resolvedFamily.id) === String(fidEFF)) {
-                  resolvedFamily = {
-                    ...resolvedFamily,
-                    subscription_status: effData.subscription_status ?? resolvedFamily.subscription_status,
-                    trial_ends_at: effData.trial_ends_at ?? resolvedFamily.trial_ends_at,
-                  };
-                }
-              } else {
-                throw effErr || new Error('rpc_effective_subscription');
-              }
-            } catch (_) {
-              if (generation !== profileLoadGenerationRef.current) return;
-              setEffectiveSubscription(buildEffectiveSubscriptionFallback(profileRow, resolvedFamily ?? null, userId));
+            setEffectiveSubscription(effData);
+            if (resolvedFamily && effData.ok === true && effData.family_id === fid) {
+              resolvedFamily = {
+                ...resolvedFamily,
+                subscription_status: effData.subscription_status ?? resolvedFamily.subscription_status,
+                trial_ends_at: effData.trial_ends_at ?? resolvedFamily.trial_ends_at,
+              };
             }
 
             if (generation !== profileLoadGenerationRef.current) return;
@@ -367,6 +259,8 @@ export function AuthProvider({ children }) {
               if (r.module_key != null) mergedMods[r.module_key] = !!r.is_enabled;
             });
 
+            await warmFamilyProfileAssets(supabase,fid,resolvedFamily);
+            if (generation !== profileLoadGenerationRef.current) return;
             setFamily(resolvedFamily ?? null);
             setModules(mergedMods);
             setChildProfile(wantsChildRow ? (effectiveChildRow ?? null) : null);
@@ -379,13 +273,17 @@ export function AuthProvider({ children }) {
               effectiveSubscription: null,
               childProfile: wantsChildRow ? (effectiveChildRow ?? null) : null,
             });
+            return effData;
           })(),
           rejectAfter(PROFILE_LOAD_TIMEOUT_MS, 'profile_load_timeout'),
         ]);
       } catch (err) {
         const msg = String(err?.message || err);
         if (msg === 'profile_load_timeout') {
+          if (generation !== profileLoadGenerationRef.current) return;
           profileInflightRef.current = null;
+          setEffectiveSubscription(unavailableFamilyAccess(null));
+          setProfileLoading(false);
           profileLoadGenerationRef.current += 1;
           console.warn(
             '[auth] Carregamento do perfil excedeu o tempo seguro. Mantém-se a sessão — se a UI falhar, actualize a página.',
@@ -405,9 +303,10 @@ export function AuthProvider({ children }) {
     })();
 
     profileInflightRef.current = { userId, promise };
-    promise.finally(() => {
+    const clearInflight = () => {
       if (profileInflightRef.current?.promise === promise) profileInflightRef.current = null;
-    });
+    };
+    promise.then(clearInflight, clearInflight);
 
     if (awaitFull) {
       await promise;
@@ -418,10 +317,11 @@ export function AuthProvider({ children }) {
       promise.catch((e) => console.warn('[auth] loadUserProfile background:', e));
     }
     return promise;
-  }, [clearState]);
+  }, []);
 
   useEffect(() => {
     const hydrateId = ++authHydrateSeqRef.current;
+    let active=true;
 
     async function hydrateFromStorage() {
       try {
@@ -474,12 +374,13 @@ export function AuthProvider({ children }) {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (event, session) => {
+    } = supabase.auth.onAuthStateChange((event, session) => {
       /** StrictMode faz subscribe/unsubscribe: INITIAL_SESSION pode perder-se; hydrateFromStorage garante entrada. */
       if (event === 'INITIAL_SESSION') return;
       /** Evitar re-fetch completo a cada renovação silenciosa de token → loops e flashes. */
       if (event === 'TOKEN_REFRESHED') return;
-
+      setTimeout(() => { void (async () => {
+      if (!active) return;
       try {
         if (event === 'SIGNED_OUT' || !session?.user) {
           profileFreshRef.current = { uid: null, at: 0 };
@@ -503,13 +404,16 @@ export function AuthProvider({ children }) {
           '';
         await loadUserProfile(uid, em);
       } catch (e) {
+        if (!active) return;
         console.error('[auth] onAuthStateChange', event, e);
         await supabase.auth.signOut({ scope: 'local' }).catch(() => {});
         clearState();
       }
+      })().catch(console.warn); },0);
     });
 
     return () => {
+      active=false;
       authHydrateSeqRef.current += 1;
       subscription?.unsubscribe();
     };
@@ -606,84 +510,20 @@ export function AuthProvider({ children }) {
     return controlledResumeInflightRef.current;
   }, [loadUserProfile]);
 
-  const login = async (email, password) => {
+  const login = async (email, password, familyCode) => {
     try {
-      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) throw new Error(error.message);
-      await loadUserProfile(data.user.id, email, { awaitReady: true });
+      const data = await signInFamilyAccount(supabase, email, password, familyCode);
+      await loadUserProfile(data.user.id, undefined, { awaitFull: true });
       return { user: data.user };
-    } catch (e) {
-      throw mapAuthNetworkError(e);
-    }
+    } catch (e) { throw mapAuthNetworkError(e); }
   };
 
   const register = async (formData) => {
-    const email = String(formData.email || '').trim().toLowerCase();
-    const password = String(formData.password || '');
-    const familyName = formData.familyName || null;
-    const name = formData.name || null;
-    const profileNorm = String(formData.profileType || 'pai').toLowerCase().replace(/ã/g, 'a').trim();
-    if (!['pai', 'mae'].includes(profileNorm)) {
-      throw new Error('O registo público só é permitido para Pai ou Mãe (gestor principal). Para filhos, o gestor cria o acesso na administração da família.');
-    }
-    const profileType = profileNorm;
-    let data;
     try {
-      const { data: signUpData, error } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          data: { name, family_name: familyName, profile_type: profileType },
-        },
-      });
-      data = signUpData;
-      if (error) {
-        let hint = '';
-        if (error.message?.includes('already registered') || error.code === 'user_already_exists') {
-          hint = ' Este email já tem conta — faça login ou use outro email.';
-        } else if (/invalid/i.test(error.message || '') && /email/i.test(error.message || '')) {
-          hint =
-            ' O Supabase pode rejeitar alguns domínios (DNS/MX). Experimente Gmail/Outlook ou confira ' +
-            'Authentication → Providers → Email no painel Supabase.';
-        }
-        throw new Error(`${error.message}${hint}`);
-      }
-    } catch (e) {
-      throw mapAuthNetworkError(e);
-    }
-
-    // 2. Se Supabase exige confirmação de email, não há sessão -> tentar login
-    let session = data.session;
-    if (!session) {
-      try {
-        const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({ email, password });
-        if (signInError) {
-          throw new Error(
-            'Não foi possível iniciar sessão após o cadastro. Verifique email e senha e tente entrar.',
-          );
-        }
-        session = signInData.session;
-      } catch (e) {
-        throw mapAuthNetworkError(e);
-      }
-    }
-    if (!session?.user?.id) throw new Error('Não foi possível iniciar sessão após o registo.');
-
-    // 3. RPC para criar família com trial e perfil
-    const { error: rpcErr } = await supabase.rpc('register_family_and_user', {
-      p_family_name: familyName,
-      p_user_name: name,
-      p_profile_type: profileType,
-      p_phone: formData.phone?.trim() || null,
-      p_address: formData.address?.trim() || null,
-      p_date_of_birth: formData.dateOfBirth || null,
-      p_contact_email: email,
-    });
-    if (rpcErr) throw new Error(rpcErr.message);
-
-    // 4. Recarregar perfil
-    await loadUserProfile(session.user.id, email, { awaitFull: true });
-    return { ...data, session };
+      const result = await registerFamilyAccount(supabase, formData,new URL('/login',window.location.origin).href);
+      if (result.status === 'registered') await loadUserProfile(result.userId, undefined, { awaitFull: true,force:true });
+      return result;
+    } catch (e) { throw mapAuthNetworkError(e); }
   };
 
   const logout = async () => {
@@ -697,10 +537,10 @@ export function AuthProvider({ children }) {
     clearState();
   };
 
-  const fetchMe = async () => {
+  const fetchMe = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser();
-    if (user) await loadUserProfile(user.id, user.email, { force: true });
-  };
+    if (user) return loadUserProfile(user.id, user.email, { force: true });
+  }, [loadUserProfile]);
 
   /** Re-resolve children.* após login tardio ou vínculo recente (sem exigir reload). */
   const ensureChildProfile = useCallback(async () => {
@@ -737,4 +577,6 @@ export function AuthProvider({ children }) {
   );
 }
 
+// The provider and its consumer hook intentionally share the same context instance.
+// eslint-disable-next-line react-refresh/only-export-components
 export const useAuth = () => useContext(AuthContext);

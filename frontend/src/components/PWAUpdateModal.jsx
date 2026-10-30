@@ -1,17 +1,11 @@
-import { useEffect, useState } from 'react';
-import { applyProdPwaUpdate } from '../lib/pwaUpdate';
+import { useState, useSyncExternalStore } from 'react';
+import { applyProdPwaUpdate, hasProdPwaUpdate, subscribeToProdPwaUpdate } from '../lib/pwaUpdate';
 
 /** Modal quando existe nova versão do SW (modo prompt do vite-plugin-pwa). */
 export default function PWAUpdateModal() {
-  const [open, setOpen] = useState(false);
-
-  useEffect(() => {
-    const onAvail = () => setOpen(true);
-    window.addEventListener('pwa:update-available', onAvail);
-    return () => window.removeEventListener('pwa:update-available', onAvail);
-  }, []);
-
-  if (!open) return null;
+  const available = useSyncExternalStore(subscribeToProdPwaUpdate, hasProdPwaUpdate, () => false);
+  const [dismissed, setDismissed] = useState(false);
+  if (!available || dismissed) return null;
 
   return (
     <div className="modal-overlay" style={{ zIndex: 9999 }} role="dialog" aria-labelledby="pwa-update-title">
@@ -26,7 +20,7 @@ export default function PWAUpdateModal() {
           <button
             type="button"
             className="btn btn-ghost"
-            onClick={() => setOpen(false)}
+            onClick={() => setDismissed(true)}
           >
             Agora não
           </button>
@@ -35,7 +29,7 @@ export default function PWAUpdateModal() {
             className="btn btn-primary"
             onClick={async () => {
               try {
-                setOpen(false);
+                setDismissed(true);
                 await applyProdPwaUpdate();
               } catch (e) {
                 console.warn('[PWA] atualização:', e);

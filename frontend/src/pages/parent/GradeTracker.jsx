@@ -1,3 +1,4 @@
+import ModuleTitle, { ModuleIcon } from '../../components/web/ModuleTitle';
 import { useState, useCallback, useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useLanguage } from '../../contexts/LanguageContext';
@@ -19,22 +20,13 @@ const PERIOD_LABELS = {
   trimester:  ['1º Trimestre','2º Trimestre','3º Trimestre'],
 };
 
-function ScoreBar({ value, max, minAvg }) {
-  const pct = Math.min(100, (value / max) * 100);
-  const color = value >= minAvg ? 'var(--success)' : value >= minAvg * 0.75 ? '#F97316' : 'var(--danger)';
-  return (
-    <div style={{ height: 6, background: 'var(--border)', borderRadius: 4, overflow: 'hidden', flex: 1 }}>
-      <div style={{ height: '100%', width: `${pct}%`, background: color, borderRadius: 4, transition: 'width 0.4s' }} />
-    </div>
-  );
-}
-
 import { buildPeriodConfig, buildSubjectBoletim, scoreColorByStatus, statusBadgeStyle } from '../../lib/gradesHelpers';
 
 export default function GradeTracker() {
   const { t } = useLanguage();
   const toast = useToast();
   const { family } = useAuth();
+  const familyId = family?.id;
   const location = useLocation();
 
   const [grades, setGrades] = useState([]);
@@ -59,8 +51,9 @@ export default function GradeTracker() {
     const params = {};
     if (filterChild) params.child_id = filterChild;
     try {
-      const { data } = await api.get('/grades', { params });
-      setGrades(data || []);
+      await api.get('/grades', { params }).then(({ data }) => {
+        setGrades(data || []);
+      });
     } catch { /* manter estado anterior */ }
     api.get('/families/children')
       .then((r) => {
@@ -82,32 +75,36 @@ export default function GradeTracker() {
       .catch(() => setSubjectOptions(PREDEFINED_SUBJECTS));
 
     // Carregar configurações de avaliação via Supabase direto
-    if (family?.id) {
-      const { data: sgsRows } = await supabase
+    if (familyId) {
+      await Promise.resolve(supabase
         .from('school_grade_settings')
         .select('*')
-        .eq('family_id', family.id);
-      if (sgsRows) {
-        const map = {};
-        sgsRows.forEach((r) => { map[r.child_id] = r; });
-        setSettings(map);
-      }
+        .eq('family_id', familyId))
+        .then(({ data: sgsRows }) => {
+          if (sgsRows) {
+            const map = {};
+            sgsRows.forEach((r) => { map[r.child_id] = r; });
+            setSettings(map);
+          }
+        });
 
-      const { data: sgpRows } = await supabase
+      await Promise.resolve(supabase
         .from('school_grade_periods')
         .select('*')
-        .eq('family_id', family.id)
-        .order('period_number', { ascending: true });
-      if (sgpRows) {
-        const pMap = {};
-        sgpRows.forEach((r) => {
-          if (!pMap[r.child_id]) pMap[r.child_id] = [];
-          pMap[r.child_id].push(r);
+        .eq('family_id', familyId)
+        .order('period_number', { ascending: true }))
+        .then(({ data: sgpRows }) => {
+          if (sgpRows) {
+            const pMap = {};
+            sgpRows.forEach((r) => {
+              if (!pMap[r.child_id]) pMap[r.child_id] = [];
+              pMap[r.child_id].push(r);
+            });
+            setPeriods(pMap);
+          }
         });
-        setPeriods(pMap);
-      }
     }
-  }, [filterChild, family?.id]);
+  }, [filterChild, familyId]);
 
   useEffect(() => { loadBundle(); }, [loadBundle, location.pathname]);
   useAutoRefresh(loadBundle, 2600);
@@ -234,20 +231,23 @@ export default function GradeTracker() {
     setSavingSettings(false);
   };
 
-  // Quando troca filho ou modelo, atualiza o form
-  useEffect(() => {
-    if (!filterChild) return;
-    const s = settings[filterChild] || { evaluation_model: 'bimonthly', approval_pct: 60, goal_pct: 80, attention_pct: 50, risk_pct: 75 };
-    const pCfg = buildPeriodConfig(s, periods[filterChild] || []);
-    setSettingsForm({ 
-      evaluation_model: s.evaluation_model, 
-      approval_pct: s.approval_pct || 60,
-      goal_pct: s.goal_pct || 80,
-      attention_pct: s.attention_pct || 50,
-      risk_pct: s.risk_pct || 75,
-      periods: pCfg 
-    });
-  }, [filterChild, settings, periods]);
+  // Quando troca filho ou modelo, atualiza o form antes de apresentar os campos.
+  const [previousSettingsSource, setPreviousSettingsSource] = useState({ filterChild, settings, periods });
+  if (previousSettingsSource.filterChild !== filterChild || previousSettingsSource.settings !== settings || previousSettingsSource.periods !== periods) {
+    setPreviousSettingsSource({ filterChild, settings, periods });
+    if (filterChild) {
+      const s = settings[filterChild] || { evaluation_model: 'bimonthly', approval_pct: 60, goal_pct: 80, attention_pct: 50, risk_pct: 75 };
+      const pCfg = buildPeriodConfig(s, periods[filterChild] || []);
+      setSettingsForm({
+        evaluation_model: s.evaluation_model,
+        approval_pct: s.approval_pct || 60,
+        goal_pct: s.goal_pct || 80,
+        attention_pct: s.attention_pct || 50,
+        risk_pct: s.risk_pct || 75,
+        periods: pCfg
+      });
+    }
+  }
 
   const handlePeriodChange = (idx, field, val) => {
     setSettingsForm(prev => {
@@ -271,7 +271,7 @@ export default function GradeTracker() {
       {/* Header */}
       <div className="flex-between mb-16" style={{ flexWrap: 'wrap', gap: 12 }}>
         <div>
-          <h1 className="page-title">📚 {t('grade_tracking')}</h1>
+          <ModuleTitle className="page-title" icon="grades" nativeIcon="📚">{t('grade_tracking')}</ModuleTitle>
           <p className="page-subtitle" style={{ fontSize: '0.85rem', color: 'var(--text-light)' }}>Acompanhe o desempenho escolar</p>
         </div>
         <button className="btn btn-primary" onClick={openNewModal}>+ {t('add_grade')}</button>
@@ -300,7 +300,7 @@ export default function GradeTracker() {
         <div>
           {!filterChild ? (
             <div className="card empty-state">
-              <div className="empty-icon">📊</div>
+              <div className="empty-icon"><ModuleIcon icon="reports" nativeIcon="📊" size={28}/></div>
               <h3>Selecione um Aluno</h3>
               <p>Escolha um aluno no filtro acima para ver o boletim.</p>
             </div>

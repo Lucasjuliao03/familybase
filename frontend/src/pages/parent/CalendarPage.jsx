@@ -1,3 +1,4 @@
+import ModuleTitle from '../../components/web/ModuleTitle';
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useToast } from '../../contexts/ToastContext';
@@ -27,7 +28,7 @@ export default function CalendarPage() {
   /** Padrão: todos (sem filtro server-side por dependente). */
   const [filterChildId, setFilterChildId] = useState('all');
 
-  const [calendarLoading, setCalendarLoading] = useState(false);
+  const [calendarLoading, setCalendarLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState({
     id: null,
@@ -56,6 +57,12 @@ export default function CalendarPage() {
     if (filterChildId && filterChildId !== 'all') p.filter_child_id = filterChildId;
     return p;
   }, [tab, anchorDate, filterChildId]);
+  const [previousCalendarRequest, setPreviousCalendarRequest] = useState({ tab, calendarParams, historyParams });
+  if (previousCalendarRequest.tab !== tab || previousCalendarRequest.calendarParams !== calendarParams || previousCalendarRequest.historyParams !== historyParams) {
+    setPreviousCalendarRequest({ tab, calendarParams, historyParams });
+    const p = tab === 'calendar' ? calendarParams : historyParams;
+    if (p?.from && p?.to) setCalendarLoading(tab === 'calendar');
+  }
 
   useEffect(() => {
     api.get('/families/children').then((r) => setChildren(r.data)).catch(() => {});
@@ -65,7 +72,6 @@ export default function CalendarPage() {
     const p = tab === 'calendar' ? calendarParams : historyParams;
     if (!p?.from || !p?.to) return;
     let cancelled = false;
-    setCalendarLoading(tab === 'calendar');
     api
       .get('/calendar', { params: p })
       .then((r) => {
@@ -86,7 +92,7 @@ export default function CalendarPage() {
     try {
       const { data } = await api.get('/calendar', { params: p });
       setEvents(data || []);
-    } catch (_) {}
+    } catch { /* Falha tolerada; mantém o fallback existente. */ }
   }, [tab, calendarParams, historyParams]);
 
   useAutoRefresh(refreshCurrentRange, 2600);
@@ -114,7 +120,7 @@ export default function CalendarPage() {
       await api.delete(`/calendar/${id}`);
       toast.success('Evento excluído');
       await refreshCurrentRange();
-    } catch (_) {
+    } catch {
       toast.error(t('error_occurred'));
     }
   };
@@ -166,7 +172,7 @@ export default function CalendarPage() {
     <div className="animate-fade-in">
       <div className="flex-between mb-24">
         <div>
-          <h1 className="page-title">📅 {t('calendar')}</h1>
+          <ModuleTitle className="page-title" icon="calendar" nativeIcon="📅">{t('calendar')}</ModuleTitle>
           <p className="page-subtitle" style={{ marginTop: 6 }}>
             Vistas <strong>Mês</strong>, <strong>Semana</strong> e <strong>Dia</strong>; filtro <strong>Todos / dependente</strong> ao lado de «Hoje».
           </p>

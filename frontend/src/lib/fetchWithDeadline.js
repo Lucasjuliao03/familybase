@@ -17,6 +17,7 @@ export function fetchNoStoreWithDeadline(input, options = {}) {
 
   const controller = new AbortController();
   let tid = null;
+  let detachParent;
 
   const clearTimer = () => {
     if (tid != null) {
@@ -45,12 +46,20 @@ export function fetchNoStoreWithDeadline(input, options = {}) {
       onParentAbort();
     } else {
       parentSignal.addEventListener('abort', onParentAbort, { once: true });
+      detachParent = () => parentSignal.removeEventListener('abort', onParentAbort);
     }
   }
 
-  return fetch(input, { ...merged, signal: controller.signal }).finally(() => {
+  const cleanup = () => {
     clearTimer();
-  });
+    detachParent?.();
+  };
+  try {
+    return fetch(input, { ...merged, signal: controller.signal }).finally(cleanup);
+  } catch (error) {
+    cleanup();
+    throw error;
+  }
 }
 
 /** Alias (mesma função) — nome curto onde se assume `no-store` + deadline. */

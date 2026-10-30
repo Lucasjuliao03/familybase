@@ -1,3 +1,4 @@
+import ModuleTitle from '../../components/web/ModuleTitle';
 import { useState, useEffect, useCallback } from 'react';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useToast } from '../../contexts/ToastContext';
@@ -24,28 +25,26 @@ export default function AllowanceManager() {
 
   const fetchData = useCallback(async () => {
     try {
-      const [rSets, rCycles, rCh, rTrans] = await Promise.all([
+      await Promise.all([
         api.get('/allowance/settings').catch(() => ({ data: [] })),
         api.get('/allowance/cycles').catch(() => ({ data: [] })),
         api.get('/families/children').catch(() => ({ data: [] })),
         api.get('/allowance/transactions').catch(() => ({ data: [] })),
-      ]);
-      setSettings(rSets.data);
-      setCycles(rCycles.data);
-      setChildren(rCh.data);
-      setTransactions(rTrans.data);
+      ]).then(([rSets, rCycles, rCh, rTrans]) => {
+        setSettings(rSets.data);
+        setCycles(rCycles.data);
+        setChildren(rCh.data);
+        setTransactions(rTrans.data);
+      });
     } catch (e) {
       console.error(e);
     }
   }, []);
 
   const fetchPiggy = useCallback(async () => {
-    try {
-      const { data } = await api.get('/allowance/piggy-requests');
-      setPiggyRequests(data || []);
-    } catch {
-      setPiggyRequests([]);
-    }
+    await api.get('/allowance/piggy-requests')
+      .then(({ data }) => { setPiggyRequests(data || []); })
+      .catch(() => { setPiggyRequests([]); });
   }, []);
 
   useEffect(() => { fetchData(); }, [fetchData]);
@@ -80,7 +79,7 @@ export default function AllowanceManager() {
       fetchData();
       await api.post('/allowance/cycles/current', { child_id: settingsForm.child_id });
       fetchData();
-    } catch (err) {
+    } catch {
       toast.error(t('error_occurred'));
     }
   };
@@ -92,7 +91,7 @@ export default function AllowanceManager() {
       toast.success('Ajuste lançado com sucesso!');
       setShowAdjustModal(false);
       fetchData();
-    } catch (err) {
+    } catch {
       toast.error(t('error_occurred'));
     }
   };
@@ -103,7 +102,7 @@ export default function AllowanceManager() {
       await api.post(`/allowance/cycles/${id}/close`);
       toast.success('Ciclo fechado com sucesso!');
       fetchData();
-    } catch (err) {
+    } catch {
       toast.error(t('error_occurred'));
     }
   };
@@ -114,7 +113,7 @@ export default function AllowanceManager() {
       await api.post(`/allowance/cycles/${id}/pay`);
       toast.success('Ciclo pago com sucesso!');
       fetchData();
-    } catch (err) {
+    } catch {
       toast.error(t('error_occurred'));
     }
   };
@@ -123,7 +122,7 @@ export default function AllowanceManager() {
 
   return (
     <div className="animate-fade-in">
-      <div className="page-header"><h1 className="page-title">💰 {t('allowance_management')}</h1></div>
+      <div className="page-header"><ModuleTitle className="page-title" icon="allowance" nativeIcon="💰">{t('allowance_management')}</ModuleTitle></div>
 
       <div className="tabs tabs-scroll mb-24" style={{ flexWrap: 'nowrap', gap: 8 }}>
         <button type="button" className={`tab ${tab === 'allowance' ? 'active' : ''}`} onClick={() => setTab('allowance')}>💰 Mesadas</button>

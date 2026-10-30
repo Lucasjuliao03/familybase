@@ -1,18 +1,21 @@
 {
-  "name": "frontend",
+  "name": "@tudo-de-familia/web",
   "private": true,
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "build:capacitor": "vite build --mode capacitor",
+    "dev": "node scripts/build-public-pages.mjs && vite",
+    "build": "node scripts/build-public-pages.mjs && vite build && node scripts/prerender.mjs",
+    "build:capacitor": "npm run legacy:capacitor:build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test": "node --test src/lib/taskHistoryStatus.test.js src/lib/taskOccurrenceClosure.test.js",
-    "cap:sync": "npm run build:capacitor && npx cap sync android",
-    "cap:open": "npx cap open android",
-    "cap:run": "npm run cap:sync && npx cap run android"
+    "test": "node --test src/lib/taskHistoryStatus.test.js src/lib/taskOccurrenceClosure.test.js src/lib/medicationSchedule.test.js src/lib/rewardStore.test.js src/lib/familyRegistration.test.js src/lib/legacyFamilyAuth.test.js src/lib/webRegistrationFlow.test.js src/lib/familyAvatar.test.js src/lib/familyScopedAccess.test.js src/lib/playBillingWeb.test.js src/lib/webPlans.test.js src/lib/familyWebAccess.test.js src/lib/webTelemetry.test.js src/lib/pwaUpdate.test.js src/lib/familyAssets.test.js src/lib/fetchWithDeadline.test.js src/lib/pwaInstallation.test.js scripts/public-pages.test.mjs",
+    "cap:sync": "npm run legacy:capacitor:sync",
+    "cap:open": "npm run legacy:capacitor:open",
+    "cap:run": "npm run cap:sync && npx cap run android",
+    "legacy:capacitor:build": "vite build --mode capacitor --outDir dist-capacitor",
+    "legacy:capacitor:sync": "npm run legacy:capacitor:build && npx cap sync android",
+    "legacy:capacitor:open": "npx cap open android"
   },
   "dependencies": {
     "@capacitor/android": "^7.4.2",

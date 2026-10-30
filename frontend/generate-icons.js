@@ -4,15 +4,18 @@
 // ALTERNATIVA SIMPLES: Use https://realfavicongenerator.net/ ou https://pwa-asset-generator
 // Para usar pwa-asset-generator: npx pwa-asset-generator logo.png ./public/icons
 
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+import fs from 'node:fs';
+import path from 'node:path';
+
+const require = createRequire(import.meta.url);
 const sizes = [72, 96, 128, 144, 152, 192, 384, 512];
 
 // Tenta usar canvas se disponível
 try {
   const { createCanvas } = require('canvas');
-  const fs = require('fs');
-  const path = require('path');
-
-  const dir = path.join(__dirname, 'public', 'icons');
+  const dir = fileURLToPath(new URL('./public/icons', import.meta.url));
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
   for (const size of sizes) {
@@ -53,7 +56,7 @@ try {
     console.log(`✅ Generated ${filename}`);
   }
   console.log('\n🎉 All icons generated!');
-} catch (err) {
+} catch {
   console.log('⚠️  canvas module not available. Use npx pwa-asset-generator instead:');
   console.log('');
   console.log('  npx pwa-asset-generator public/logo.png public/icons --background "#6C5CE7" --padding "10%"');

@@ -21,9 +21,11 @@ import {
   taskTypeLabel,
 } from '../../lib/tasksHelpers';
 import './myTasks.css';
+import { ModuleIcon } from '../../components/web/ModuleTitle';
 
 export default function MyTasks() {
   const { childProfile, ensureChildProfile } = useAuth();
+  const childId = childProfile?.id;
   const location = useLocation();
   const { t } = useLanguage();
   const toast = useToast();
@@ -51,11 +53,12 @@ export default function MyTasks() {
       const d = new Date();
       const todayStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
       const params = { date: todayStr };
-      if (childProfile?.id) params.child_id = childProfile.id;
-      const { data } = await api.get('/tasks/occurrences', { params });
-      setRawOccurrences(data || []);
+      if (childId) params.child_id = childId;
+      await api.get('/tasks/occurrences', { params }).then(({ data }) => {
+        setRawOccurrences(data || []);
+      });
     } catch (e) { console.error(e); }
-  }, [childProfile?.id]);
+  }, [childId]);
 
   useEffect(() => { fetchTasks(); }, [fetchTasks, location.pathname]);
   useAutoRefresh(fetchTasks, 2600);
@@ -143,7 +146,7 @@ export default function MyTasks() {
               className={`my-tasks-filter${isActive ? ' is-active' : ''}${isActive && isDelayedTab ? ' is-delayed' : ''}`}
               onClick={() => setFilter(key)}
             >
-              <span className="my-tasks-filter__icon" aria-hidden>{icon}</span>
+              <span className="my-tasks-filter__icon" aria-hidden><ModuleIcon icon={key==='delayed'?'pending':'tasks'} nativeIcon={icon} size={16}/></span>
               {label}
               {isDelayedTab && badgeCount > 0 && (
                 <span className="my-tasks-filter__badge" aria-label={`${badgeCount} atrasadas`}>
@@ -158,7 +161,7 @@ export default function MyTasks() {
       <div className="my-tasks-list">
         {filtered.length === 0 ? (
           <div className="my-tasks-empty">
-            <div className="my-tasks-empty__icon" aria-hidden>🎉</div>
+            <div className="my-tasks-empty__icon" aria-hidden><ModuleIcon icon="completed" nativeIcon="🎉" size={28}/></div>
             <h3>Nenhuma tarefa encontrada</h3>
             <p>
               {filter === 'delayed'
@@ -188,7 +191,7 @@ export default function MyTasks() {
                     style={{ background: theme.pastel, border: `1px solid ${theme.accent}33` }}
                     aria-hidden
                   >
-                    {icon}
+                    <ModuleIcon icon={isHealth?'health':'tasks'} nativeIcon={icon} size={22}/>
                   </div>
                   <div className="my-tasks-card__head">
                     <div className="my-tasks-card__title-row">
@@ -199,10 +202,10 @@ export default function MyTasks() {
                     </div>
                     {!isHealth && (
                       <div className="my-tasks-card__points">
-                        <span aria-hidden>⭐</span> {occ.points || 0}
+                        <span aria-hidden><ModuleIcon icon="points" nativeIcon="⭐" size={14}/></span> {occ.points || 0}
                         {occ.coins > 0 && (
                           <span className="my-tasks-card__coins">
-                            <span aria-hidden>🪙</span> {occ.coins}
+                            <span aria-hidden><ModuleIcon icon="allowance" nativeIcon="🪙" size={14}/></span> {occ.coins}
                           </span>
                         )}
                       </div>
@@ -233,7 +236,7 @@ export default function MyTasks() {
                     </div>
                   )}
                   <div className="my-tasks-meta">
-                    <span className="my-tasks-meta__icon" style={{ background: '#ecfdf5' }} aria-hidden>📅</span>
+                    <span className="my-tasks-meta__icon" style={{ background: '#ecfdf5' }} aria-hidden><ModuleIcon icon="calendar" nativeIcon="📅" size={16}/></span>
                     <span className="my-tasks-meta__text">
                       <span className="my-tasks-meta__label">Frequência</span>
                       <span className="my-tasks-meta__value">

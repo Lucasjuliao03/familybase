@@ -4,7 +4,7 @@
  */
 self.addEventListener('push', (event) => {
   let data = {
-    title: 'FamilyBase',
+    title: 'Tudo de Família',
     body: 'Você tem uma nova notificação.',
     icon: '/icons/icon-192.png',
     badge: '/icons/icon-72.png',
@@ -12,7 +12,9 @@ self.addEventListener('push', (event) => {
   };
   try {
     if (event.data) data = { ...data, ...event.data.json() };
-  } catch (_) {}
+  } catch {
+    // Push sem JSON válido mantém a notificação padrão.
+  }
   event.waitUntil(
     self.registration.showNotification(data.title, {
       body: data.body,

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   deriveCalendarRange,
   navigateAnchor,
@@ -80,13 +80,14 @@ export default function FamilyCalendarBoard({
   const todayStr = todayLocalYMD();
 
   const { from: rangeFrom, to: rangeTo } = useMemo(
-    () => deriveCalendarRange(viewMode, anchorStable),
+    () => deriveCalendarRange(viewMode, anchorMs),
     [viewMode, anchorMs],
   );
 
   const monthCells = useMemo(() => {
-    const y = anchorStable.getFullYear();
-    const mo = anchorStable.getMonth();
+    const anchor = new Date(anchorMs);
+    const y = anchor.getFullYear();
+    const mo = anchor.getMonth();
     const daysInMonth = new Date(y, mo + 1, 0).getDate();
     const firstDay = new Date(y, mo, 1).getDay();
     const cells = [];
@@ -108,17 +109,19 @@ export default function FamilyCalendarBoard({
   const weekDates = useMemo(() => datesBetweenInclusive(rangeFrom, rangeTo), [rangeFrom, rangeTo]);
 
   const dayAgendaEvents = useMemo(() => {
-    const ds = formatLocalYMD(anchorStable);
+    const ds = formatLocalYMD(anchorMs);
     return sortByTime(eventsForDay(events, ds));
   }, [anchorMs, events]);
 
   const [detailDateStr, setDetailDateStr] = useState(null);
   /** Em semana/dia: dia com destaque dentro da coluna ou agenda */
   const [focusDayStr, setFocusDayStr] = useState(() => formatLocalYMD(anchorStable));
+  const [previousAnchorMs, setPreviousAnchorMs] = useState(anchorMs);
 
-  useEffect(() => {
-    setFocusDayStr(formatLocalYMD(anchorStable));
-  }, [anchorMs]);
+  if (previousAnchorMs !== anchorMs) {
+    setPreviousAnchorMs(anchorMs);
+    setFocusDayStr(formatLocalYMD(anchorMs));
+  }
 
   const openDayDetail = (ds) => {
     if (!ds) return;

@@ -1,3 +1,4 @@
+import ModuleTitle from '../../components/web/ModuleTitle';
 import { useState, useEffect, useCallback } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useLanguage } from '../../contexts/LanguageContext';
@@ -14,14 +15,29 @@ export default function ReportsPage() {
   const [reportLoading, setReportLoading] = useState(false);
   const [error, setError] = useState('');
   const [reloadTick, setReloadTick] = useState(0);
+  const [previousListRequest, setPreviousListRequest] = useState({ pathname: location.pathname, t, reloadTick });
+  const [previousReportRequest, setPreviousReportRequest] = useState({ selectedChild, t });
+  if (previousListRequest.pathname !== location.pathname || previousListRequest.t !== t || previousListRequest.reloadTick !== reloadTick) {
+    setPreviousListRequest({ pathname: location.pathname, t, reloadTick });
+    setListLoading(true);
+    setError('');
+  }
+  if (previousReportRequest.selectedChild !== selectedChild || previousReportRequest.t !== t) {
+    setPreviousReportRequest({ selectedChild, t });
+    if (!selectedChild) {
+      setReport(null);
+      setReportLoading(false);
+    } else {
+      setReportLoading(true);
+      setError('');
+    }
+  }
   const blocking = listLoading || (Boolean(selectedChild) && reportLoading);
 
   /** Lista de dependentes sempre que volta à rota `/parent/reports`. */
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      setListLoading(true);
-      setError('');
       try {
         const kidsRes = await api.get('/families/children');
         const kidRows = Array.isArray(kidsRes?.data) ? kidsRes.data : [];
@@ -32,7 +48,7 @@ export default function ReportsPage() {
           if (stillOk) return prev;
           return kidRows[0]?.id || '';
         });
-      } catch (_) {
+      } catch {
         if (!cancelled) {
           setError(t('error_occurred') || 'Erro ao carregar relatórios');
           setChildren([]);
@@ -50,18 +66,14 @@ export default function ReportsPage() {
   /** Detalhes do relatório sempre que mudar o filho selecionado. */
   useEffect(() => {
     if (!selectedChild) {
-      setReport(null);
-      setReportLoading(false);
       return;
     }
     let cancelled = false;
     (async () => {
-      setReportLoading(true);
-      setError('');
       try {
         const repRes = await api.get(`/reports/child/${selectedChild}`);
         if (!cancelled) setReport(repRes.data || null);
-      } catch (_) {
+      } catch {
         if (!cancelled) {
           setError(t('error_occurred') || 'Erro ao carregar relatório');
           setReport(null);
@@ -116,13 +128,13 @@ export default function ReportsPage() {
       const blob = new Blob([csv], { type: 'text/csv' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a'); a.href = url; a.download = `${type}_report.csv`; a.click(); URL.revokeObjectURL(url);
-    } catch {}
+    } catch { /* Falha tolerada; mantém o fallback existente. */ }
   };
 
   return (
     <div className="animate-fade-in">
       <div className="flex-between mb-24">
-        <div><h1 className="page-title">📈 {t('reports')}</h1></div>
+        <div><ModuleTitle className="page-title" icon="reports" nativeIcon="📈">{t('reports')}</ModuleTitle></div>
         <div className="flex gap-8">
           <button className="btn btn-ghost btn-sm" onClick={() => exportCSV('tasks')}>📊 {t('tasks')} CSV</button>
           <button className="btn btn-ghost btn-sm" onClick={() => exportCSV('grades')}>📚 {t('grades')} CSV</button>

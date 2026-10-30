@@ -1,0 +1,1 @@
+import{d as e}from"./vendor-react-BSJ3mKuy.js";import{o as t,t as n}from"./index-Cv7k_C1i.js";var r=e();function i({icon:e,nativeIcon:i,size:a=24}){return n()?i:(0,r.jsx)(t,{name:e,size:a})}function a({icon:e,nativeIcon:t,className:n=`page-title`,children:a}){return(0,r.jsxs)(`h1`,{className:n,children:[(0,r.jsx)(i,{icon:e,nativeIcon:t}),` `,a]})}export{a as n,i as t};

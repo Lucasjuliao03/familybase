@@ -1,5 +1,5 @@
 /**
- * Catálogo FamilyBase: tarefas-modelo para gamificação responsável em família.
+ * Catálogo Tudo de Família: tarefas-modelo para gamificação responsável em família.
  * Bónus de mesada modestos (~R$ 50/mês), sem duplicação ao voltar a carregar — usa-se `slug` como `template_catalog_key`.
  */
 
@@ -38,7 +38,7 @@ export function catalogEntryToSeedDescription(entry) {
 
   return (
     `${entry.description}\n\n` +
-    `— Modelo FamilyBase · Idades recomendadas: ${entry.ageMin}–${entry.ageMax} anos · ` +
+    `— Modelo Tudo de Família · Idades recomendadas: ${entry.ageMin}–${entry.ageMax} anos · ` +
     `~${entry.estimatedMin} min · ${entry.difficultyLabel} · ${freq}${rec}${bonus}${approval}`
   );
 }

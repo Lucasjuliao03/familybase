@@ -1,17 +1,18 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { usePWA } from '../contexts/PWAContext';
 
 export default function PWAInstallBanner() {
   const pwaCtx = usePWA();
-  const [dismissed, setDismissed] = useState(() => localStorage.getItem('pwa-banner-dismissed') === '1');
+  const [dismissed, setDismissed] = useState(() => localStorage.getItem('pwa-banner-dismissed') === '1' || pwaCtx?.isInstalled === true);
   const [notifDismissed, setNotifDismissed] = useState(() => localStorage.getItem('pwa-notif-dismissed') === '1');
   const [installing, setInstalling] = useState(false);
   const [subscribing, setSubscribing] = useState(false);
 
-  // Auto-dismiss banner after install
-  useEffect(() => {
+  const [previousInstalled, setPreviousInstalled] = useState(pwaCtx?.isInstalled);
+  if (previousInstalled !== pwaCtx?.isInstalled) {
+    setPreviousInstalled(pwaCtx?.isInstalled);
     if (pwaCtx?.isInstalled) setDismissed(true);
-  }, [pwaCtx?.isInstalled]);
+  }
 
   if (!pwaCtx) return null;
   const { canInstall, promptInstall, isInstalled, notifPermission, isPushSubscribed, requestNotifications, swReady } = pwaCtx;
@@ -82,7 +83,7 @@ export default function PWAInstallBanner() {
 
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontWeight: 700, fontSize: '0.95rem', color: 'var(--text)', marginBottom: 2 }}>
-          {showInstallBanner ? 'Instalar FamilyBase' : 'Ativar Notificações'}
+          {showInstallBanner ? 'Instalar Tudo de Família' : 'Ativar Notificações'}
         </div>
         <div style={{ fontSize: '0.8rem', color: 'var(--text-light)', lineHeight: 1.4 }}>
           {showInstallBanner

@@ -1,5 +1,9 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useRef } from 'react';
 import api, { publicAssetUrl } from '../services/api';
+import { useAuth } from '../contexts/AuthContext';
+import { ADULT_AVATAR_CHOICES,CHILD_AVATAR_IDS,avatarLabel } from '../lib/familyIdentity';
+import { getAvatarPresetUrl } from '../lib/avatarCatalog';
+import { avatarKind } from '../lib/familyAvatar';
 
 const PRESET_AVATARS = [
   { id: 'astronaut', emoji: '🚀', label: 'Astronauta', color: '#6C5CE7' },
@@ -30,16 +34,21 @@ const PRESET_AVATARS = [
  *  - size: 'md' | 'lg' (default 'md')
  */
 export default function AvatarPicker({ currentAvatarUrl, currentPreset, onSave, endpoint = '/auth/avatar', size = 'md' }) {
+  const { user }=useAuth();
+  const presetIds=avatarKind(endpoint,user?.role)==='child' ? CHILD_AVATAR_IDS:ADULT_AVATAR_CHOICES;
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState('presets'); // 'presets' | 'upload'
   const [selectedPreset, setSelectedPreset] = useState(currentPreset || '');
   const [uploading, setUploading] = useState(false);
+  const [error,setError]=useState('');
+  const pending=useRef(false);
   const fileRef = useRef(null);
 
   const avatarSize = size === 'lg' ? 90 : 64;
 
   const getDisplaySrc = () => {
     if (currentAvatarUrl) return publicAssetUrl(currentAvatarUrl);
+    if (currentPreset) return getAvatarPresetUrl(currentPreset);
     return null;
   };
 
@@ -49,22 +58,26 @@ export default function AvatarPicker({ currentAvatarUrl, currentPreset, onSave, 
   };
 
   const handleSelectPreset = async (presetId) => {
+    if(pending.current) return;
+    pending.current=true; setUploading(true); setError('');
     try {
-      const formData = new FormData();
-      formData.append('avatar_preset', presetId);
-      const { data } = await api.put(endpoint, formData);
+      const { data } = await api.put(endpoint, {avatar_preset:presetId});
+      if(data?.avatar_preset!==presetId) throw new Error('O avatar não foi confirmado pelo banco. Tente novamente.');
       setSelectedPreset(presetId);
       onSave?.(data);
       setOpen(false);
     } catch (err) {
-      console.error('Erro ao salvar avatar:', err);
+      setError(err.message || 'Não foi possível salvar o avatar.');
+    } finally {
+      pending.current=false; setUploading(false);
     }
   };
 
   const handleUpload = async (e) => {
     const file = e.target.files?.[0];
-    if (!file) return;
-    setUploading(true);
+    if (!file || pending.current) return;
+    if(!['image/png','image/jpeg','image/webp'].includes(file.type) || file.size>5*1024*1024) {setError('Escolha uma imagem PNG, JPG ou WebP de até 5 MB.');return;}
+    pending.current=true; setUploading(true); setError('');
     try {
       const formData = new FormData();
       formData.append('avatar', file);
@@ -74,8 +87,9 @@ export default function AvatarPicker({ currentAvatarUrl, currentPreset, onSave, 
       onSave?.(data);
       setOpen(false);
     } catch (err) {
-      console.error('Erro ao fazer upload:', err);
+      setError(err.message || 'Não foi possível salvar a imagem.');
     } finally {
+      pending.current=false;
       setUploading(false);
     }
   };
@@ -87,6 +101,8 @@ export default function AvatarPicker({ currentAvatarUrl, currentPreset, onSave, 
     <div style={{ position: 'relative', display: 'inline-block' }}>
       {/* Avatar atual */}
       <div
+        role="button" tabIndex={0} aria-label="Alterar avatar"
+        onKeyDown={e=>{if(e.key==='Enter' || e.key===' '){e.preventDefault();setOpen(v=>!v);}}}
         onClick={() => setOpen(!open)}
         style={{
           width: avatarSize,
@@ -127,12 +143,12 @@ export default function AvatarPicker({ currentAvatarUrl, currentPreset, onSave, 
       {/* Picker Modal */}
       {open && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-          <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.5)' }} onClick={() => setOpen(false)} />
+          <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.5)' }} onClick={() => {if(!pending.current) setOpen(false);}} />
           <div style={{
             position: 'relative', width: '100%', maxWidth: 320, background: 'var(--bg-card)', border: '1px solid var(--border)',
             borderRadius: 'var(--radius)', boxShadow: 'var(--shadow-lg)', zIndex: 10000,
             maxHeight: '90vh', overflowY: 'auto', display: 'flex', flexDirection: 'column'
-          }}>
+          }} role="dialog" aria-modal="true" aria-label="Escolher avatar">
             <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
               <strong style={{ fontSize: '0.9rem' }}>Escolher Avatar</strong>
             </div>
@@ -156,9 +172,10 @@ export default function AvatarPicker({ currentAvatarUrl, currentPreset, onSave, 
 
             {tab === 'presets' && (
               <div style={{ padding: 12, display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
-                {PRESET_AVATARS.map(av => (
+                {presetIds.map(id => ({ id,label:avatarLabel(id) })).map(av => (
                   <button
                     key={av.id}
+                    type="button" disabled={uploading} aria-pressed={selectedPreset===av.id}
                     onClick={() => handleSelectPreset(av.id)}
                     title={av.label}
                     style={{
@@ -168,12 +185,15 @@ export default function AvatarPicker({ currentAvatarUrl, currentPreset, onSave, 
                       cursor: 'pointer', gap: 4, transition: 'all 0.15s',
                     }}
                   >
-                    <span style={{ fontSize: '1.6rem' }}>{av.emoji}</span>
+                    <img src={getAvatarPresetUrl(av.id)} alt="" width="54" height="54" style={{ objectFit:'contain' }} />
                     <span style={{ fontSize: '0.62rem', color: 'var(--text-light)', lineHeight: 1 }}>{av.label}</span>
                   </button>
                 ))}
               </div>
             )}
+
+            {error && <p role="alert" style={{padding:12,color:'var(--danger)'}}>{error}</p>}
+            <button type="button" className="btn btn-ghost" disabled={uploading} onClick={()=>setOpen(false)}>{uploading?'Salvando…':'Fechar'}</button>
 
             {tab === 'upload' && (
               <div style={{ padding: 20, textAlign: 'center' }}>

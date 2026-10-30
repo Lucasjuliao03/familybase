@@ -1,3 +1,4 @@
+import ModuleTitle, { ModuleIcon } from '../../components/web/ModuleTitle';
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import { useLanguage } from '../../contexts/LanguageContext';
@@ -198,7 +199,7 @@ export default function TaskManager() {
       const c = db.localeCompare(da);
       return c !== 0 ? c : String(a.title || '').localeCompare(String(b.title || ''));
     });
-  const children = childrenQ.data ?? [];
+  const children = useMemo(() => childrenQ.data ?? [], [childrenQ.data]);
   const adults = adultsQ.data ?? [];
 
   const occInitialSkeleton = occQ.isPending && occurrences.length === 0 && !occQ.error;
@@ -267,13 +268,13 @@ export default function TaskManager() {
 
   const toggleCatalogSeedChild = useCallback((id) => {
     setCatalogSeedChildIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
-  }, []);
+  }, [setCatalogSeedChildIds]);
 
   const openCatalogSeedModalFn = useCallback(() => {
     setCatalogSeedChildIds(children.map((c) => c.id));
     setCatalogFilterByAge(true);
     setShowCatalogSeedModal(true);
-  }, [children]);
+  }, [children, setCatalogSeedChildIds, setCatalogFilterByAge, setShowCatalogSeedModal]);
 
   const toggleTemplateMutation = useMutation({
     mutationFn: ({ id, active }) => api.put(`/tasks/${id}`, { status: active ? 'active' : 'inactive' }),
@@ -365,6 +366,7 @@ export default function TaskManager() {
       recipient_key: _rk,
       ...restForm
     } = form;
+    void _rk; // Exclui o campo de interface antes de montar o payload existente.
 
     const payload = {
       ...restForm,
@@ -461,7 +463,7 @@ export default function TaskManager() {
     <div className="animate-fade-in">
       <div className="flex-between mb-24" style={{ flexWrap: 'wrap', gap: 12 }}>
         <div>
-          <h1 className="page-title">✅ {t('task_management')}</h1>
+          <ModuleTitle className="page-title" icon="tasks" nativeIcon="✅">{t('task_management')}</ModuleTitle>
           <p className="page-subtitle">{t('task_parent_subtitle')}</p>
         </div>
         <button
@@ -726,7 +728,7 @@ export default function TaskManager() {
             if (pending.length === 0) {
               return (
                 <div className="empty-state" style={{ padding: '48px 0' }}>
-                  <div className="empty-icon">✅</div>
+                  <div className="empty-icon"><ModuleIcon icon="tasks" nativeIcon="✅" size={28}/></div>
                   <h3>{t('task_approvals_empty_title')}</h3>
                   <p>{t('task_approvals_empty_desc')}</p>
                 </div>
@@ -1019,7 +1021,7 @@ export default function TaskManager() {
         </div>
       )}
 
-      {/* MODAL: catálogo FamilyBase */}
+      {/* MODAL: catálogo Tudo de Família */}
       {showCatalogSeedModal && isGestorParent && (
         <div className="modal-overlay" onClick={() => !catalogSeedMutation.isPending && setShowCatalogSeedModal(false)}>
           <div

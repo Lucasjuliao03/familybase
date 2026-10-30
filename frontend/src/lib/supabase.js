@@ -5,17 +5,10 @@ import { resolveSupabaseConfig } from './supabaseConfig';
 export { fetchNoStoreWithDeadline, fetchNoStoreWithDeadline as fetchNoStore } from './fetchWithDeadline';
 export { getSupabaseConfigDiagnostics, ACTIVE_SUPABASE_REF, resolveSupabaseConfig } from './supabaseConfig';
 
-const { url: supabaseUrl, anonKey: supabaseAnonKey, usedFallback, reason } = resolveSupabaseConfig();
+const { url: supabaseUrl, anonKey: supabaseAnonKey } = resolveSupabaseConfig();
 
-/** URL activa do Supabase (com fallback se o build apontar ao projecto antigo). */
+/** URL validada do projeto Supabase vinculado. */
 export { supabaseUrl, supabaseAnonKey };
-
-if (usedFallback && typeof console !== 'undefined') {
-  console.warn(
-    `[supabase] A usar projecto basefamiliar2 (${reason}). ` +
-      'Actualize VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY no .env / Vercel.',
-  );
-}
 
 if (!supabaseUrl || !supabaseAnonKey) {
   console.error('⚠️ Supabase config inválida. Configure VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY.');
@@ -31,14 +24,8 @@ export function mapAuthNetworkError(err) {
     (name === 'TypeError' && /Failed to fetch|Load failed|NetworkError|network error/i.test(msg)) ||
     /ERR_NAME_NOT_RESOLVED|ERR_INTERNET_DISCONNECTED|ERR_NETWORK_CHANGED|ERR_CONNECTION_REFUSED/i.test(msg);
   if (isNetwork) {
-    const cfg = resolveSupabaseConfig();
-    const hint = cfg.usedFallback
-      ? ''
-      : ' Se acabou de migrar o Supabase, actualize VITE_SUPABASE_URL na Vercel e faça redeploy.';
     return new Error(
-      'Não foi possível ligar ao servidor Supabase (DNS/rede). Verifique a Internet' +
-        hint +
-        ' Projecto activo: basefamiliar2.',
+      'Não foi possível ligar ao servidor Supabase (DNS/rede). Verifique a Internet e a disponibilidade do projeto.',
     );
   }
   return err instanceof Error ? err : new Error(msg);

@@ -1,0 +1,42 @@
+/* Capacitor / app nativo Android — layout mobile + safe area */
+html.capacitor-native,
+html.capacitor-native body,
+html.capacitor-native #root {
+  min-height: 100dvh;
+  height: 100%;
+}
+
+html.capacitor-native body {
+  overscroll-behavior-y: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html.capacitor-native .app-layout {
+  min-height: 100dvh;
+}
+
+html.capacitor-native .app-sidebar {
+  display: none !important;
+}
+
+html.capacitor-native .app-main {
+  margin-left: 0 !important;
+  margin-bottom: calc(var(--mbb-inner-height, 52px) + env(safe-area-inset-bottom, 0px)) !important;
+}
+
+html.capacitor-native .app-header {
+  padding-top: max(12px, env(safe-area-inset-top, 0px)) !important;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)) !important;
+  padding-right: max(16px, env(safe-area-inset-right, 0px)) !important;
+}
+
+html.capacitor-native .mobile-bottom-bar {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+html.capacitor-native .app-content {
+  padding: 16px !important;
+  padding-bottom: 8px !important;
+  overflow-x: hidden;
+}
+

@@ -3,6 +3,7 @@ import { MapContainer, TileLayer, useMap, useMapEvents } from 'react-leaflet';
 import FamilyMemberMarker from './FamilyMemberMarker';
 import SafeZoneCircle from './SafeZoneCircle';
 import 'leaflet/dist/leaflet.css';
+import {locationDeviceKey} from '../../lib/locationTelemetry';
 
 /* Fix default Leaflet icon path issue with bundlers */
 import L from 'leaflet';
@@ -169,7 +170,7 @@ export default function FamilyMap({
         {/* Member markers */}
         {locations.map((loc) => (
           <FamilyMemberMarker
-            key={loc.user_id}
+            key={locationDeviceKey(loc)}
             location={loc}
             isSelected={selectedMemberId === loc.user_id}
             isCurrentUser={currentUserId === loc.user_id}

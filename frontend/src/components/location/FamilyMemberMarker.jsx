@@ -1,3 +1,5 @@
+import {locationBatteryLabel,locationSpeedLabel,locationCaptureLabel} from '../../lib/locationTelemetry';
+import { STATUS_MAP } from '../../lib/locationPresentation';
 import { useMemo } from 'react';
 import { Marker, Tooltip } from 'react-leaflet';
 import L from 'leaflet';
@@ -9,27 +11,6 @@ const PRESET_EMOJIS = {
   gamer: '🎮', ninja: '🥷', princess: '👸', superhero: '🦸',
   parent_male: '👨', parent_female: '👩', robot: '🤖', dragon: '🐉',
 };
-
-const STATUS_MAP = {
-  home: { label: 'Em casa', emoji: '🏠', color: '#10B981' },
-  school: { label: 'Na escola', emoji: '🏫', color: '#3B82F6' },
-  work: { label: 'No trabalho', emoji: '💼', color: '#F97316' },
-  moving: { label: 'Em movimento', emoji: '🚶', color: '#8B5CF6' },
-  stopped: { label: 'Parado', emoji: '🧍', color: '#6366F1' },
-  offline: { label: 'Offline', emoji: '⚫', color: '#94A3B8' },
-  other: { label: 'Na zona', emoji: '📍', color: '#8B5CF6' },
-};
-
-function formatTimeAgo(dateStr) {
-  if (!dateStr) return '';
-  const diff = Date.now() - new Date(dateStr).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return 'agora';
-  if (mins < 60) return `${mins}min`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h`;
-  return `${Math.floor(hrs / 24)}d`;
-}
 
 /**
  * FamilyMemberMarker — marker circular customizado com avatar no mapa.
@@ -101,7 +82,7 @@ export default function FamilyMemberMarker({ location, isSelected, isCurrentUser
             <span>{location.computed_zone_name || status.label}</span>
           </div>
           <div style={{ fontSize: '0.65rem', color: '#94A3B8', marginTop: 2 }}>
-            {formatTimeAgo(location.updated_at)}
+            {locationCaptureLabel(location)}<br/>🔋 {locationBatteryLabel(location)} · {locationSpeedLabel(location)}
           </div>
         </div>
       </Tooltip>
@@ -109,4 +90,3 @@ export default function FamilyMemberMarker({ location, isSelected, isCurrentUser
   );
 }
 
-export { STATUS_MAP, formatTimeAgo };

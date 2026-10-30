@@ -1,68 +1,13 @@
-import { useState, useEffect } from 'react';
-
-/** PWA instalado (Android/iOS/desktop). */
-function isStandaloneDisplay() {
-  if (typeof window === 'undefined') return false;
-  return (
-    window.matchMedia('(display-mode: standalone)').matches ||
-    window.matchMedia('(display-mode: fullscreen)').matches ||
-    window.navigator.standalone === true
-  );
-}
-
-/** Touch device (celular/tablet). */
-function isTouchDevice() {
-  if (typeof window === 'undefined') return false;
-  return (
-    window.matchMedia('(pointer: coarse)').matches ||
-    window.matchMedia('(hover: none)').matches
-  );
-}
-
 /**
- * Mobile shell = visual do app Expo (bottom nav, fundo lavanda, sem sidebar/header web).
- * Desktop shell = painel web com sidebar.
+ * Browser/PWA always uses responsive web layouts, including on a phone.
+ * Only an explicit archived Capacitor build uses the legacy shell.
+ * The production Expo app has independent layouts in /mobile.
  */
 export function queryMobileShell() {
-  if (typeof window === 'undefined') return false;
-
-  const html = document.documentElement;
-  if (html.classList.contains('capacitor-native')) return true;
-
-  if (window.matchMedia('(max-width: 768px)').matches) return true;
-
-  if (isStandaloneDisplay() && isTouchDevice()) return true;
-
-  return false;
+  return import.meta.env.MODE === 'capacitor';
 }
 
 export function useLayoutMode() {
-  const [isMobileShell, setIsMobileShell] = useState(() => queryMobileShell());
-
-  useEffect(() => {
-    const update = () => setIsMobileShell(queryMobileShell());
-    update();
-
-    const mediaQueries = [
-      '(max-width: 768px)',
-      '(display-mode: standalone)',
-      '(display-mode: fullscreen)',
-      '(pointer: coarse)',
-      '(hover: none)',
-    ].map((q) => window.matchMedia(q));
-
-    mediaQueries.forEach((mq) => mq.addEventListener('change', update));
-    window.addEventListener('resize', update);
-
-    const observer = new MutationObserver(update);
-    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
-
-    return () => {
-      mediaQueries.forEach((mq) => mq.removeEventListener('change', update));
-      window.removeEventListener('resize', update);
-      observer.disconnect();
-    };
-  }, []);
-
+  const isMobileShell = queryMobileShell();
   return { isMobileShell, isDesktop: !isMobileShell };
 }

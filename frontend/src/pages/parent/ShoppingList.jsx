@@ -1,10 +1,11 @@
+import ModuleTitle from '../../components/web/ModuleTitle';
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useToast } from '../../contexts/ToastContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { shoppingApi } from '../../services/shoppingApi';
 import useAutoRefresh from '../../hooks/useAutoRefresh';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, AreaChart, Area, Legend } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, AreaChart, Area } from 'recharts';
 
 const COMMON_SUGGESTIONS = [
   'Leite', 'Pão', 'Ovos', 'Carne', 'Frango', 
@@ -15,7 +16,7 @@ const COMMON_SUGGESTIONS = [
 const COLORS = ['#6366F1', '#10B981', '#F97316', '#3B82F6', '#8B5CF6', '#EC4899', '#14B8A6', '#F59E0B'];
 
 export default function ShoppingList() {
-  const { t } = useLanguage();
+  useLanguage();
   const toast = useToast();
   const { user } = useAuth();
   const canSeeDashboard = user?.role === 'parent' || user?.role === 'master';
@@ -33,19 +34,26 @@ export default function ShoppingList() {
   
   const [isLoading, setIsLoading] = useState(true);
 
+  const loadItems = useCallback(async ({ silent } = {}) => {
+    await new Promise((resolve) => resolve(shoppingApi.getShoppingList())).then((data) => {
+      setItems(data);
+    }).catch(() => {
+      if (!silent) toast.error('Erro ao carregar lista de compras');
+    }).finally(() => {
+      if (!silent) setIsLoading(false);
+    });
+  }, [toast]);
   const fetchData = useCallback(async ({ silent } = {}) => {
     if (!silent) setIsLoading(true);
-    try {
-      const data = await shoppingApi.getShoppingList();
-      setItems(data);
-    } catch (error) {
-      if (!silent) toast.error('Erro ao carregar lista de compras');
-    } finally {
-      if (!silent) setIsLoading(false);
-    }
-  }, [toast]);
+    await loadItems({ silent });
+  }, [loadItems]);
+  const [previousToast, setPreviousToast] = useState(toast);
+  if (previousToast !== toast) {
+    setPreviousToast(toast);
+    setIsLoading(true);
+  }
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  useEffect(() => { loadItems(); }, [loadItems]);
   /** Ciclo vida (tabs); navegação remonta página e volta a usar o mesmo useEffect — sem throttle aqui. */
   useAutoRefresh(useCallback(() => fetchData({ silent: true }), [fetchData]), 2500);
 
@@ -66,7 +74,7 @@ export default function ShoppingList() {
       setEditId(null);
       setShowModal(false);
       fetchData();
-    } catch (error) {
+    } catch {
       toast.error(editId ? 'Erro ao atualizar item' : 'Erro ao adicionar item');
     }
   };
@@ -86,7 +94,7 @@ export default function ShoppingList() {
       setShowPricePrompt(false);
       setPricePromptItem(null);
       fetchData();
-    } catch (error) {
+    } catch {
       toast.error('Erro ao marcar item');
     }
   };
@@ -96,7 +104,7 @@ export default function ShoppingList() {
       await shoppingApi.unmarkAsBought(id);
       toast.success('Item retornado para a lista!');
       fetchData();
-    } catch (error) {
+    } catch {
       toast.error('Erro ao desfazer compra');
     }
   };
@@ -107,7 +115,7 @@ export default function ShoppingList() {
       await shoppingApi.deleteItem(id);
       toast.success('Item excluído');
       fetchData();
-    } catch (error) {
+    } catch {
       toast.error('Erro ao excluir item');
     }
   };
@@ -153,9 +161,9 @@ export default function ShoppingList() {
   const dashboardData = useMemo(() => {
     if (viewMode !== 'dashboard') return null;
     // Estatísticas adicionais
-    let urgentCount = 0;
+    let urgentCount;
     let totalItemsMonth = 0;
-    let avgTicket = 0;
+    let avgTicket;
     let mostBoughtItem = { name: '-', count: 0 };
     const itemCount = {};
 
@@ -245,7 +253,7 @@ export default function ShoppingList() {
     <div className="animate-fade-in" style={{ maxWidth: '100%', overflowX: 'hidden' }}>
       <div className="flex-between mb-24" style={{ flexWrap: 'wrap', gap: 12 }}>
         <div>
-          <h1 className="page-title">🛒 Lista e Contabilidade</h1>
+          <ModuleTitle className="page-title" icon="shopping" nativeIcon="🛒">Lista e Contabilidade</ModuleTitle>
           <p className="page-subtitle">Gerencie suas compras e acompanhe os gastos</p>
         </div>
         <button className="btn btn-primary" onClick={openAddModal}>

@@ -16,7 +16,7 @@ export default function FirstAccessPasswordModal() {
   const submit = async (e) => {
     e.preventDefault();
     setErr('');
-    if (pw.length < 4) {
+    if (pw.length < 6) {
       setErr(t('fam_admin_password_short'));
       return;
     }

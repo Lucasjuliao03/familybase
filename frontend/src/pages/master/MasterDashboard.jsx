@@ -4,7 +4,7 @@ import { useToast } from '../../contexts/ToastContext';
 import api from '../../services/api';
 
 export default function MasterDashboard() {
-  const { t } = useLanguage();
+  useLanguage();
   const toast = useToast();
   const [tab, setTab] = useState('overview');
   const [stats, setStats] = useState({});
@@ -68,7 +68,7 @@ export default function MasterDashboard() {
       <div className="flex-between mb-24">
         <div>
           <h1 className="page-title" style={{ fontSize: '1.8rem' }}>🌐 Painel Master</h1>
-          <p className="page-subtitle">Administração Global do SaaS FamilyBase</p>
+          <p className="page-subtitle">Administração Global do Tudo de Família</p>
         </div>
         <button className="btn btn-ghost" onClick={fetchData}>🔄 Atualizar</button>
       </div>

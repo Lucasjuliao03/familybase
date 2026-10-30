@@ -1,3 +1,4 @@
+import ModuleTitle, { ModuleIcon } from '../../components/web/ModuleTitle';
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useLanguage } from '../../contexts/LanguageContext';
@@ -28,12 +29,17 @@ export default function MyCalendar() {
 
   const [viewMode, setViewMode] = useState('month');
   const [anchorDate, setAnchorDate] = useState(() => normalizeAnchorMidday(new Date()));
-  const [calendarLoading, setCalendarLoading] = useState(false);
+  const [calendarLoading, setCalendarLoading] = useState(true);
 
   const calendarParams = useMemo(() => {
     const { from, to } = deriveCalendarRange(viewMode, anchorDate);
     return { from, to };
   }, [viewMode, anchorDate]);
+  const [previousCalendarRequest, setPreviousCalendarRequest] = useState({ calendarParams, pathname: location.pathname });
+  if (previousCalendarRequest.calendarParams !== calendarParams || previousCalendarRequest.pathname !== location.pathname) {
+    setPreviousCalendarRequest({ calendarParams, pathname: location.pathname });
+    setCalendarLoading(true);
+  }
 
   const holidayYear = anchorDate.getFullYear();
   const holidays = useMemo(() => getHolidays(holidayYear), [holidayYear]);
@@ -53,14 +59,13 @@ export default function MyCalendar() {
     try {
       const { data } = await api.get('/calendar', { params: calendarParams });
       setEvents(data || []);
-    } catch (_) {
+    } catch {
       /* rede / RLS transitório — mantemos lista anterior até novo sucesso */
     }
   }, [calendarParams]);
 
   useEffect(() => {
     let cancelled = false;
-    setCalendarLoading(true);
     api
       .get('/calendar', { params: calendarParams })
       .then((r) => {
@@ -120,7 +125,7 @@ export default function MyCalendar() {
     <div className="animate-fade-in">
       <div className="flex-between mb-24">
         <div>
-          <h1 className="page-title">📅 {t('my_calendar')}</h1>
+          <ModuleTitle className="page-title" icon="calendar" nativeIcon="📅">{t('my_calendar')}</ModuleTitle>
           <p className="page-subtitle" style={{ marginTop: 6 }}>
             Alterne entre <strong>Mês</strong>, <strong>Semana</strong> e <strong>Dia</strong>; toque num dia para ver os eventos.
           </p>
@@ -162,7 +167,7 @@ export default function MyCalendar() {
         <h3 className="card-title mb-16">📋 Próximos Eventos</h3>
         {upcomingEvents.length === 0 ? (
           <div className="empty-state">
-            <div className="empty-icon">📅</div>
+            <div className="empty-icon"><ModuleIcon icon="calendar" nativeIcon="📅" size={28}/></div>
             <h3>Nenhum evento próximo</h3>
           </div>
         ) : (

@@ -36,7 +36,7 @@ export class BootErrorBoundary extends Component {
       }}
       >
         <div style={{ maxWidth: 480, textAlign: 'center' }}>
-          <h1 style={{ fontSize: '1.25rem', marginBottom: 12 }}>Não foi possível iniciar a Base Familiar</h1>
+          <h1 style={{ fontSize: '1.25rem', marginBottom: 12 }}>Não foi possível iniciar o Tudo de Família</h1>
           <p style={{ opacity: 0.85, lineHeight: 1.5, marginBottom: 16 }}>
             {error?.message || 'Erro inesperado ao carregar a aplicação.'}
           </p>

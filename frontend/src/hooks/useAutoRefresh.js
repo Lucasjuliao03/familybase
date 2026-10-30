@@ -14,6 +14,7 @@ import { FAMILIA_CONTROLLED_RESUME } from '../lib/appResumeEvents';
  * @param {{ includeRouteChanges?: boolean }} [opts]
  */
 export default function useAutoRefresh(callback, _throttleMs = 2500, opts = {}) {
+  void _throttleMs; // Parâmetro legado aceito por compatibilidade, conforme contrato acima.
   const { includeRouteChanges = true } = opts;
   const location = useLocation();
   const cbRef = useRef(callback);

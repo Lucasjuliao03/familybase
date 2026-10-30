@@ -22,17 +22,22 @@ export default function DeviceManagerModal({ familyId, onClose }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(null); // device id being saved
   const currentDeviceId = getDeviceId();
+  const [previousFamilyId, setPreviousFamilyId] = useState(familyId);
+  if (previousFamilyId !== familyId) {
+    setPreviousFamilyId(familyId);
+    if (familyId) setLoading(true);
+  }
 
-  const loadData = useCallback(async () => {
+  const readData = useCallback(async () => {
     if (!familyId) return;
-    setLoading(true);
-    try {
-      // Buscar membros da família diretamente da tabela users
-      const { data: usersData } = await supabase
+    // O executor preserva também a rejeição se a construção da consulta falhar.
+    const request = new Promise((resolve) => resolve(
+      supabase
         .from('users')
         .select('id, name, avatar_url, role')
-        .eq('family_id', familyId);
-
+        .eq('family_id', familyId)
+    ));
+    await request.then(async ({ data: usersData }) => {
       const userMap = {};
       (usersData || []).forEach(u => { userMap[u.id] = u; });
       setUsers(userMap);
@@ -46,16 +51,21 @@ export default function DeviceManagerModal({ familyId, onClose }) {
 
       if (error) throw error;
       setDevices(devData || []);
-    } catch (e) {
+    }).catch((e) => {
       console.error('DeviceManagerModal loadData:', e);
-    } finally {
+    }).finally(() => {
       setLoading(false);
-    }
+    });
   }, [familyId]);
+  const loadData = useCallback(async () => {
+    if (!familyId) return;
+    setLoading(true);
+    await readData();
+  }, [familyId, readData]);
 
   useEffect(() => {
-    loadData();
-  }, [loadData]);
+    readData();
+  }, [readData]);
 
   const toggleVisibility = async (dev) => {
     // is_location_enabled null from DB default means true

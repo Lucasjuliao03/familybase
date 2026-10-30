@@ -7,15 +7,10 @@ import { useAuth } from '../../contexts/AuthContext';
 import api, { publicAssetUrl } from '../../services/api';
 import { supabase } from '../../lib/supabase';
 import AvatarPicker from '../../components/AvatarPicker';
+import FamilyMemberForm from '../../components/auth/FamilyMemberForm';
 import UserAvatar from '../../components/profile/UserAvatar';
 import ParentNavIcon from '../../components/ui/ParentNavIcon';
-import UserDisplayColorPicker from '../../components/UserDisplayColorPicker';
-import {
-  pickFirstAvailableUserDisplayColor,
-  normalizeHex,
-  isUserDisplaySwatchDisabled,
-  USER_DISPLAY_COLOR_PALETTE,
-} from '../../lib/userDisplayColors';
+import '../../lib/userDisplayColors';
 import { dedupeMedalsForAwardingCatalog } from '../../lib/childDashboardDedupe';
 
 const ADMIN_TABS_ORDER = ['family', 'users', 'profiles', 'appearance', 'medals', 'modules', 'security', 'reset_data'];
@@ -120,9 +115,10 @@ export default function FamilyAdministration() {
   const toast = useToast();
   const navigate = useNavigate();
   const { user, fetchMe, setModules } = useAuth();
+  const familyId = user?.family_id;
   const [tab, setTab] = useState('family');
   const [moduleSettings, setModuleSettings] = useState(null);
-  const [family, setFamily] = useState(null);
+  const [, setFamily] = useState(null);
   const [members, setMembers] = useState([]);
   const [relatives, setRelatives] = useState([]);
   const [children, setChildren] = useState([]);
@@ -141,23 +137,25 @@ export default function FamilyAdministration() {
   const [logoUploading, setLogoUploading] = useState(false);
 
   const loadAll = useCallback(async () => {
+    void familyId; // A API lê a sessão; a troca de família também deve invalidar este callback.
     try {
-      const [famRes, memRes, relRes, medRes] = await Promise.all([
+      await Promise.all([
         api.get('/families'),
         api.get('/families/members'),
         api.get('/families/relatives'),
         api.get('/gamification/medals'),
-      ]);
-      setFamily(famRes.data.family);
-      setFamilyForm(famRes.data.family || {});
-      setChildren(famRes.data.children || []);
-      setMembers(memRes.data || []);
-      setRelatives(relRes.data || []);
-      setMedals(medRes.data || []);
-    } catch (e) {
+      ]).then(([famRes, memRes, relRes, medRes]) => {
+        setFamily(famRes.data.family);
+        setFamilyForm(famRes.data.family || {});
+        setChildren(famRes.data.children || []);
+        setMembers(memRes.data || []);
+        setRelatives(relRes.data || []);
+        setMedals(medRes.data || []);
+      });
+    } catch {
       toast.error(t('error_occurred'));
     }
-  }, [toast, t, user?.family_id]);
+  }, [toast, t, familyId]);
 
   useEffect(() => {
     loadAll();
@@ -170,7 +168,7 @@ export default function FamilyAdministration() {
       try {
         const { data } = await api.get('/families/modules');
         if (!cancelled) setModuleSettings(data);
-      } catch (e) {
+      } catch {
         toast.error(t('error_occurred'));
       }
     })();
@@ -251,7 +249,7 @@ export default function FamilyAdministration() {
     setResetLoading(true);
     try {
       const { error } = await supabase.rpc('reset_family_data', {
-        p_family_id: user?.family_id ?? null,
+        p_family_id: familyId ?? null,
       });
       if (error) throw error;
       toast.success(t('fam_reset_success_toast'));
@@ -275,7 +273,7 @@ export default function FamilyAdministration() {
   }, [
     isGestorUser,
     phraseMatchesReset,
-    user?.family_id,
+    familyId,
     t,
     toast,
     qc,
@@ -443,6 +441,7 @@ export default function FamilyAdministration() {
       {tab === 'family' && (
         <form className="card fam-admin-card" onSubmit={saveFamily}>
           <h2 className="card-title mb-16">{t('fam_admin_tab_family')}</h2>
+          {familyForm.family_code && <div className="form-group"><label htmlFor="family-public-code" className="form-label">Código da família</label><input id="family-public-code" className="form-input" readOnly value={familyForm.family_code} /><small>Para os membros entrarem com seu login e senha. Este código identifica sua família.</small></div>}
           <div className="grid grid-2">
             <div className="form-group">
               <label className="form-label">{t('family_name')}</label>
@@ -681,8 +680,8 @@ export default function FamilyAdministration() {
                 </div>
                 <h3 style={{ textAlign: 'center', fontWeight: 700 }}>{c.emoji ? `${c.emoji} ` : ''}{c.name}</h3>
                 <p style={{ textAlign: 'center', color: 'var(--text-light)', fontSize: '0.85rem' }}>{c.age != null ? `${c.age} ${t('fam_admin_years')}` : ''}</p>
-                {c.user_email ? (
-                  <p style={{ textAlign: 'center', fontSize: '0.76rem', color: 'var(--text-light)', wordBreak: 'break-all', marginTop: 4 }}>{c.user_email}</p>
+                {c.username || c.display_login || c.user_email ? (
+                  <p style={{ textAlign: 'center', fontSize: '0.76rem', color: 'var(--text-light)', wordBreak: 'break-all', marginTop: 4 }}>{c.username || c.display_login || c.user_email}</p>
                 ) : (
                   <p style={{ textAlign: 'center', fontSize: '0.76rem', color: 'var(--warning)', marginTop: 4 }}>{t('fam_admin_child_no_login')}</p>
                 )}
@@ -1342,7 +1341,7 @@ function PasswordResetModal({ pwModal, onClose, onSaved, t }) {
   const [mustChange, setMustChange] = useState(false);
   const submit = async (e) => {
     e.preventDefault();
-    if (password.length < 4) return;
+    if (password.length < 6) return;
     try {
       if (pwModal.isChildUser && pwModal.childId) {
         await api.put(`/families/children/${pwModal.childId}/password`, { password, must_change_password: mustChange });
@@ -1370,7 +1369,7 @@ function PasswordResetModal({ pwModal, onClose, onSaved, t }) {
           </p>
           <div className="form-group">
             <label className="form-label">{t('password')}</label>
-            <input className="form-input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={4} />
+            <input className="form-input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={6} />
           </div>
           <label style={{ display: 'flex', gap: 8, alignItems: 'center', cursor: 'pointer', marginBottom: 16 }}>
             <input type="checkbox" checked={mustChange} onChange={(e) => setMustChange(e.target.checked)} />
@@ -1390,500 +1389,8 @@ function PasswordResetModal({ pwModal, onClose, onSaved, t }) {
   );
 }
 
-function GuardianUserModal({ initial, onClose, onSaved, t, toast, familyPrimary, familySecondary, adultMembers }) {
-  const isEdit = !!initial.id;
-  const excludeId = initial.id || null;
-  const [form, setForm] = useState(() => {
-    let displayColor = initial.display_color;
-    if (!isEdit) {
-      displayColor = pickFirstAvailableUserDisplayColor({
-        primary: familyPrimary,
-        secondary: familySecondary,
-        excludeUserId: null,
-        adultMembers,
-      });
-    } else {
-      const n = normalizeHex(displayColor || '');
-      const inPalette = USER_DISPLAY_COLOR_PALETTE.some((c) => normalizeHex(c) === n);
-      if (
-        !inPalette
-        || isUserDisplaySwatchDisabled(n, {
-          primary: familyPrimary,
-          secondary: familySecondary,
-          excludeUserId: excludeId,
-          adultMembers,
-        })
-      ) {
-        displayColor = pickFirstAvailableUserDisplayColor({
-          primary: familyPrimary,
-          secondary: familySecondary,
-          excludeUserId: excludeId,
-          adultMembers,
-        });
-      } else {
-        displayColor = n;
-      }
-    }
-    return {
-      name: initial.name || '',
-      email: initial.email || '',
-      password: '',
-      access_profile: initial.access_profile === 'auxiliar' ? 'auxiliar' : 'gestor',
-      phone: initial.phone || '',
-      emoji: initial.emoji || '',
-      display_color: displayColor,
-      must_change_password: false,
-    };
-  });
+function GuardianUserModal(props) { return <FamilyMemberForm {...props} role="parent" />; }
 
-  const submit = async (e) => {
-    e.preventDefault();
-    try {
-      if (isEdit) {
-        await api.put(`/families/members/${initial.id}`, {
-          name: form.name,
-          email: form.email,
-          phone: form.phone,
-          emoji: form.emoji || null,
-          display_color: form.display_color,
-          access_profile: form.access_profile,
-        });
-      } else {
-        await api.post('/families/members', {
-          name: form.name,
-          email: form.email,
-          password: form.password || '123456',
-          access_profile: form.access_profile === 'auxiliar' ? 'auxiliar' : 'gestor',
-          phone: form.phone,
-          emoji: form.emoji,
-          display_color: form.display_color,
-          must_change_password: form.must_change_password,
-        });
-      }
-      toast.success(t('fam_admin_saved'));
-      onSaved();
-    } catch (err) {
-      toast.error(err.response?.data?.error || err.message || t('error_occurred'));
-    }
-  };
+function ChildModalForm(props) { return <FamilyMemberForm {...props} role="child" />; }
 
-  return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal fam-admin-modal" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-header">
-          <h2 className="modal-title">{isEdit ? t('fam_admin_edit_guardian') : t('fam_admin_add_guardian')}</h2>
-          <button type="button" className="modal-close" onClick={onClose}>
-            ×
-          </button>
-        </div>
-        <form onSubmit={submit}>
-          <div className="form-group">
-            <label className="form-label">{t('name')} *</label>
-            <input className="form-input" value={form.name} onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))} required />
-          </div>
-          <div className="form-group">
-            <label className="form-label">{t('email')} *</label>
-            <input className="form-input" type="email" value={form.email} onChange={(e) => setForm((p) => ({ ...p, email: e.target.value }))} required />
-          </div>
-          {!isEdit && (
-            <div className="form-group">
-              <label className="form-label">{t('password')}</label>
-              <input className="form-input" type="password" value={form.password} onChange={(e) => setForm((p) => ({ ...p, password: e.target.value }))} />
-            </div>
-          )}
-          <div className="form-group">
-            <label className="form-label">{t('fam_admin_access_profile')}</label>
-            <select className="form-select" value={form.access_profile} onChange={(e) => setForm((p) => ({ ...p, access_profile: e.target.value }))}>
-              <option value="gestor">{t('fam_prof_gestor_title')}</option>
-              <option value="auxiliar">{t('fam_prof_aux_title')}</option>
-            </select>
-          </div>
-          <div className="form-group">
-            <label className="form-label">{t('fam_admin_phone')}</label>
-            <input className="form-input" value={form.phone} onChange={(e) => setForm((p) => ({ ...p, phone: e.target.value }))} />
-          </div>
-          <div className="form-group">
-            <label className="form-label">{t('fam_admin_user_emoji')}</label>
-            <input className="form-input" maxLength={8} value={form.emoji} onChange={(e) => setForm((p) => ({ ...p, emoji: e.target.value }))} />
-          </div>
-          <UserDisplayColorPicker
-            label={t('fam_admin_user_color')}
-            value={form.display_color}
-            onChange={(hex) => setForm((p) => ({ ...p, display_color: hex }))}
-            primaryColor={familyPrimary}
-            secondaryColor={familySecondary}
-            excludeUserId={excludeId}
-            adultMembers={adultMembers}
-          />
-          {!isEdit && (
-            <label style={{ display: 'flex', gap: 8, alignItems: 'center', cursor: 'pointer', marginBottom: 16 }}>
-              <input type="checkbox" checked={form.must_change_password} onChange={(e) => setForm((p) => ({ ...p, must_change_password: e.target.checked }))} />
-              <span style={{ fontSize: '0.9rem' }}>{t('fam_admin_must_change_pw')}</span>
-            </label>
-          )}
-          <div className="modal-footer">
-            <button type="button" className="btn btn-ghost" onClick={onClose}>
-              {t('cancel')}
-            </button>
-            <button type="submit" className="btn btn-primary">
-              {t('save')}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-}
-
-function ChildModalForm({ initial, t, toast, onClose, onSaved }) {
-  const isEdit = !!initial.id;
-  const hasLogin = !!(initial.user_id || initial.user_email);
-  const buildForm = () => ({
-    name: initial.name || '',
-    nickname: initial.nickname || '',
-    age: initial.age ?? '',
-    email: initial.user_email || '',
-    password: '',
-    color: initial.color || '#6C5CE7',
-    emoji: initial.emoji || '',
-    notes: initial.notes || '',
-    must_change_password: false,
-  });
-  const [form, setForm] = useState(buildForm);
-
-  useEffect(() => {
-    setForm(buildForm());
-  }, [initial.id]);
-
-  const submit = async (e) => {
-    e.preventDefault();
-    const emailTrim = String(form.email || '').trim().toLowerCase();
-    if (!emailTrim) {
-      toast.error(t('fam_admin_child_email_required'));
-      return;
-    }
-    if (!isEdit || !hasLogin) {
-      if (!form.password || String(form.password).length < 6) {
-        toast.error(t('fam_admin_child_password_rule'));
-        return;
-      }
-    }
-    try {
-      if (isEdit) {
-        await api.put(`/families/children/${initial.id}`, {
-          name: form.name,
-          nickname: form.nickname,
-          age: form.age === '' ? null : Number(form.age),
-          email: emailTrim,
-          password: !hasLogin ? form.password : undefined,
-          color: form.color,
-          emoji: form.emoji,
-          notes: form.notes,
-          must_change_password: !hasLogin ? form.must_change_password : undefined,
-        });
-      } else {
-        await api.post('/families/children', {
-          name: form.name,
-          nickname: form.nickname,
-          age: form.age === '' ? null : Number(form.age),
-          email: emailTrim,
-          password: form.password,
-          color: form.color,
-          emoji: form.emoji,
-          notes: form.notes,
-          must_change_password: form.must_change_password,
-        });
-      }
-      toast.success(t('fam_admin_saved'));
-      onSaved();
-    } catch (err) {
-      toast.error(err.response?.data?.error || err.message || t('error_occurred'));
-    }
-  };
-
-  return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal fam-admin-modal" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-header">
-          <h2 className="modal-title">{isEdit ? t('fam_admin_edit_child') : t('add_child')}</h2>
-          <button type="button" className="modal-close" onClick={onClose}>
-            ×
-          </button>
-        </div>
-        <form onSubmit={submit}>
-          <div className="form-group">
-            <label className="form-label">{t('name')} *</label>
-            <input className="form-input" value={form.name} onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))} required />
-          </div>
-          <div className="grid grid-2">
-            <div className="form-group">
-              <label className="form-label">{t('fam_admin_nickname')}</label>
-              <input className="form-input" value={form.nickname} onChange={(e) => setForm((p) => ({ ...p, nickname: e.target.value }))} />
-            </div>
-            <div className="form-group">
-              <label className="form-label">{t('child_age')}</label>
-              <input className="form-input" type="number" value={form.age} onChange={(e) => setForm((p) => ({ ...p, age: e.target.value }))} />
-            </div>
-          </div>
-          <div className="form-group">
-            <label className="form-label">{t('email')} *</label>
-            <input
-              className="form-input"
-              type="email"
-              autoComplete="off"
-              value={form.email}
-              onChange={(e) => setForm((p) => ({ ...p, email: e.target.value }))}
-            />
-            {(!isEdit || !hasLogin) && (
-              <p style={{ fontSize: '0.82rem', color: 'var(--text-light)', marginTop: 6 }}>{t('fam_admin_child_login_hint')}</p>
-            )}
-          </div>
-          {(!isEdit || !hasLogin) && (
-            <>
-              <div className="form-group">
-                <label className="form-label">{t('password')} *</label>
-                <input
-                  className="form-input"
-                  type="password"
-                  autoComplete="new-password"
-                  value={form.password}
-                  onChange={(e) => setForm((p) => ({ ...p, password: e.target.value }))}
-                  minLength={6}
-                  required
-                />
-                <p style={{ fontSize: '0.82rem', color: 'var(--text-light)', marginTop: 6 }}>{t('fam_admin_child_password_rule')}</p>
-              </div>
-              <label style={{ display: 'flex', gap: 8, alignItems: 'center', cursor: 'pointer', marginBottom: 16 }}>
-                <input type="checkbox" checked={form.must_change_password} onChange={(e) => setForm((p) => ({ ...p, must_change_password: e.target.checked }))} />
-                <span style={{ fontSize: '0.9rem' }}>{t('fam_admin_must_change_pw')}</span>
-              </label>
-            </>
-          )}
-          <div className="form-group">
-            <label className="form-label">{t('child_color')}</label>
-            <div className="flex gap-8 flex-wrap">
-              {COLOR_PRESETS.map((c) => (
-                <button
-                  key={c}
-                  type="button"
-                  onClick={() => setForm((p) => ({ ...p, color: c }))}
-                  style={{
-                    width: 28,
-                    height: 28,
-                    borderRadius: 8,
-                    background: c,
-                    border: form.color === c ? '3px solid var(--text)' : 'none',
-                    cursor: 'pointer',
-                  }}
-                />
-              ))}
-            </div>
-          </div>
-          <div className="form-group">
-            <label className="form-label">{t('fam_admin_child_emoji')}</label>
-            <input className="form-input" maxLength={8} value={form.emoji} onChange={(e) => setForm((p) => ({ ...p, emoji: e.target.value }))} />
-          </div>
-          <div className="form-group">
-            <label className="form-label">{t('fam_admin_notes')}</label>
-            <textarea className="form-textarea" value={form.notes} onChange={(e) => setForm((p) => ({ ...p, notes: e.target.value }))} />
-          </div>
-          <div className="modal-footer">
-            <button type="button" className="btn btn-ghost" onClick={onClose}>
-              {t('cancel')}
-            </button>
-            <button type="submit" className="btn btn-primary">
-              {t('save')}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-}
-
-function RelativeModalForm({ initial, childrenList, t, toast, onClose, onSaved, familyPrimary, familySecondary, adultMembers }) {
-  const isEdit = !!initial.id;
-  const excludeId = initial.id || null;
-  const [form, setForm] = useState(() => {
-    let displayColor = initial.display_color;
-    if (!isEdit) {
-      displayColor = pickFirstAvailableUserDisplayColor({
-        primary: familyPrimary,
-        secondary: familySecondary,
-        excludeUserId: null,
-        adultMembers,
-      });
-    } else {
-      const n = normalizeHex(displayColor || '');
-      const inPalette = USER_DISPLAY_COLOR_PALETTE.some((c) => normalizeHex(c) === n);
-      if (
-        !inPalette
-        || isUserDisplaySwatchDisabled(n, {
-          primary: familyPrimary,
-          secondary: familySecondary,
-          excludeUserId: excludeId,
-          adultMembers,
-        })
-      ) {
-        displayColor = pickFirstAvailableUserDisplayColor({
-          primary: familyPrimary,
-          secondary: familySecondary,
-          excludeUserId: excludeId,
-          adultMembers,
-        });
-      } else {
-        displayColor = n;
-      }
-    }
-    return {
-      name: initial.name || '',
-      email: initial.email || '',
-      password: '',
-      relationship: initial.relationship || 'avó',
-      access_profile: initial.access_profile === 'auxiliar' ? 'auxiliar' : 'parente',
-      linked_child_ids: Array.isArray(initial.linked_child_ids) ? initial.linked_child_ids : [],
-      phone: initial.phone || '',
-      emoji: initial.emoji || '',
-      display_color: displayColor,
-      must_change_password: false,
-    };
-  });
-
-  const relOptions = ['avó', 'avô', 'tio', 'tia', 'babá', 'padrinho', 'madrinha', 'cuidador', 'outro'];
-
-  const submit = async (e) => {
-    e.preventDefault();
-    try {
-      if (isEdit) {
-        await api.put(`/families/relatives/${initial.id}`, {
-          name: form.name,
-          email: form.email,
-          phone: form.phone,
-          emoji: form.emoji,
-          display_color: form.display_color,
-          relationship: form.relationship,
-          access_profile: form.access_profile,
-          linked_child_ids: form.linked_child_ids,
-        });
-      } else {
-        await api.post('/families/relatives', {
-          name: form.name,
-          email: form.email,
-          password: form.password || '123456',
-          relationship: form.relationship,
-          access_profile: form.access_profile,
-          linked_child_ids: form.linked_child_ids,
-          phone: form.phone,
-          emoji: form.emoji,
-          display_color: form.display_color,
-          must_change_password: form.must_change_password,
-        });
-      }
-      toast.success(t('fam_admin_saved'));
-      onSaved();
-    } catch (err) {
-      toast.error(err.response?.data?.error || err.message || t('error_occurred'));
-    }
-  };
-
-  return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal fam-admin-modal" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-header">
-          <h2 className="modal-title">{isEdit ? t('fam_admin_edit_relative') : t('fam_admin_add_relative')}</h2>
-          <button type="button" className="modal-close" onClick={onClose}>
-            ×
-          </button>
-        </div>
-        <form onSubmit={submit}>
-          <div className="form-group">
-            <label className="form-label">{t('name')} *</label>
-            <input className="form-input" value={form.name} onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))} required />
-          </div>
-          <div className="grid grid-2">
-            <div className="form-group">
-              <label className="form-label">{t('fam_admin_relationship')}</label>
-              <select className="form-select" value={form.relationship} onChange={(e) => setForm((p) => ({ ...p, relationship: e.target.value }))}>
-                {relOptions.map((r) => (
-                  <option key={r} value={r}>
-                    {r}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="form-group">
-              <label className="form-label">{t('email')} *</label>
-              <input className="form-input" type="email" value={form.email} onChange={(e) => setForm((p) => ({ ...p, email: e.target.value }))} required />
-            </div>
-          </div>
-          {!isEdit && (
-            <div className="form-group">
-              <label className="form-label">{t('password')}</label>
-              <input className="form-input" type="password" value={form.password} onChange={(e) => setForm((p) => ({ ...p, password: e.target.value }))} />
-            </div>
-          )}
-          <div className="form-group">
-            <label className="form-label">{t('fam_admin_access_profile')}</label>
-            <select className="form-select" value={form.access_profile} onChange={(e) => setForm((p) => ({ ...p, access_profile: e.target.value }))}>
-              <option value="parente">{t('fam_prof_parente_title')}</option>
-              <option value="auxiliar">{t('fam_prof_rel_aux_option')}</option>
-            </select>
-          </div>
-          <div className="form-group">
-            <label className="form-label">{t('fam_admin_link_children')}</label>
-            <div className="flex gap-8" style={{ flexWrap: 'wrap' }}>
-              {childrenList.map((c) => (
-                <label key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-                  <input
-                    type="checkbox"
-                    checked={form.linked_child_ids.includes(c.id)}
-                    onChange={(e) =>
-                      setForm((p) => ({
-                        ...p,
-                        linked_child_ids: e.target.checked ? [...p.linked_child_ids, c.id] : p.linked_child_ids.filter((id) => id !== c.id),
-                      }))
-                    }
-                  />
-                  <span style={{ fontSize: '0.9rem' }}>{c.name}</span>
-                </label>
-              ))}
-            </div>
-          </div>
-          <div className="grid grid-2">
-            <div className="form-group">
-              <label className="form-label">{t('fam_admin_phone')}</label>
-              <input className="form-input" value={form.phone} onChange={(e) => setForm((p) => ({ ...p, phone: e.target.value }))} />
-            </div>
-            <div className="form-group">
-              <label className="form-label">{t('fam_admin_user_emoji')}</label>
-              <input className="form-input" maxLength={8} value={form.emoji} onChange={(e) => setForm((p) => ({ ...p, emoji: e.target.value }))} />
-            </div>
-          </div>
-          <UserDisplayColorPicker
-            label={t('fam_admin_user_color')}
-            value={form.display_color}
-            onChange={(hex) => setForm((p) => ({ ...p, display_color: hex }))}
-            primaryColor={familyPrimary}
-            secondaryColor={familySecondary}
-            excludeUserId={excludeId}
-            adultMembers={adultMembers}
-          />
-          {!isEdit && (
-            <label style={{ display: 'flex', gap: 8, alignItems: 'center', cursor: 'pointer', marginBottom: 16 }}>
-              <input type="checkbox" checked={form.must_change_password} onChange={(e) => setForm((p) => ({ ...p, must_change_password: e.target.checked }))} />
-              <span style={{ fontSize: '0.9rem' }}>{t('fam_admin_must_change_pw')}</span>
-            </label>
-          )}
-          <div className="modal-footer">
-            <button type="button" className="btn btn-ghost" onClick={onClose}>
-              {t('cancel')}
-            </button>
-            <button type="submit" className="btn btn-primary">
-              {t('save')}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-}
+function RelativeModalForm(props) { return <FamilyMemberForm {...props} role="relative" />; }

@@ -1,0 +1,25 @@
+import { useState, useCallback } from 'react';
+import pt from '../i18n/pt.json';
+import en from '../i18n/en.json';
+
+const dictionaries = { pt, en };
+import { LanguageContext } from './LanguageContext';
+
+export function LanguageProvider({ children }) {
+  const [lang, setLang] = useState(() => localStorage.getItem('fb_lang') || 'pt');
+
+  const t = useCallback((key, fallback) => {
+    return dictionaries[lang]?.[key] || dictionaries['pt']?.[key] || fallback || key;
+  }, [lang]);
+
+  const switchLanguage = (newLang) => {
+    setLang(newLang);
+    localStorage.setItem('fb_lang', newLang);
+  };
+
+  return (
+    <LanguageContext.Provider value={{ lang, t, switchLanguage }}>
+      {children}
+    </LanguageContext.Provider>
+  );
+}

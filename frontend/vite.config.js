@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
+import { fileURLToPath } from 'node:url'
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
@@ -22,13 +23,14 @@ export default defineConfig(({ mode }) => {
       injectRegister: false,
 
       manifest: {
-        name: 'Base Familiar',
-        short_name: 'Base Familiar',
+        name: 'Tudo de Família',
+        short_name: 'Tudo de Família',
+        lang: 'pt-BR',
         description: 'Gestão familiar, tarefas, mesada, saúde e rotina',
         theme_color: '#1e3a5f',
         background_color: '#ffffff',
         display: 'standalone',
-        start_url: '/',
+        start_url: '/login',
         scope: '/',
         icons: [
           { src: '/pwa-192x192.png',                      sizes: '192x192', type: 'image/png', purpose: 'any' },
@@ -39,6 +41,8 @@ export default defineConfig(({ mode }) => {
       },
 
       workbox: {
+        // Public marketing and prices must use the current document from the network.
+        navigateFallbackDenylist: [/^\/(?:\?.*)?$/],
         skipWaiting: false,
         clientsClaim: true,
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
@@ -84,6 +88,7 @@ export default defineConfig(({ mode }) => {
 
   server: {
     port: 5173,
+    fs: { strict: true, allow: [fileURLToPath(new URL('.', import.meta.url))] },
     hmr: {
       overlay: true, // exibe erros de compilação como overlay no browser
     },
@@ -99,25 +104,17 @@ export default defineConfig(({ mode }) => {
         // manualChunks DEVE ser uma função (Rollup ≥ 4 / Vite ≥ 5 rejeitam objeto)
         manualChunks(id) {
           // Vendors React — cache longo, raramente muda
-          if (id.includes('node_modules/react') ||
-              id.includes('node_modules/react-dom') ||
-              id.includes('node_modules/react-router')) {
+          if (/node_modules\/(react|react-dom|react-router|react-router-dom)\//.test(id)) {
             return 'vendor-react';
           }
           // Supabase — isolado para não misturar com o código da app
           if (id.includes('node_modules/@supabase')) {
             return 'vendor-supabase';
           }
-          // Outros node_modules juntos
-          if (id.includes('node_modules')) {
-            return 'vendor-misc';
-          }
-          // Páginas do pai
-          if (id.includes('/pages/parent/')) return 'pages-parent';
-          // Páginas do filho
-          if (id.includes('/pages/child/'))  return 'pages-child';
-          // Outros módulos partilhados (Health, Mural, Master…)
-          if (id.includes('/pages/'))        return 'pages-shared';
+          if (id.includes('/node_modules/recharts/') || id.includes('/node_modules/d3-')) return 'vendor-charts';
+          if (id.includes('/node_modules/leaflet/') || id.includes('/node_modules/react-leaflet/')) return 'vendor-maps';
+          if (id.includes('/node_modules/jspdf')) return 'vendor-pdf';
+          // Preserve independent lazy chunks, including the public landing.
         },
       },
     },

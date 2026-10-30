@@ -3,11 +3,13 @@ import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useAuth } from '../../contexts/AuthContext';
-import { moduleAllowed } from '../../lib/familyModules';
+import { moduleAllowed, anyModuleAllowed } from '../../lib/familyModules';
 import api from '../../services/api';
 import UserAvatar from '../../components/profile/UserAvatar';
 import ParentNavIcon from '../../components/ui/ParentNavIcon';
 import { parentDashboardQueryKey } from '../../lib/familiaQueryKeys';
+import { useLayoutMode } from '../../hooks/useLayoutMode';
+import WebFamilyDashboard from '../../components/web/WebFamilyDashboard';
 
 const ChildCard = memo(function ChildCard({ child, t }) {
   const xpPct = child.xp_next_level > 0 ? Math.min((child.xp / child.xp_next_level) * 100, 100) : 0;
@@ -122,6 +124,7 @@ export default function ParentDashboard() {
   const { t } = useLanguage();
   const { user, family, modules } = useAuth();
   const navigate = useNavigate();
+  const { isMobileShell } = useLayoutMode();
 
   const now = useMemo(() => new Date(), []);
   const greeting = useMemo(() => {
@@ -160,6 +163,8 @@ export default function ParentDashboard() {
   /** “Sem dados” só após primeira resposta bem-sucedida (evita falso empty durante fetch). */
   const hasLoadedOnce = isSuccess || (dataUpdatedAt > 0);
 
+  if (!isMobileShell) return <WebFamilyDashboard user={user} family={family} modules={modules} data={data} pending={showFullSkeleton} fetching={isFetching} error={isError?error:null} updatedAt={dataUpdatedAt} onRefresh={refetch}/>;
+
   if (showFullSkeleton) {
     return <ParentDashboardSkeleton />;
   }
@@ -191,15 +196,15 @@ export default function ParentDashboard() {
             {greeting}, <strong>{user?.name?.split(' ')[0] || 'Gestor'}</strong>
           </div>
           <p className="dash-hero__sub">
-            {family?.name ? `Família ${family.name}` : 'Base Familiar'} · {now.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })}
+            {family?.name ? `Família ${family.name}` : 'Tudo de Família'} · {now.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })}
           </p>
           <div className="dash-hero__actions">
-            <button className="btn btn-primary" onClick={() => navigate('/parent/tasks')}>
+            {moduleAllowed(modules,'tasks') && <button className="btn btn-primary" onClick={() => navigate('/parent/tasks')}>
               <ParentNavIcon name="add" size={16} /> Nova Tarefa
-            </button>
-            <button className="btn btn-ghost" onClick={() => navigate('/parent/calendar')} style={{ color: '#fff', borderColor: 'rgba(255,255,255,0.3)' }}>
+            </button>}
+            {moduleAllowed(modules,'calendar') && <button className="btn btn-ghost" onClick={() => navigate('/parent/calendar')} style={{ color: '#fff', borderColor: 'rgba(255,255,255,0.3)' }}>
               <ParentNavIcon name="calendar" size={16} /> Calendário
-            </button>
+            </button>}
           </div>
         </div>
         <div className="dash-hero__right hide-mobile">
@@ -262,15 +267,15 @@ export default function ParentDashboard() {
           <h2 className="dash-section__title">Acesso Rápido</h2>
         </div>
         <div className="quick-actions-grid">
-          <QuickAction to="/parent/tasks"               iconKey="tasks" label="Tarefas"          color="#6366F1" />
-          <QuickAction to="/parent/tasks?tab=approval"  iconKey="approval" label="Aprovações"       color="#F97316" />
-          <QuickAction to="/parent/grades"              iconKey="grades" label="Notas"            color="#3B82F6" />
-          <QuickAction to="/parent/allowance"           iconKey="allowance" label="Mesada"           color="#10B981" />
+          {moduleAllowed(modules,'tasks') && <QuickAction to="/parent/tasks" iconKey="tasks" label="Tarefas" color="#6366F1" />}
+          {moduleAllowed(modules,'tasks') && <QuickAction to="/parent/tasks?tab=approval" iconKey="approval" label="Aprovações" color="#F97316" />}
+          {moduleAllowed(modules,'grades') && <QuickAction to="/parent/grades" iconKey="grades" label="Notas" color="#3B82F6" />}
+          {anyModuleAllowed(modules,['allowance','piggy_bank','goals']) && <QuickAction to="/parent/allowance" iconKey="allowance" label="Mesada" color="#10B981" />}
           {moduleAllowed(modules, 'health') && <QuickAction to="/parent/health" iconKey="health" label="Saúde"   color="#EC4899" />}
           {moduleAllowed(modules, 'shopping') && <QuickAction to="/parent/shopping" iconKey="shopping" label="Compras" color="#14B8A6" />}
           {moduleAllowed(modules, 'location') && <QuickAction to="/parent/location" iconKey="location" label="Localização" color="#EF4444" />}
           {moduleAllowed(modules, 'mural') && <QuickAction to="/parent/mural" iconKey="mural" label="Mural"     color="#8B5CF6" />}
-          <QuickAction to="/parent/reports"             iconKey="reports" label="Relatórios"       color="#6366F1" />
+          {moduleAllowed(modules,'reports') && <QuickAction to="/parent/reports" iconKey="reports" label="Relatórios" color="#6366F1" />}
         </div>
       </div>
 
@@ -279,7 +284,7 @@ export default function ParentDashboard() {
         <div className="dash-section">
           <div className="dash-section__head">
             <h2 className="dash-section__title">Meus Filhos</h2>
-            <Link to="/parent/family-administration" className="btn btn-sm btn-ghost">Gerir família</Link>
+            {user?.role==='parent' && user?.access_profile==='gestor' && <Link to="/parent/family-administration" className="btn btn-sm btn-ghost">Gerir família</Link>}
           </div>
           <div className="children-grid">
             {children.map(child => <ChildCard key={child.id} child={child} t={t} />)}
@@ -355,7 +360,7 @@ export default function ParentDashboard() {
 
       {/* ── Footer ────────────────────────────── */}
       <footer className="dash-footer">
-        <span>© 2025 Base Familiar</span>
+        <span>© {new Date().getFullYear()} Tudo de Família</span>
         <div className="dash-footer__links">
           <a href="#sobre">Sobre</a>
           <a href="#privacidade">Privacidade</a>

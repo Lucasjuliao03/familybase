@@ -18,7 +18,7 @@ export default function MasterLayout() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <span style={{ fontSize: '1.6rem' }}>🌐</span>
             <div>
-              <div style={{ fontWeight: 700, fontSize: '1rem', color: '#fff' }}>FamilyBase</div>
+              <div style={{ fontWeight: 700, fontSize: '1rem', color: '#fff' }}>Tudo de Família</div>
               <div style={{ fontSize: '0.7rem', color: '#FDCB6E', letterSpacing: 1 }}>MASTER ADMIN</div>
             </div>
           </div>

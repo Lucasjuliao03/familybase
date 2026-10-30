@@ -1,162 +1,42 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { supabase } from '../lib/supabase';
-
-/**
- * Hook de localizações da família em tempo real (Multi-Device).
- */
-export function useFamilyLocations({ familyId, enabled = true }) {
-  const [locations, setLocations] = useState(new Map());
-  const [devices, setDevices] = useState(new Map());
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  
-  const channelRef = useRef(null);
-  const mountedRef = useRef(true);
-
-  const fetchInitial = useCallback(async () => {
-    if (!familyId) return;
-    setLoading(true);
-    try {
-      // 1. Buscar devices
-      const { data: devData } = await supabase
-        .from('family_member_devices')
-        .select('*')
-        .eq('family_id', familyId);
-      
-      const devMap = new Map();
-      (devData || []).forEach(d => devMap.set(d.device_id, d));
-      if (mountedRef.current) setDevices(devMap);
-
-      // 2. Buscar locations com users
-      const { data, error: qErr } = await supabase
-        .from('family_locations')
-        .select('*, users:user_id(id, name, email, avatar_url, avatar_preset, role, display_color)')
-        .eq('family_id', familyId);
-      
-      if (qErr) throw new Error(qErr.message);
-      
-      if (!mountedRef.current) return;
-      const locMap = new Map();
-      (data || []).forEach((row) => {
-        // Vincula a info do device se existir
-        const devInfo = devMap.get(row.device_id);
-        if (!devInfo || devInfo.is_location_enabled !== false) {
-          locMap.set(row.device_id, { ...row, device: devInfo });
-        }
-      });
-      setLocations(locMap);
-      setError(null);
-    } catch (e) {
-      if (mountedRef.current) setError(e.message);
-    } finally {
-      if (mountedRef.current) setLoading(false);
-    }
-  }, [familyId]);
-
-  // Subscribe to Realtime
-  useEffect(() => {
-    mountedRef.current = true;
-    if (!enabled || !familyId) {
-      setLoading(false);
-      return undefined;
-    }
-
-    fetchInitial();
-
-    // Create Realtime channel
-    const channel = supabase
-      .channel(`family-locations-${familyId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'family_locations',
-          filter: `family_id=eq.${familyId}`,
-        },
-        (payload) => {
-          if (!mountedRef.current) return;
-          const row = payload.new;
-          if (!row?.device_id) return;
-          
-          setLocations((prev) => {
-            const next = new Map(prev);
-            const existing = prev.get(row.device_id);
-            
-            // Reutiliza users data se já tínhamos, senao vai sem
-            let usersData = existing?.users || row.users;
-            let deviceData = existing?.device;
-
-            const nextRow = { ...row, users: usersData, device: deviceData };
-
-            if (deviceData && deviceData.is_location_enabled === false) {
-              next.delete(row.device_id);
-            } else {
-              next.set(row.device_id, nextRow);
-            }
-
-            // Fetch fallback se faltar user info (como no fix anterior)
-            if (!usersData) {
-              supabase
-                .from('users')
-                .select('id, name, email, avatar_url, avatar_preset, role, display_color')
-                .eq('id', row.user_id)
-                .single()
-                .then(({ data: userData }) => {
-                  if (userData && mountedRef.current) {
-                    setLocations((currentMap) => {
-                      const updatedMap = new Map(currentMap);
-                      const currentLoc = updatedMap.get(row.device_id);
-                      if (currentLoc) {
-                        updatedMap.set(row.device_id, { ...currentLoc, users: userData });
-                      }
-                      return updatedMap;
-                    });
-                  }
-                });
-            }
-
-            // Fetch fallback se faltar device info
-            if (!deviceData) {
-              supabase
-                .from('family_member_devices')
-                .select('*')
-                .eq('device_id', row.device_id)
-                .single()
-                .then(({ data: dData }) => {
-                  if (dData && mountedRef.current) {
-                    setLocations((currentMap) => {
-                      const updatedMap = new Map(currentMap);
-                      const currentLoc = updatedMap.get(row.device_id);
-                      if (currentLoc) {
-                        updatedMap.set(row.device_id, { ...currentLoc, device: dData });
-                      }
-                      return updatedMap;
-                    });
-                  }
-                });
-            }
-
-            return next;
-          });
-        },
-      )
-      .subscribe();
-
-    channelRef.current = channel;
-
-    return () => {
-      mountedRef.current = false;
-      if (channelRef.current) {
-        supabase.removeChannel(channelRef.current);
-        channelRef.current = null;
-      }
-    };
-  }, [familyId, enabled, fetchInitial]);
-
-  const refresh = useCallback(() => {
-    fetchInitial();
-  }, [fetchInitial]);
-
-  return { locations, loading, error, refresh };
+import {useCallback,useEffect,useLayoutEffect,useRef,useState} from 'react';
+import {useAuth} from '../contexts/AuthContext';
+import {supabase} from '../lib/supabase';
+import {warmFamilyAssets,familyAssetUrl} from '../lib/familyAssets';
+import {locationDeviceKey} from '../lib/locationTelemetry';
+export function useFamilyLocations({familyId,enabled=true}) {
+ const {user}=useAuth();const scope=`${familyId}/${user?.id||''}/${enabled}`;
+ const current=useRef(scope);
+ useLayoutEffect(()=>{current.current=scope;},[scope]);
+ const [state,setState]=useState({scope:'',map:new Map()}),[loading,setLoading]=useState(true),[error,setError]=useState(null);
+ if(state.scope!==scope){setState({scope,map:new Map()});setLoading(!!enabled&&!!familyId);}
+ const inflight=useRef(null);
+ const refresh=useCallback(async()=>{
+  if(!enabled||!familyId||!user?.id)return;
+  if(inflight.current?.scope===scope)return inflight.current.work;
+  const work=(async()=>{
+   try{
+    const [locs,devices,profiles,children]=await Promise.all([
+     supabase.from('family_locations').select('*').eq('family_id',familyId),supabase.from('family_member_devices').select('*').eq('family_id',familyId),
+     supabase.from('users').select('id,name,role,avatar_url,avatar_preset,display_color').eq('family_id',familyId),
+     supabase.from('children').select('user_id,name,avatar_url,avatar_preset,color').eq('family_id',familyId)]);
+    if([locs,devices,profiles,children].some(r=>r.error))throw Error('Não foi possível atualizar as posições.');
+    await warmFamilyAssets(supabase,[...(profiles.data||[]),...(children.data||[])].map(r=>r.avatar_url));
+    if(current.current!==scope)return;
+    const users=new Map((profiles.data||[]).map(p=>[p.id,p])),kids=new Map((children.data||[]).map(c=>[c.user_id,c])),devs=new Map((devices.data||[]).map(d=>[locationDeviceKey(d),d]));
+    const map=new Map((locs.data||[]).filter(r=>devs.get(locationDeviceKey(r))?.is_location_enabled!==false).map(row=>{
+     const p=users.get(row.user_id)||{},c=kids.get(row.user_id),avatar=c?.avatar_preset?null:c?.avatar_url||p.avatar_url;
+     return[locationDeviceKey(row),{...row,device:devs.get(locationDeviceKey(row)),users:{...p,name:c?.name||p.name,avatar_preset:c?.avatar_preset||p.avatar_preset,avatar_url:avatar?familyAssetUrl(avatar):null,display_color:c?.color||p.display_color}}];
+    }));
+    setState({scope,map});setError(null);
+   }catch(e){if(current.current===scope)setError(e.message);}finally{if(current.current===scope)setLoading(false);}
+  })();inflight.current={scope,work};try{await work;}finally{if(inflight.current?.work===work)inflight.current=null;}
+ },[familyId,user?.id,enabled,scope]);
+ useEffect(()=>{
+  if(!enabled||!familyId)return;
+  void refresh();
+  const channel=supabase.channel(`web-locations-${familyId}-${Date.now()}`).on('postgres_changes',{schema:'public',table:'family_locations',event:'*',filter:`family_id=eq.${familyId}`},()=>void refresh()).subscribe();
+  const timer=setInterval(()=>void refresh(),30_000);
+  return()=>{clearInterval(timer);void supabase.removeChannel(channel);};
+ },[familyId,enabled,scope,refresh]);
+ return{locations:enabled&&state.scope===scope?state.map:new Map(),loading,error,refresh};
 }

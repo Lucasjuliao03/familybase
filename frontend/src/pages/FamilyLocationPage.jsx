@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
@@ -24,20 +24,6 @@ function haversineMeters(lat1, lon1, lat2, lon2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-/**
- * Calcula se um ponto está dentro de uma zona (Haversine < raio).
- */
-function isInsideZone(lat, lng, zone) {
-  if (!lat || !lng || !zone.latitude || !zone.longitude) return false;
-  const R = 6371000;
-  const toRad = (d) => (d * Math.PI) / 180;
-  const dLat = toRad(zone.latitude - lat);
-  const dLon = toRad(zone.longitude - lng);
-  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat)) * Math.cos(toRad(zone.latitude)) * Math.sin(dLon / 2) ** 2;
-  const dist = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return dist <= (zone.radius_meters || 200);
-}
-
 export default function FamilyLocationPage() {
   const { user, family } = useAuth();
   const familyId = family?.id || user?.family_id;
@@ -53,18 +39,10 @@ export default function FamilyLocationPage() {
   });
 
   // Handler para forçar atualização do próprio GPS
-  const handleForceMyLocation = useCallback(async () => {
-    try {
-      await forceRefresh();
-      toast.success('📍 Localização atualizada!');
-    } catch (e) {
-      if (e?.code === 1) {
-        toast.error('Permissão de localização negada.');
-      } else {
-        toast.error('Não foi possível obter a localização agora.');
-      }
-    }
-  }, [forceRefresh, toast]);
+  const handleForceMyLocation=useCallback(async()=>{
+    try{const {error}=await supabase.rpc('request_family_location_refresh',{p_target_user_id:null});if(error)throw error;void forceRefresh().catch(()=>{});toast.info('Atualização solicitada à família. Aguardando novas capturas.');}
+    catch(e){toast.error(e.message||'Não foi possível solicitar a atualização.');}
+  },[forceRefresh,toast]);
 
   // Localizações da família em tempo real
   const { locations: locMap, loading: locsLoading } = useFamilyLocations({
@@ -86,10 +64,6 @@ export default function FamilyLocationPage() {
   const [deviceFilter, setDeviceFilter] = useState('all'); // 'all', 'mobile', 'current'
   const [showDeviceManager, setShowDeviceManager] = useState(false);
 
-  // Track zone occupancy para detectar enter/exit
-  const zoneOccupancyRef = useRef(new Map());
-  const alertIdRef = useRef(0);
-
   // Load zones
   useEffect(() => {
     if (!familyId) return;
@@ -103,7 +77,9 @@ export default function FamilyLocationPage() {
           .eq('is_active', true)
           .order('created_at');
         setZones(data || []);
-      } catch (_) {}
+      } catch {
+        // Falha ao carregar zonas mantém a lista anterior.
+      }
       setZonesLoading(false);
     })();
     
@@ -114,7 +90,7 @@ export default function FamilyLocationPage() {
   }, [familyId]);
 
   // Função helper para disparar push notification
-  const firePushNotification = (title, body, icon) => {
+  const firePushNotification = (title, body) => {
     if ('Notification' in window && Notification.permission === 'granted') {
       try {
         new Notification(title, { body, icon: '/vite.svg' });
@@ -124,91 +100,19 @@ export default function FamilyLocationPage() {
     }
   };
 
-  // Detectar entrada/saída de zonas
-  useEffect(() => {
-    if (!zones.length || locMap.size === 0) return;
-
-    // Agrupar localizações por usuário para pegar apenas o dispositivo principal (evita conflitos)
-    const primaryLocations = new Map();
-    locMap.forEach((loc) => {
-      const existing = primaryLocations.get(loc.user_id);
-      if (!existing) {
-        primaryLocations.set(loc.user_id, loc);
-      } else {
-        // Se o atual for o principal, ou se for mobile e o existente não for
-        if (loc.device?.is_primary_location_device) {
-          primaryLocations.set(loc.user_id, loc);
-        } else if (loc.device?.device_type === 'mobile' && !existing.device?.is_primary_location_device && existing.device?.device_type !== 'mobile') {
-          primaryLocations.set(loc.user_id, loc);
-        }
-      }
-    });
-
-    primaryLocations.forEach((loc) => {
-      const uid = loc.user_id;
-      const userName = loc.users?.name?.split(' ')[0] || 'Membro';
-
-      zones.forEach((zone) => {
-        const inside = isInsideZone(loc.latitude, loc.longitude, zone);
-        const key = `${uid}:${zone.id}`;
-        const wasInside = zoneOccupancyRef.current.get(key);
-
-        if (wasInside === undefined) {
-          // First check — just record state, don't alert
-          zoneOccupancyRef.current.set(key, inside);
-          return;
-        }
-
-        if (inside && !wasInside) {
-          // ENTERED zone
-          zoneOccupancyRef.current.set(key, true);
-          const id = ++alertIdRef.current;
-          setAlerts((prev) => [...prev, {
-            id,
-            type: 'enter',
-            userName,
-            zoneName: zone.name,
-            zoneIcon: zone.icon || ZONE_TYPE_ICONS[zone.type],
-          }]);
-          
-          firePushNotification(`📍 ${userName} chegou`, `${userName} chegou em ${zone.name}`);
-
-          // Log event
-          supabase.from('location_events').insert({
-            family_id: familyId,
-            user_id: uid,
-            zone_id: zone.id,
-            event_type: 'enter',
-            latitude: loc.latitude,
-            longitude: loc.longitude,
-          }).then(() => {});
-
-        } else if (!inside && wasInside) {
-          // EXITED zone
-          zoneOccupancyRef.current.set(key, false);
-          const id = ++alertIdRef.current;
-          setAlerts((prev) => [...prev, {
-            id,
-            type: 'exit',
-            userName,
-            zoneName: zone.name,
-            zoneIcon: zone.icon || ZONE_TYPE_ICONS[zone.type],
-          }]);
-          
-          firePushNotification(`👋 ${userName} saiu`, `${userName} saiu de ${zone.name}`);
-
-          supabase.from('location_events').insert({
-            family_id: familyId,
-            user_id: uid,
-            zone_id: zone.id,
-            event_type: 'exit',
-            latitude: loc.latitude,
-            longitude: loc.longitude,
-          }).then(() => {});
-        }
-      });
-    });
-  }, [locMap, zones, familyId]);
+  // The server is the single authority for transitions and manager exclusions.
+  useEffect(()=>{
+    if(!familyId||!userId)return;
+    let active=true;const seen=new Set(),since=new Date().toISOString();
+    const show=row=>{if(!active||seen.has(row.id)||!['zone_enter','zone_exit'].includes(row.type))return;seen.add(row.id);
+      setAlerts(old=>[...old,{id:row.id,type:row.type==='zone_enter'?'enter':'exit',userName:row.data?.member_name||row.data?.child_name||'Integrante',zoneName:row.data?.zone_name||'Local',occurredAt:row.data?.occurred_at}]);
+      firePushNotification(row.title,row.message);
+    };
+    const check=async()=>{const {data}=await supabase.from('notifications').select('id,title,message,type,data').eq('family_id',familyId).eq('user_id',userId).gt('created_at',since).in('type',['zone_enter','zone_exit']).order('created_at').limit(30);(data||[]).forEach(show);};
+    const channel=supabase.channel('web-zone-alerts-'+userId+'-'+Date.now()).on('postgres_changes',{event:'INSERT',schema:'public',table:'notifications',filter:'user_id=eq.'+userId},payload=>show(payload.new)).subscribe();
+    const timer=setInterval(()=>void check(),30_000);
+    return()=>{active=false;clearInterval(timer);void supabase.removeChannel(channel);};
+  },[familyId,userId]);
 
   const dismissAlert = useCallback((id) => {
     setAlerts((prev) => prev.filter((a) => a.id !== id));
@@ -256,7 +160,7 @@ export default function FamilyLocationPage() {
   // Convert Map to array and apply visibility and device rules
   const locArray = Array.from(locMap.values()).filter((loc) => {
     // Gestores and Master can see everyone
-    let isVisible = false;
+    let isVisible;
     if (userRole === 'parent' || userRole === 'master') isVisible = true;
     else if (loc.user_id === userId) isVisible = true;
     else isVisible = loc.share_with_children !== false;
@@ -297,7 +201,7 @@ export default function FamilyLocationPage() {
   const canManageZones = userRole === 'parent' || userRole === 'master';
   const currentDeviceId = getDeviceId();
 
-  const myLocation = locMap.get(currentDeviceId) || Array.from(locMap.values()).find(l => l.user_id === userId);
+  const myLocation = Array.from(locMap.values()).find(l=>l.user_id===userId&&l.device_id===currentDeviceId) || Array.from(locMap.values()).find(l => l.user_id === userId);
   const isSharingWithChildren = myLocation?.share_with_children ?? true;
 
   const toggleShareWithChildren = async () => {
@@ -347,43 +251,8 @@ export default function FamilyLocationPage() {
       return;
     }
 
-    // Enviar broadcast solicitando atualização GPS ao dispositivo remoto
-    const channelName = `location_updates:${familyId}`;
-    const channel = supabase.channel(channelName);
-    let broadcastSent = false;
+    void supabase.rpc('request_family_location_refresh',{p_target_user_id:targetUserId}).then(({error})=>{if(error)toast.error(error.message);else toast.info('Atualização solicitada. Aguardando o aparelho.');});
 
-    channel.subscribe((status) => {
-      if (status === 'SUBSCRIBED') {
-        broadcastSent = true;
-        channel.send({
-          type: 'broadcast',
-          event: 'force_update',
-          payload: { user_id: targetUserId },
-        });
-
-        if (minutesSinceUpdate !== null && minutesSinceUpdate > 10) {
-          // Dispositivo provavelmente offline — informar sem criar expectativa
-          toast.info(
-            `📡 ${targetName} está offline há ~${minutesSinceUpdate} min. Mostrando última localização conhecida.`,
-          );
-        } else {
-          toast.info(`📍 Solicitando atualização GPS de ${targetName}…`);
-        }
-
-        setTimeout(() => {
-          supabase.removeChannel(channel);
-        }, 2000);
-      }
-
-      // Timeout: se não conseguiu se inscrever após 5s, o canal não está disponível
-    });
-
-    setTimeout(() => {
-      if (!broadcastSent) {
-        supabase.removeChannel(channel);
-        toast.warning(`⚠️ Não foi possível contactar o dispositivo de ${targetName}. Mostrando última posição conhecida.`);
-      }
-    }, 5000);
   }, [familyId, locMap, toast, userId, forceRefresh]);
 
   return (
@@ -484,7 +353,7 @@ export default function FamilyLocationPage() {
               className="location-btn-icon"
               onClick={handleForceMyLocation}
               disabled={refreshing}
-              title="Atualizar minha localização agora"
+              title="Solicitar localização atual de todos os integrantes"
               style={{ position: 'relative' }}
             >
               {refreshing ? (

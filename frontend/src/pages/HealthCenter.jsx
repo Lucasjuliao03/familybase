@@ -1,8 +1,46 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import ModuleTitle, { ModuleIcon } from '../components/web/ModuleTitle';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../contexts/LanguageContext';
 import { useToast } from '../contexts/ToastContext';
 import api, { publicAssetUrl } from '../services/api';
+import { supabase } from '../lib/supabase';
+import { indexMedicationLogs, isMedicationActive, localDate, localTime, medicationDoses, medicationState, normalizeMedication, parseScheduledTimes } from '../lib/medicationSchedule';
+import { useMedicationClock } from '../lib/useMedicationClock';
+
+// Mantém no banco o caminho estável; links de saúde são temporários e privados.
+function useHealthAssetUrl(path) {
+  const [asset, setAsset] = useState({ path: null, url: '' });
+  useEffect(() => {
+    let active = true;
+    const refresh = async () => {
+      const clean = String(path || '').replace(/^\/+/, '');
+      if (!clean.startsWith('uploads/') && !clean.startsWith('health-images/')) {
+        if (active) setAsset({ path, url: publicAssetUrl(clean) });
+        return;
+      }
+      const slash = clean.indexOf('/');
+      try {
+        const { data, error } = await supabase.storage.from(clean.slice(0, slash)).createSignedUrl(clean.slice(slash + 1), 3600);
+        if (active) setAsset({ path, url: error ? '' : data.signedUrl });
+      } catch { if (active) setAsset({ path, url: '' }); }
+    };
+    void refresh();
+    const timer = setInterval(refresh, 3000000);
+    return () => { active = false; clearInterval(timer); };
+  }, [path]);
+  return asset.path === path ? asset.url : '';
+}
+
+function HealthImage({ path, ...props }) {
+  const url = useHealthAssetUrl(path);
+  return <img {...props} src={url || undefined} />;
+}
+
+function HealthLink({ path, children, ...props }) {
+  const url = useHealthAssetUrl(path);
+  return <a {...props} href={url || undefined} onClick={(event) => { if (!url) event.preventDefault(); }}>{children}</a>;
+}
 
 const RECORD_TYPES = ['flu', 'cold', 'headache', 'sore_throat', 'fever', 'cough', 'allergy', 'stomach_ache', 'malaise', 'other'];
 
@@ -16,19 +54,8 @@ function imgList(json) {
   }
 }
 
-function parseScheduledTimesFromMed(m) {
-  try {
-    if (m.scheduled_times) {
-      const a = typeof m.scheduled_times === 'string' ? JSON.parse(m.scheduled_times) : m.scheduled_times;
-      if (Array.isArray(a) && a.length) return a.map((x) => (x == null ? '' : String(x)));
-    }
-  } catch { /* ignore */ }
-  if (m.scheduled_time) return [m.scheduled_time];
-  return [''];
-}
-
 function formatMedTimesDisplay(m) {
-  const arr = parseScheduledTimesFromMed(m).filter(Boolean);
+  const arr = parseScheduledTimes(m);
   if (arr.length) return arr.join(' · ');
   return '';
 }
@@ -62,7 +89,7 @@ function HealthAttachmentPicker({ urls, onChange, disabled, t, toast }) {
       <div className="flex gap-8 flex-wrap mt-8">
         {list.map((url) => (
           <div key={url} className="flex gap-8 align-center" style={{ alignItems: 'flex-start' }}>
-            <img src={publicAssetUrl(url)} alt="" style={{ maxWidth: 72, borderRadius: 6 }} />
+            <HealthImage path={url} alt="" style={{ maxWidth: 72, borderRadius: 6 }} />
             {!disabled && (
               <button type="button" className="btn btn-sm btn-ghost" onClick={() => onChange(list.filter((u) => u !== url))}>
                 {t('health_remove_attachment')}
@@ -77,21 +104,28 @@ function HealthAttachmentPicker({ urls, onChange, disabled, t, toast }) {
 
 export default function HealthCenter() {
   const { user } = useAuth();
+  const userId = user?.id;
+  const userRole = user?.role;
   const { t } = useLanguage();
   const toast = useToast();
+  const now = useMedicationClock();
+  const today = localDate(now);
   const [tab, setTab] = useState('overview');
   const [overview, setOverview] = useState(null);
   const [records, setRecords] = useState([]);
   const [appointments, setAppointments] = useState([]);
   const [medications, setMedications] = useState([]);
   const [logs, setLogs] = useState([]);
+  const logsByMedication = useMemo(() => indexMedicationLogs(logs), [logs]);
   const [children, setChildren] = useState([]);
   const [filters, setFilters] = useState({ child_id: '', status: '', med_status: '', from: '', to: '' });
+  const historyLogs = useMemo(() => logs.filter((log) => (!filters.from || log.taken_date >= filters.from) && (!filters.to || log.taken_date <= filters.to)), [logs, filters.from, filters.to]);
   const [modal, setModal] = useState(null);
   const [logModal, setLogModal] = useState(null);
   const [selectedAppt, setSelectedAppt] = useState(null);
   const [hcContext, setHcContext] = useState(null);
-  const [healthScope, setHealthScope] = useState('mine');
+  const [selectedHealthScope, setHealthScope] = useState('mine');
+  const healthScope = hcContext?.showChildrenTab === false ? 'mine' : selectedHealthScope;
   // ID do registo na tabela children para o utilizador child atual
   const [myChildId, setMyChildId] = useState(null);
 
@@ -110,15 +144,15 @@ export default function HealthCenter() {
   }, [isChild, user?.id]);
 
   const applyPatientScopeParams = useCallback((q) => {
-    if (user?.role === 'child') {
+    if (userRole === 'child') {
       // Criança só vê os seus próprios dados
       if (myChildId) q.set('child_id', myChildId);
-      else if (user?.id) q.set('patient_user_id', user.id);
+      else if (userId) q.set('patient_user_id', userId);
       return;
     }
-    if (healthScope === 'mine' && user?.id) q.set('patient_user_id', user.id);
+    if (healthScope === 'mine' && userId) q.set('patient_user_id', userId);
     else if (healthScope === 'children' && filters.child_id) q.set('child_id', filters.child_id);
-  }, [user?.role, user?.id, healthScope, filters.child_id, myChildId]);
+  }, [userRole, userId, healthScope, filters.child_id, myChildId]);
 
   const loadOverview = useCallback(async () => {
     try {
@@ -174,14 +208,12 @@ export default function HealthCenter() {
     try {
       const q = new URLSearchParams();
       applyPatientScopeParams(q);
-      if (filters.from) q.set('from', filters.from);
-      if (filters.to) q.set('to', filters.to);
       const { data } = await api.get(`/health/medication-logs?${q}`);
       setLogs(data || []);
     } catch {
       toast.error(t('error_occurred'));
     }
-  }, [applyPatientScopeParams, filters.from, filters.to, toast, t]);
+  }, [applyPatientScopeParams, toast, t]);
 
   useEffect(() => {
     if (canManage) {
@@ -196,52 +228,33 @@ export default function HealthCenter() {
   }, [canManage]);
 
   useEffect(() => {
-    if (hcContext?.showChildrenTab === false) setHealthScope('mine');
-  }, [hcContext?.showChildrenTab]);
+    void Promise.resolve().then(loadOverview);
+  }, [loadOverview, today]);
 
   useEffect(() => {
-    loadOverview();
-  }, [loadOverview]);
-
-  // Para crianças: recarrega dados quando myChildId fica disponível
-  useEffect(() => {
-    if (!isChild || !myChildId) return;
-    loadOverview();
-    loadMedications();
-    loadLogs();
-    if (tab === 'records') loadRecords();
-    if (tab === 'appointments') loadAppointments();
-  }, [myChildId]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    if (tab === 'records') loadRecords();
-    if (tab === 'appointments') loadAppointments();
-    if (tab === 'medications') {
-      loadMedications();
-      loadLogs();
-    }
-    if (tab === 'history') {
-      loadRecords();
-      loadLogs();
-      loadAppointments();
-    }
-    if (tab === 'attachments') {
-      loadRecords();
-      loadAppointments();
-      loadMedications();
-    }
-  }, [tab, loadRecords, loadAppointments, loadMedications, loadLogs]);
-
-  useEffect(() => {
-    if (tab === 'medications') {
-      loadMedications();
-      loadLogs();
-    }
-  }, [filters.med_status, filters.child_id, tab, loadMedications, loadLogs]);
+    void Promise.resolve().then(() => {
+      if (tab === 'records') loadRecords();
+      if (tab === 'appointments') loadAppointments();
+      if (tab === 'medications') {
+        loadMedications();
+        loadLogs();
+      }
+      if (tab === 'history') {
+        loadRecords();
+        loadLogs();
+        loadAppointments();
+      }
+      if (tab === 'attachments') {
+        loadRecords();
+        loadAppointments();
+        loadMedications();
+      }
+    });
+  }, [tab, loadRecords, loadAppointments, loadMedications, loadLogs, today]);
 
   const buildRecordPayload = (m) => {
-    const { kind: _k, ...rest } = m;
-    const payload = { ...rest };
+    const payload = { ...m };
+    delete payload.kind;
     if (payload.temperature === '' || payload.temperature === undefined) payload.temperature = null;
     payload.stayed_home = !!payload.stayed_home;
     payload.attachment_urls = Array.isArray(payload.attachment_urls) ? payload.attachment_urls : imgList(payload.attachment_urls);
@@ -334,7 +347,7 @@ export default function HealthCenter() {
   return (
     <div className="animate-fade-in health-module">
       <div className="page-header">
-        <h1 className="page-title">❤️ {t('health_page_title')}</h1>
+        <ModuleTitle className="page-title" icon="health" nativeIcon="❤️">{t('health_page_title')}</ModuleTitle>
         <p className="page-subtitle">{t('health_page_subtitle')}</p>
       </div>
 
@@ -392,7 +405,7 @@ export default function HealthCenter() {
           </div>
           <div className="card">
             <h3 className="card-title mb-16">{t('health_active_meds')}</h3>
-            {(overview.activeMedications || []).length === 0 ? <p className="text-muted">{t('health_empty')}</p> : overview.activeMedications.map((m) => (
+            {(overview.activeMedications || []).filter((m) => isMedicationActive(m, today)).length === 0 ? <p className="text-muted">{t('health_empty')}</p> : overview.activeMedications.filter((m) => isMedicationActive(m, today)).map((m) => (
               <div key={m.id} className="mb-8"><strong>{m.name}</strong> · {m.child_name}</div>
             ))}
           </div>
@@ -462,7 +475,7 @@ export default function HealthCenter() {
                 ) : null}
                 <p>{t('health_severity')}: {t(`health_severity_${r.severity}`)} · {t('health_status_label')}: {t(`health_status_${r.status}`)}</p>
                 {imgList(r.attachment_urls).map((url) => (
-                  <img key={url} src={publicAssetUrl(url)} alt="" style={{ maxWidth: '100%', marginTop: 8, borderRadius: 8 }} />
+                  <HealthImage key={url} path={url} alt="" style={{ maxWidth: '100%', marginTop: 8, borderRadius: 8 }} />
                 ))}
                 {canManage && ['parent', 'relative'].includes(user.role) && (
                   <div className="flex gap-8 mt-12 flex-wrap">
@@ -521,7 +534,7 @@ export default function HealthCenter() {
                 {a.reason && <p className="mt-8" style={{ fontSize: '0.9rem' }}>{a.reason}</p>}
                 {a.diagnosis_notes && <p style={{ fontSize: '0.85rem' }}>{t('health_diagnosis')}: {a.diagnosis_notes}</p>}
                 {imgList(a.attachment_urls).map((url) => (
-                  <img key={url} src={publicAssetUrl(url)} alt="" style={{ maxWidth: '100%', marginTop: 8, borderRadius: 8 }} />
+                  <HealthImage key={url} path={url} alt="" style={{ maxWidth: '100%', marginTop: 8, borderRadius: 8 }} />
                 ))}
                 <div className="flex gap-8 mt-12 flex-wrap">
                   <button type="button" className="btn btn-sm btn-ghost" onClick={() => setModal({
@@ -573,7 +586,7 @@ export default function HealthCenter() {
               <div style={{ fontSize: '0.75rem', color: 'var(--primary)', marginTop: 8, fontWeight: 600 }}>Toque para ver detalhes →</div>
             </div>
           ))}
-          {appointments.length === 0 && <div className="card empty-state" style={{ gridColumn: '1/-1' }}><div className="empty-icon">📅</div><h3>{t('health_empty')}</h3></div>}
+          {appointments.length === 0 && <div className="card empty-state" style={{ gridColumn: '1/-1' }}><div className="empty-icon"><ModuleIcon icon="calendar" nativeIcon="📅" size={28}/></div><h3>{t('health_empty')}</h3></div>}
         </div>
       )}
 
@@ -595,7 +608,7 @@ export default function HealthCenter() {
                 name: '',
                 dosage: '',
                 frequency: '',
-                start_date: '',
+                start_date: localDate(),
                 end_date: '',
                 scheduled_times: [''],
                 notes: '',
@@ -609,13 +622,14 @@ export default function HealthCenter() {
             </div>
           )}
           <div className="grid grid-2">
-            {medications.map((m) => {
-              const medLogs = logs.filter((l) => l.medication_id === m.id);
+            {medications.filter((m) => !isChild || isMedicationActive(m, today)).map((m) => {
+              const medLogs = logsByMedication.get(m.id) || [];
+              const doses = medicationDoses(m, medLogs, today, now);
               return (
               <div key={m.id} className="card health-med-card">
                 <div className="flex-between mb-8 flex-wrap gap-8" style={{ alignItems: 'flex-start' }}>
                   <strong style={{ minWidth: 0, wordBreak: 'break-word' }}>{m.name}</strong>
-                  <span className="badge badge-info" style={{ flexShrink: 0 }}>{t(`health_med_status_${m.status}`)}</span>
+                  <span className="badge badge-info" style={{ flexShrink: 0 }}>{t(`health_med_status_${({ completed: 'finished', inactive: 'suspended' })[medicationState(m, today)] || medicationState(m, today)}`)}</span>
                 </div>
                 <div style={{ fontSize: '0.95rem', fontWeight: 500, color: 'var(--text)' }}>👤 {m.child_name}</div>
                 <div style={{ fontSize: '0.85rem', marginTop: 8, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
@@ -633,9 +647,21 @@ export default function HealthCenter() {
                   </div>
                 )}
                 <div className="flex gap-8 mt-12" style={{ flexWrap: 'wrap' }}>
-                  {m.prescription_image_url && <img src={publicAssetUrl(m.prescription_image_url)} alt="Prescrição" style={{ height: 60, width: 60, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--border)' }} />}
+                  {doses.map((dose) => (
+                    <div key={dose.time || 'free'} className="flex-between gap-8" style={{ width: '100%' }}>
+                      <span className={`badge badge-${dose.log ? 'success' : dose.state === 'overdue' ? 'danger' : 'ghost'}`}>
+                        {dose.time || t('health_dose_today')} · {dose.log ? t('health_log_status_taken') : dose.state === 'overdue' ? t('health_dose_overdue') : t('health_dose_pending')}
+                      </span>
+                      {!dose.log && (canManage || isChild) && <button type="button" className="btn btn-sm btn-primary" onClick={() => setLogModal({
+                        medication_id: m.id, medication_name: m.name, medication: m,
+                        scheduled_date: dose.time ? dose.date : '', scheduled_time: dose.time,
+                        taken_date: localDate(), taken_time: localTime(), status: 'taken', notes: '',
+                      })}>{t('health_add_log')}</button>}
+                    </div>
+                  ))}
+                  {m.prescription_image_url && <HealthImage path={m.prescription_image_url} alt="Prescrição" style={{ height: 60, width: 60, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--border)' }} />}
                   {imgList(m.attachment_urls).map((url) => (
-                    <img key={url} src={publicAssetUrl(url)} alt="Anexo" style={{ height: 60, width: 60, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--border)' }} />
+                    <HealthImage key={url} path={url} alt="Anexo" style={{ height: 60, width: 60, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--border)' }} />
                   ))}
                 </div>
                 <div style={{ marginTop: 12, borderTop: '1px solid var(--border)', paddingTop: 10 }}>
@@ -650,7 +676,7 @@ export default function HealthCenter() {
                         <div key={l.id} style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, fontSize: '0.82rem', rowGap: 4 }}>
                           <span style={{ width: 8, height: 8, borderRadius: '50%', background: l.status === 'taken' ? 'var(--success)' : l.status === 'skipped' ? 'var(--danger)' : 'var(--warning)', flexShrink: 0 }} />
                           <span style={{ color: 'var(--text-light)' }}>{l.taken_at ? new Date(l.taken_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—'}</span>
-                          <span className={`badge badge-${l.status === 'taken' ? 'success' : 'danger'}`} style={{ fontSize: '0.7rem', padding: '1px 6px' }}>{l.status === 'taken' ? 'Tomado' : 'Não tomado'}</span>
+                          <span className={`badge badge-${l.status === 'skipped' ? 'danger' : l.status === 'late' ? 'warning' : 'success'}`} style={{ fontSize: '0.7rem', padding: '1px 6px' }}>{t(`health_log_status_${l.status}`)}</span>
                           {l.logged_by_name && (
                             <span style={{ color: 'var(--text-light)', fontSize: '0.78rem', width: '100%', marginLeft: 0 }}>
                               {t('health_logged_by')} {l.logged_by_name}
@@ -667,6 +693,8 @@ export default function HealthCenter() {
                       <button type="button" className="btn btn-sm btn-ghost" onClick={() => setModal({
                         kind: 'med',
                         ...m,
+                        patient_mode: m.patient_user_id ? 'adult' : 'child',
+                        scheduled_times: parseScheduledTimes(m).length ? parseScheduledTimes(m) : [''],
                         attachment_urls: imgList(m.attachment_urls),
                       })}
                       >{t('edit')}</button>
@@ -674,9 +702,12 @@ export default function HealthCenter() {
                     <button type="button" className="btn btn-sm btn-primary" onClick={() => setLogModal({
                       medication_id: m.id,
                       medication_name: m.name,
+                      medication: m,
+                      scheduled_date: parseScheduledTimes(m).length ? localDate() : '',
+                      scheduled_time: doses.find((dose) => !dose.log)?.time || parseScheduledTimes(m)[0] || '',
                       child_id: m.child_id || myChildId,
-                      taken_date: new Date().toISOString().split('T')[0],
-                      taken_time: new Date().toTimeString().slice(0, 5),
+                      taken_date: localDate(),
+                      taken_time: localTime(),
                       status: 'taken',
                       notes: '',
                     })}
@@ -709,9 +740,11 @@ export default function HealthCenter() {
         <div className="grid grid-2">
           <div className="card">
             <h3 className="card-title">{t('health_logs_title')}</h3>
-            {logs.map((l) => (
+            {historyLogs.map((l) => (
               <div key={l.id} className="mb-8 flex-between flex-wrap gap-8" style={{ fontSize: '0.9rem', paddingBottom: 8, borderBottom: '1px solid var(--border)' }}>
-                <span><strong>{formatDateBr(l.taken_date)}</strong> — {l.medication_name} <span className="badge badge-ghost" style={{ marginLeft: 6 }}>{t(`health_log_status_${l.status}`)}</span></span>
+                <span><strong>{formatDateBr(l.taken_date)} {l.taken_time}</strong> — {l.medication_name} <span className="badge badge-ghost" style={{ marginLeft: 6 }}>{t(`health_log_status_${l.status}`)}</span>
+                  {l.scheduled_date && <span className="text-muted" style={{ display: 'block', marginTop: 4 }}>{t('health_scheduled_dose_date')}: {formatDateBr(l.scheduled_date)} · {l.scheduled_time?.slice(0, 5)}</span>}
+                </span>
                 {isParent && (
                   <button type="button" className="btn btn-sm btn-ghost" onClick={async () => {
                     try {
@@ -745,7 +778,7 @@ export default function HealthCenter() {
             attachmentItems.map((item) => (
               <div key={item.key} className="card">
                 <p style={{ fontSize: '0.9rem', marginBottom: 12 }}>{item.caption}</p>
-                <img src={publicAssetUrl(item.url)} alt="" style={{ maxWidth: 'min(100%, 360px)', borderRadius: 8 }} />
+                <HealthImage path={item.url} alt="" style={{ maxWidth: 'min(100%, 360px)', borderRadius: 8 }} />
               </div>
             ))
           )}
@@ -920,9 +953,9 @@ export default function HealthCenter() {
                   <div style={{ fontWeight: 600, marginBottom: 8 }}>{t('health_attachments_label')}</div>
                   <div className="flex gap-8 flex-wrap">
                     {imgList(selectedAppt.attachment_urls).map(url => (
-                      <a key={url} href={publicAssetUrl(url)} target="_blank" rel="noreferrer">
-                        <img src={publicAssetUrl(url)} alt="" style={{ height: 72, width: 72, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--border)' }} />
-                      </a>
+                      <HealthLink key={url} path={url} target="_blank" rel="noreferrer">
+                        <HealthImage path={url} alt="" style={{ height: 72, width: 72, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--border)' }} />
+                      </HealthLink>
                     ))}
                   </div>
                 </div>
@@ -951,14 +984,8 @@ function AppointmentModal({ modal, setModal, childrenList, adultsList = [], t, t
   const save = async (e) => {
     e.preventDefault();
     try {
-      const {
-        kind: _k,
-        patient_mode: _pm,
-        child_name: _cn,
-        created_at: _ca,
-        updated_at: _ua,
-        ...rest
-      } = modal;
+      const rest = { ...modal };
+      ['kind', 'patient_mode', 'child_name', 'created_at', 'updated_at'].forEach((key) => delete rest[key]);
       const payload = {
         ...rest,
         attachment_urls: Array.isArray(rest.attachment_urls) ? rest.attachment_urls : imgList(rest.attachment_urls),
@@ -1061,6 +1088,8 @@ function AppointmentModal({ modal, setModal, childrenList, adultsList = [], t, t
 
 function MedicationModal({ modal, setModal, childrenList, adultsList = [], t, toast, onSaved }) {
   const isEdit = !!modal.id;
+  const savingRef = useRef(false);
+  const [saving, setSaving] = useState(false);
   const rawSlots = modal.scheduled_times?.length ? modal.scheduled_times : [''];
   const doseCount = Math.min(8, Math.max(1, rawSlots.length));
 
@@ -1079,34 +1108,33 @@ function MedicationModal({ modal, setModal, childrenList, adultsList = [], t, to
   };
   const save = async (e) => {
     e.preventDefault();
+    if (savingRef.current) return;
+    savingRef.current = true;
+    setSaving(true);
     try {
-      const {
-        kind: _k,
-        patient_mode: _pmd,
-        child_name: _cn,
-        created_at: _ca,
-        updated_at: _ua,
-        scheduled_time: _st,
-        ...rest
-      } = modal;
-      const times = (modal.scheduled_times || []).map((x) => String(x || '').trim()).filter(Boolean);
-      const payload = {
+      const rest = { ...modal };
+      ['kind', 'patient_mode', 'child_name', 'created_at', 'updated_at', 'scheduled_time'].forEach((key) => delete rest[key]);
+      const times = (modal.scheduled_times || []).map((x) => String(x || '').trim());
+      const payload = normalizeMedication({
         ...rest,
         scheduled_times: times,
         attachment_urls: Array.isArray(rest.attachment_urls) ? rest.attachment_urls : imgList(rest.attachment_urls),
-      };
+      });
       delete payload.patient_mode;
       if (modal.patient_mode === 'adult') {
-        delete payload.child_id;
+        payload.child_id = null;
       } else {
-        delete payload.patient_user_id;
+        payload.patient_user_id = null;
       }
       if (isEdit) await api.put(`/health/medications/${modal.id}`, payload);
       else await api.post('/health/medications', payload);
       toast.success(t('fam_admin_saved'));
       onSaved();
     } catch (err) {
-      toast.error(err.response?.data?.error || t('error_occurred'));
+      toast.error(err.response?.data?.error || err.message || t('error_occurred'));
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
     }
   };
   return (
@@ -1146,9 +1174,10 @@ function MedicationModal({ modal, setModal, childrenList, adultsList = [], t, to
             <div className="form-group"><label className="form-label">{t('health_frequency')}</label><input className="form-input" value={modal.frequency || ''} onChange={(e) => setModal((m) => ({ ...m, frequency: e.target.value }))} placeholder={t('health_frequency_placeholder')} /></div>
           </div>
           <div className="grid grid-2">
-            <div className="form-group"><label className="form-label">{t('health_start_date')}</label><input type="date" className="form-input" value={modal.start_date || ''} onChange={(e) => setModal((m) => ({ ...m, start_date: e.target.value }))} /></div>
-            <div className="form-group"><label className="form-label">{t('health_end_date')}</label><input type="date" className="form-input" value={modal.end_date || ''} onChange={(e) => setModal((m) => ({ ...m, end_date: e.target.value }))} /></div>
+            <div className="form-group"><label className="form-label">{t('health_start_date')}</label><input required type="date" className="form-input" value={modal.start_date || ''} onChange={(e) => setModal((m) => ({ ...m, start_date: e.target.value }))} /></div>
+            <div className="form-group"><label className="form-label">{t('health_end_date')}</label><input type="date" min={modal.start_date || undefined} className="form-input" value={modal.end_date || ''} onChange={(e) => setModal((m) => ({ ...m, end_date: e.target.value }))} /></div>
           </div>
+          <p className="text-muted" style={{ fontSize: '0.85rem' }}>{t('health_treatment_period_hint')}</p>
           <div className="form-group">
             <label className="form-label">{t('health_times_per_day')}</label>
             <select
@@ -1174,6 +1203,7 @@ function MedicationModal({ modal, setModal, childrenList, adultsList = [], t, to
                 <label className="form-label">{t('health_time_dose_label')} {i + 1}</label>
                 <input
                   type="time"
+                  required
                   className="form-input"
                   value={tm}
                   onChange={(e) => {
@@ -1200,7 +1230,7 @@ function MedicationModal({ modal, setModal, childrenList, adultsList = [], t, to
             <input type="file" accept="image/*" className="form-input" onChange={uploadRx} />
             {modal.prescription_image_url && (
               <div className="mt-8">
-                <img src={publicAssetUrl(modal.prescription_image_url)} alt="" style={{ maxWidth: 160, borderRadius: 8 }} />
+                <HealthImage path={modal.prescription_image_url} alt="" style={{ maxWidth: 160, borderRadius: 8 }} />
                 <button type="button" className="btn btn-sm btn-ghost ml-8" onClick={() => setModal((m) => ({ ...m, prescription_image_url: '' }))}>{t('health_remove_attachment')}</button>
               </div>
             )}
@@ -1214,7 +1244,7 @@ function MedicationModal({ modal, setModal, childrenList, adultsList = [], t, to
           />
           <div className="modal-footer">
             <button type="button" className="btn btn-ghost" onClick={() => setModal(null)}>{t('cancel')}</button>
-            <button type="submit" className="btn btn-primary">{t('save')}</button>
+            <button type="submit" className="btn btn-primary" disabled={saving}>{t('save')}</button>
           </div>
         </form>
       </div>
@@ -1223,20 +1253,31 @@ function MedicationModal({ modal, setModal, childrenList, adultsList = [], t, to
 }
 
 function MedicationLogModal({ logModal, setLogModal, t, toast, onSaved }) {
+  const savingRef = useRef(false);
+  const [saving, setSaving] = useState(false);
+  const times = parseScheduledTimes(logModal.medication);
   const save = async (e) => {
     e.preventDefault();
+    if (savingRef.current) return;
+    savingRef.current = true;
+    setSaving(true);
     try {
       await api.post('/health/medication-logs', {
         medication_id: logModal.medication_id,
         taken_date: logModal.taken_date,
         taken_time: logModal.taken_time || null,
+        scheduled_date: logModal.scheduled_date || null,
+        scheduled_time: logModal.scheduled_time || null,
         status: logModal.status,
         notes: logModal.notes || null,
       });
       toast.success(t('fam_admin_saved'));
       onSaved();
-    } catch {
-      toast.error(t('error_occurred'));
+    } catch (err) {
+      toast.error(err.message || t('error_occurred'));
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
     }
   };
   return (
@@ -1244,9 +1285,16 @@ function MedicationLogModal({ logModal, setLogModal, t, toast, onSaved }) {
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h2 className="modal-title">{t('health_add_log')} — {logModal.medication_name}</h2>
         <form onSubmit={save}>
+          {times.length > 0 && <div className="grid grid-2">
+            <div className="form-group"><label className="form-label">{t('health_scheduled_dose_date')}</label><input required type="date" className="form-input" min={logModal.medication?.start_date || undefined} max={logModal.medication?.end_date || undefined} value={logModal.scheduled_date || ''} onChange={(e) => setLogModal((m) => ({ ...m, scheduled_date: e.target.value }))} /></div>
+            <div className="form-group"><label className="form-label">{t('health_scheduled_dose_time')}</label><select required className="form-select" value={logModal.scheduled_time || ''} onChange={(e) => setLogModal((m) => ({ ...m, scheduled_time: e.target.value }))}>
+              {times.map((time) => <option key={time} value={time}>{time}</option>)}
+            </select></div>
+          </div>}
+          <p className="text-muted" style={{ fontSize: '0.85rem' }}>{t('health_actual_dose_hint')}</p>
           <div className="grid grid-2">
             <div className="form-group"><label className="form-label">{t('health_date')}</label><input required type="date" className="form-input" value={logModal.taken_date} onChange={(e) => setLogModal((m) => ({ ...m, taken_date: e.target.value }))} /></div>
-            <div className="form-group"><label className="form-label">{t('health_time')}</label><input type="time" className="form-input" value={logModal.taken_time || ''} onChange={(e) => setLogModal((m) => ({ ...m, taken_time: e.target.value }))} /></div>
+            <div className="form-group"><label className="form-label">{t('health_time')}</label><input required type="time" className="form-input" value={logModal.taken_time || ''} onChange={(e) => setLogModal((m) => ({ ...m, taken_time: e.target.value }))} /></div>
           </div>
           <div className="form-group">
             <label className="form-label">{t('health_log_status_label')}</label>
@@ -1259,7 +1307,7 @@ function MedicationLogModal({ logModal, setLogModal, t, toast, onSaved }) {
           <div className="form-group"><label className="form-label">{t('health_notes')}</label><textarea className="form-textarea" value={logModal.notes || ''} onChange={(e) => setLogModal((m) => ({ ...m, notes: e.target.value }))} /></div>
           <div className="modal-footer">
             <button type="button" className="btn btn-ghost" onClick={() => setLogModal(null)}>{t('cancel')}</button>
-            <button type="submit" className="btn btn-primary">{t('save')}</button>
+            <button type="submit" className="btn btn-primary" disabled={saving}>{t('save')}</button>
           </div>
         </form>
       </div>

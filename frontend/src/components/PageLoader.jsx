@@ -14,8 +14,8 @@ export default function PageLoader({ message = 'A carregar…' }) {
       {/* Logo + spinner */}
       <div style={{ position: 'relative', width: 72, height: 72 }}>
         <img
-          src="/logo512.png"
-          alt="Base Familiar"
+          src="/brand/logo.webp"
+          alt="Tudo de Família"
           loading="eager"
           style={{
             width: 56, height: 56,
@@ -43,14 +43,14 @@ export default function PageLoader({ message = 'A carregar…' }) {
           color: 'var(--text, #1E293B)',
           fontFamily: 'var(--font-main, Poppins, sans-serif)',
         }}>
-          Base Familiar
+          Tudo de Família
         </div>
         <div style={{
           fontSize: '0.78rem',
           color: 'var(--text-light, #64748B)',
           marginTop: 4,
           fontFamily: 'var(--font-main, Poppins, sans-serif)',
-        }}>
+        }} role="status" aria-live="polite">
           {message}
         </div>
       </div>

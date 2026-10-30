@@ -1,0 +1,4 @@
+import ParentNavIcon from '../ui/ParentNavIcon';
+export default function WebAuthIntro() {
+  return <aside className="web-auth-intro"><a href="/" className="web-auth-brand"><img src="/brand/logo.webp" width="48" height="48" alt=""/><strong>Tudo de Família</strong></a><div><p className="workspace-eyebrow">ORGANIZAÇÃO PARA A VIDA REAL</p><h2>Mais clareza na rotina.<br/>Mais tempo em família.</h2><p>Um ambiente para acompanhar responsabilidades, compromissos e cuidados com acesso por perfil.</p><ul>{[['tasks','Responsabilidades em um só lugar'],['users','Um perfil para cada pessoa'],['calendar','Continuidade entre web e aplicativo']].map(([icon,text])=><li key={icon}><ParentNavIcon name={icon} size={20}/>{text}</li>)}</ul></div><nav aria-label="Links institucionais"><a href="/privacy.html">Privacidade</a><a href="/terms.html">Termos de uso</a><a href="/support.html">Suporte</a></nav></aside>;
+}

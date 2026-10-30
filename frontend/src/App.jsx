@@ -1,22 +1,29 @@
-import { lazy, Suspense, useRef } from 'react';
+import { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import FamiliaQueryProvider from './providers/FamiliaQueryProvider';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { useAppResume } from './hooks/useAppResume';
 import { moduleAllowed, anyModuleAllowed } from './lib/familyModules';
-import { LanguageProvider } from './contexts/LanguageContext';
-import { ToastProvider } from './contexts/ToastContext';
-import { PWAProvider } from './contexts/PWAContext';
+import { LanguageProvider } from './contexts/LanguageProvider';
+import { ToastProvider } from './contexts/ToastProvider';
+import { PWAProvider } from './contexts/PWAProvider';
 import PWAInstallBanner from './components/PWAInstallBanner';
 import PWAUpdateModal from './components/PWAUpdateModal';
 import FirstAccessPasswordModal from './components/FirstAccessPasswordModal';
 import PageLoader from './components/PageLoader';
 import LayoutModeSync from './components/LayoutModeSync';
+import WebSessionSync from './components/web/WebSessionSync';
+import MasterAccessGate from './components/web/MasterAccessGate';
+import WebPageBoundary from './components/web/WebPageBoundary';
+import ProtectedRoute from './components/web/FamilyProtectedRoute';
+import { familyWebAccessState } from './lib/familyWebAccess';
+import './styles/workspace/layout.css';
+import './styles/workspace/professional.css';
 
 // ─── Layouts (carregados antecipadamente — pequenos e usados em tudo) ─────────
 import ParentLayout from './components/layout/ParentLayout';
 import ChildLayout  from './components/layout/ChildLayout';
-import MasterLayout from './components/layout/MasterLayout';
+import MasterLayout from './components/layout/WebMasterLayout';
 
 // ─── Auth (carregadas imediatamente — rota inicial para não-logados) ──────────
 import LoginPage    from './pages/auth/LoginPage';
@@ -46,8 +53,8 @@ const MyCalendar     = lazy(() => import('./pages/child/MyCalendar'));
 const HealthCenter     = lazy(() => import('./pages/HealthCenter'));
 const MuralBoard       = lazy(() => import('./pages/MuralBoard'));
 const FamilyLocationPage = lazy(() => import('./pages/FamilyLocationPage'));
-const MasterDashboard  = lazy(() => import('./pages/master/MasterDashboard'));
-const SubscribePage    = lazy(() => import('./pages/SubscribePage'));
+const MasterDashboard  = lazy(() => import('./pages/master/WebMasterPage'));
+const SubscribePage    = lazy(() => import('./pages/PlaySubscriptionPage'));
 
 // ─────────────────────────────────────────────────────────────────────────────
 /** Loader único durante auth / guards (evita “casa estática”; PageLoader já tem spinner). */
@@ -56,45 +63,22 @@ const AuthLoading = ({ message }) => (
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
-function isTrialExpired(family) {
-  if (!family) return false;
-  if (family.subscription_status === 'active') return false;
-  if (family.subscription_status === 'expired') return true;
-  if (family.subscription_status === 'trial' && family.trial_ends_at) {
-    return new Date(family.trial_ends_at).getTime() < Date.now();
-  }
-  const s = family.subscription_status;
-  if (s === 'past_due' || s === 'cancelled') return true;
-  return false;
-}
-
-/** Bloqueado por trial/assinatura ao nível da família (fallback se RPC falhar). */
-function isFamilyBillingBlocked(family, effectiveSubscription) {
-  if (effectiveSubscription && typeof effectiveSubscription.has_access === 'boolean') {
-    return !effectiveSubscription.has_access;
-  }
-  return isTrialExpired(family);
-}
-
 /** Quem pode abrir checkout /manage plano (= gestor financeiro da família). */
-function userCanManageFamilyBilling(user, effectiveSubscription) {
-  if (effectiveSubscription?.can_manage_billing === true) return true;
-  if (effectiveSubscription?.can_manage_billing === false) return false;
-  if (!user || user.role === 'child' || user.role === 'relative') return false;
-  if (user.role === 'parent') {
-    const ap = user.access_profile ?? user.accessProfile ?? 'gestor';
-    return ap === 'gestor';
-  }
-  return false;
+function userCanManageFamilyBilling(effectiveSubscription) {
+  return effectiveSubscription?.ok === true && effectiveSubscription.can_manage_billing === true;
 }
 
 function SubscribeGateway() {
-  const { user, loading, effectiveSubscription } = useAuth();
+  const { user, loading, profileLoading, effectiveSubscription } = useAuth();
+  const state = familyWebAccessState(user, effectiveSubscription, { loading, profileLoading });
+  if (state === 'checking') return <AuthLoading message="Verificando assinatura…" />;
   if (!user) return <Navigate to="/login" replace />;
-  if (loading && !user) return <AuthLoading message="A preparar conta…" />;
-  if (user.role === 'master') return <Navigate to="/master" replace />;
 
-  const canPay = userCanManageFamilyBilling(user, effectiveSubscription);
+  if (!user.family_id && user.role !== 'master') return <Navigate to="/register" replace />;
+  if (user.role === 'master') return <Navigate to="/master" replace />;
+  if (state === 'unavailable') return <BillingWaitGestorPage />;
+
+  const canPay = userCanManageFamilyBilling(effectiveSubscription);
   if (!canPay) return <BillingWaitGestorPage />;
 
   return (
@@ -106,27 +90,6 @@ function SubscribeGateway() {
 
 // ─────────────────────────────────────────────────────────────────────────────
 const PUBLIC_PATHS = new Set(['/login', '/register']);
-
-function ProtectedRoute({ children, allowedRoles }) {
-  const { user, family, effectiveSubscription, loading } = useAuth();
-  if (loading && !user) return <AuthLoading message="A carregar…" />;
-  if (!user) return <Navigate to="/login" replace />;
-
-  if (user.role !== 'master') {
-    const blocked = isFamilyBillingBlocked(family, effectiveSubscription);
-    if (blocked) {
-      const dest = userCanManageFamilyBilling(user, effectiveSubscription) ? '/subscribe' : '/billing-wait-gestor';
-      return <Navigate to={dest} replace />;
-    }
-  }
-
-  if (allowedRoles && !allowedRoles.includes(user.role)) {
-    if (user.role === 'master') return <Navigate to="/master" replace />;
-    if (user.role === 'child')  return <Navigate to="/child"  replace />;
-    return <Navigate to="/parent" replace />;
-  }
-  return children;
-}
 
 function GestorRoute({ children }) {
   const { user, loading } = useAuth();
@@ -171,7 +134,7 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/login"    element={user ? <Navigate to={defaultPath()} /> : <LoginPage />} />
-      <Route path="/register" element={user ? <Navigate to="/parent" />      : <RegisterPage />} />
+      <Route path="/register" element={user?.family_id || user?.role === 'master' ? <Navigate to={defaultPath()} /> : <RegisterPage />} />
 
       {/* ── Assinatura (acessível também durante o trial) ──────────────── */}
       <Route path="/subscribe" element={
@@ -316,12 +279,13 @@ function AppRoutes() {
       {/* ── MASTER ─────────────────────────────────────────────────────── */}
       <Route path="/master" element={
         <ProtectedRoute allowedRoles={['master']}>
-          <MasterLayout />
+          <MasterAccessGate><MasterLayout /></MasterAccessGate>
         </ProtectedRoute>
       }>
         <Route index element={
           <Suspense fallback={<PageLoader />}><MasterDashboard /></Suspense>
         } />
+        <Route path=":section" element={<Suspense fallback={<PageLoader />}><MasterDashboard /></Suspense>} />
       </Route>
 
       <Route path="*" element={<Navigate to="/login" replace />} />
@@ -332,10 +296,8 @@ function AppRoutes() {
 /** Uma rotina por retorno à app: sessão/perfil primeiro; páginas reagem só ao evento único (`useAutoRefresh`). */
 function AppResumeSync() {
   const { performControlledResume, loading } = useAuth();
-  // Depois do hydrate inicial, manter sempre ativo (loading pode ser true durante refreshes em background)
-  const hasHydratedRef = useRef(false);
-  if (!loading) hasHydratedRef.current = true;
-  useAppResume({ onResume: performControlledResume, enabled: hasHydratedRef.current || !loading });
+  // Profile refreshes use profileLoading; loading covers the initial session check.
+  useAppResume({ onResume: performControlledResume, enabled: !loading });
   return null;
 }
 
@@ -354,12 +316,13 @@ export default function App() {
         <LanguageProvider>
           <AuthProvider>
           <LayoutModeSync />
+          <WebSessionSync />
           <AppResumeSync />
           <PWAProvider>
             <ToastProvider>
               <FirstAccessPasswordModal />
               <PWAUpdateModal />
-              <AppRoutes />
+              <WebPageBoundary><AppRoutes /></WebPageBoundary>
               <PWAInstallBanner />
             </ToastProvider>
           </PWAProvider>

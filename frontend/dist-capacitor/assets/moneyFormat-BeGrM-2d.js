@@ -1,0 +1,1 @@
+function e(e){let t=String(e??``).trim().toUpperCase();return!t||t===`BRL`?`R$`:t===`USD`?`US$`:String(e||``).trim()||`R$`}function t(t,n){let r=e(t),i=Number(n??0);return Number.isNaN(i)?`${r} 0.00`:`${r} ${i.toFixed(2)}`}export{t};

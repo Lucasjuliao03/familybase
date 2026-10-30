@@ -1,4 +1,5 @@
 import { publicAssetUrl } from '../../services/api';
+import { useState } from 'react';
 import { getAvatarPresetUrl } from '../../lib/avatarCatalog';
 
 /**
@@ -15,8 +16,12 @@ export default function UserAvatar({
   style = {},
   title,
 }) {
-  const remoteSrc = avatarUrl ? publicAssetUrl(avatarUrl) : '';
-  const presetSrc = !remoteSrc ? getAvatarPresetUrl(avatarPreset) : null;
+  const [failedSources,setFailedSources]=useState({});
+  const markFailed=src=>setFailedSources(previous=>({...previous,[src]:true}));
+  const requestedSrc = avatarUrl ? publicAssetUrl(avatarUrl) : '';
+  const remoteSrc = !failedSources[requestedSrc] ? requestedSrc:'';
+  const requestedPreset=getAvatarPresetUrl(avatarPreset);
+  const presetSrc = !remoteSrc && !failedSources[requestedPreset] ? requestedPreset : null;
   const initial = name ? String(name).charAt(0).toUpperCase() : '?';
   const hasImage = !!(remoteSrc || presetSrc);
   const fallbackBg = backgroundColor || 'rgba(99,102,241,0.12)';
@@ -36,9 +41,9 @@ export default function UserAvatar({
       }}
     >
       {remoteSrc ? (
-        <img src={remoteSrc} alt="" />
+        <img src={remoteSrc} alt="" onError={() => markFailed(remoteSrc)} />
       ) : presetSrc ? (
-        <img src={presetSrc} alt="" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+        <img src={presetSrc} alt="" onError={() => markFailed(presetSrc)} />
       ) : (
         <span className="user-avatar__initial">{initial}</span>
       )}

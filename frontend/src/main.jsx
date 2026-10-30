@@ -1,34 +1,39 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { registerSW } from 'virtual:pwa-register';
-import App from './App';
-import './index.css';
-import { setApplyProdPwaUpdate } from './lib/pwaUpdate';
-import { initCapacitorNative, isNativeApp } from './lib/capacitorNative';
+import LandingPage from './pages/public/LandingPage';
+import AuthenticatedEntry from './components/web/AuthenticatedEntry';
+import './styles/index.css';
+import { setApplyProdPwaUpdate, markProdPwaUpdateAvailable } from './lib/pwaUpdate';
 import { queryMobileShell } from './hooks/useLayoutMode';
-import { BootErrorBoundary, SupabaseBootNotice } from './components/BootGuard';
+const isLegacyCapacitor = import.meta.env.MODE === 'capacitor';
+const isPublicLanding = window.location.pathname === '/' && !isLegacyCapacitor;
 
 if (queryMobileShell()) {
   document.documentElement.classList.add('mobile-shell');
 }
 
-if (import.meta.env.PROD && !isNativeApp()) {
+if (import.meta.env.PROD && !isLegacyCapacitor) {
   const updateSW = registerSW({
     onNeedRefresh() {
-      window.dispatchEvent(new CustomEvent('pwa:update-available'));
+      if (isPublicLanding) updateSW(true);
+      else markProdPwaUpdateAvailable();
     },
     onOfflineReady() {},
   });
   setApplyProdPwaUpdate(() => updateSW(true));
 }
 
-ReactDOM.createRoot(document.getElementById('root')).render(
+const content = (
   <React.StrictMode>
-    <BootErrorBoundary>
-      <App />
-      <SupabaseBootNotice />
-    </BootErrorBoundary>
-  </React.StrictMode>,
+    {isPublicLanding ? <LandingPage /> : <AuthenticatedEntry />}
+  </React.StrictMode>
 );
+const root = document.getElementById('root');
+if (isPublicLanding && root.hasChildNodes()) ReactDOM.hydrateRoot(root, content);
+else ReactDOM.createRoot(root).render(content);
 
-initCapacitorNative().catch(() => {});
+// Removed at build time from the browser bundle. Unrelated to the Expo app.
+if (isLegacyCapacitor) {
+  import('./platform/legacy-capacitor/bootstrap').then(module => module.initialize()).catch(() => {});
+}

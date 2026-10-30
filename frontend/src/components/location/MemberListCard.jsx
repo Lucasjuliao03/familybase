@@ -1,5 +1,6 @@
+import {captureTime,locationDeviceKey} from '../../lib/locationTelemetry';
 import { useState } from 'react';
-import { STATUS_MAP, formatTimeAgo } from './FamilyMemberMarker';
+import { STATUS_MAP, formatTimeAgo } from '../../lib/locationPresentation';
 import { publicAssetUrl } from '../../services/api';
 
 const PRESET_EMOJIS = {
@@ -71,7 +72,7 @@ function MemberRow({ loc, isSelected, currentPosition, onClick }) {
       </div>
 
       <div className="location-member-row-time">
-        {formatTimeAgo(loc.updated_at)}
+        {formatTimeAgo(captureTime(loc))}
       </div>
     </button>
   );
@@ -121,7 +122,7 @@ export default function MemberListCard({
           )}
           {sorted.map((loc) => (
             <MemberRow
-              key={loc.device_id || loc.user_id + Math.random()}
+              key={locationDeviceKey(loc)}
               loc={loc}
               isSelected={selectedMemberId === loc.user_id}
               currentPosition={currentPosition}

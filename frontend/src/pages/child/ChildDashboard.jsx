@@ -10,6 +10,8 @@ import {
   dedupeOccurrencesById,
 } from '../../lib/childDashboardDedupe';
 import { childGamificationProfileKey, taskOccurrencesQueryKey } from '../../lib/familiaQueryKeys';
+import { useLayoutMode } from '../../hooks/useLayoutMode';
+import WebChildDashboard from '../../components/web/WebChildDashboard';
 
 /** Rota índice do perfil filho: `/child` ou `/child/`. */
 function isChildHomePath(pathname) {
@@ -45,6 +47,7 @@ export default function ChildDashboard() {
   const { childProfile } = useAuth();
   const { t } = useLanguage();
   const queryClient = useQueryClient();
+  const { isMobileShell } = useLayoutMode();
 
   const enabled = !!childProfile?.id && isChildHomePath(location.pathname || '');
   /** Recalculado em cada render para apanhar viragem de dia sem mudar de rota. */
@@ -151,6 +154,8 @@ export default function ChildDashboard() {
         : '—';
 
   const showFatalProfileError = profileQuery.isError && profile == null;
+
+  if (!isMobileShell) return <><WebChildDashboard child={child} profile={profile} occurrences={occurrences} allowanceText={estAllow?`${estAllow.symbol||'R$'} ${Number(estAllow.balance??0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})}`:allowanceStatText} profileLoading={profileInitialLoad} tasksLoading={occInitialLoad} taskError={occurrencesQuery.isError} onRetryTasks={()=>occurrencesQuery.refetch()}/>{showFatalProfileError&&<div className="web-inline-message" role="alert"><p>Não foi possível atualizar seu perfil.</p><button className="btn btn-ghost" onClick={()=>profileQuery.refetch()}>Tentar novamente</button></div>}</>;
 
   return (
     <div className="animate-fade-in">

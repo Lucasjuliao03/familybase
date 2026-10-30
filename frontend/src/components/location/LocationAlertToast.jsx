@@ -27,14 +27,14 @@ function AlertItem({ alert, onDismiss }) {
 
   const isEnter = alert.type === 'enter';
   const icon = alert.zoneIcon || (isEnter ? '📍' : '🚶');
-  const verb = isEnter ? 'chegou em' : 'saiu de';
+  const verb = isEnter ? 'entrou em' : 'saiu de';
   const bgClass = isEnter ? 'location-alert-enter' : 'location-alert-exit';
 
   return (
     <div className={`location-alert-toast ${bgClass} ${visible ? 'show' : 'hide'}`}>
       <span className="location-alert-icon">{icon}</span>
       <div className="location-alert-text">
-        <strong>{alert.userName}</strong> {verb} <strong>{alert.zoneName}</strong>
+        <strong>{alert.userName}</strong> {verb} <strong>{alert.zoneName}</strong>{alert.occurredAt&&<small> · {new Date(alert.occurredAt).toLocaleString('pt-BR')}</small>}
       </div>
     </div>
   );

@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import { ModuleIcon } from '../../components/web/ModuleTitle';
 import { useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { useLanguage } from '../../contexts/LanguageContext';
@@ -36,6 +37,8 @@ function fmtPts(n) {
 
 export default function MyGrades() {
   const { childProfile, ensureChildProfile, family } = useAuth();
+  const childId = childProfile?.id;
+  const familyId = family?.id;
   const { t } = useLanguage();
   const toast = useToast();
   const location = useLocation();
@@ -57,8 +60,9 @@ export default function MyGrades() {
 
   const loadBundle = useCallback(async () => {
     try {
-      const { data } = await api.get('/grades');
-      setGrades(data || []);
+      await api.get('/grades').then(({ data }) => {
+        setGrades(data || []);
+      });
     } catch { /* manter estado anterior */ }
 
     api.get('/grades/subjects')
@@ -71,25 +75,25 @@ export default function MyGrades() {
       })
       .catch(() => setSubjectOptions(PREDEFINED_SUBJECTS));
 
-    const cid = childProfile?.id;
-    if (cid && family?.id) {
-      const { data: cfg } = await supabase
+    const cid = childId;
+    if (cid && familyId) {
+      await Promise.resolve(supabase
         .from('school_grade_settings')
         .select('*')
-        .eq('family_id', family.id)
+        .eq('family_id', familyId)
         .eq('child_id', cid)
-        .maybeSingle();
-      if (cfg) setSettings(cfg);
+        .maybeSingle())
+        .then(({ data: cfg }) => { if (cfg) setSettings(cfg); });
 
-      const { data: sgpRows } = await supabase
+      await Promise.resolve(supabase
         .from('school_grade_periods')
         .select('*')
-        .eq('family_id', family.id)
+        .eq('family_id', familyId)
         .eq('child_id', cid)
-        .order('period_number', { ascending: true });
-      if (sgpRows) setPeriods(sgpRows);
+        .order('period_number', { ascending: true }))
+        .then(({ data: sgpRows }) => { if (sgpRows) setPeriods(sgpRows); });
     }
-  }, [childProfile?.id, family?.id]);
+  }, [childId, familyId]);
 
   useEffect(() => { loadBundle(); }, [loadBundle, location.pathname]);
   useAutoRefresh(loadBundle, 2600);
@@ -99,21 +103,20 @@ export default function MyGrades() {
   const subjects = boletim.subjects;
   const subjectNamesKey = subjects.map((s) => s.name).join('\u0001');
 
-  useEffect(() => {
+  const [previousSubjectNamesKey, setPreviousSubjectNamesKey] = useState(subjectNamesKey);
+  if (previousSubjectNamesKey !== subjectNamesKey) {
+    setPreviousSubjectNamesKey(subjectNamesKey);
     if (!subjects.length) {
       setSelectedSubjectName(null);
-      return;
+    } else {
+      setSelectedSubjectName((prev) => {
+        if (prev && subjects.some((s) => s.name === prev)) return prev;
+        return subjects[0].name;
+      });
     }
-    setSelectedSubjectName((prev) => {
-      if (prev && subjects.some((s) => s.name === prev)) return prev;
-      return subjects[0].name;
-    });
-  }, [subjectNamesKey]);
+  }
 
-  const selectedSubject = useMemo(
-    () => subjects.find((s) => s.name === selectedSubjectName) || subjects[0] || null,
-    [subjects, selectedSubjectName],
-  );
+  const selectedSubject = subjects.find((s) => s.name === selectedSubjectName) || subjects[0] || null;
 
   const selectSubject = (name) => {
     setSelectedSubjectName(name);
@@ -179,7 +182,7 @@ export default function MyGrades() {
 
       {subjects.length === 0 ? (
         <div className="my-grades-empty">
-          <div className="my-grades-empty__icon">📚</div>
+          <div className="my-grades-empty__icon"><ModuleIcon icon="grades" nativeIcon="📚" size={28}/></div>
           <p style={{ margin: 0, fontWeight: 600 }}>Ainda não há matérias com notas.</p>
           <p style={{ margin: '8px 0 0', fontSize: '0.88rem' }}>Toque em &quot;+ Nota&quot; para começar.</p>
         </div>

@@ -1,6 +1,19 @@
-import { useMemo } from 'react';
+import { useMemo, useState, useRef, useLayoutEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+
+function readTrialInfo(family) {
+  if (!family) return null;
+  const status = family.subscription_status;
+  if (!status || status === 'active') return null;
+
+  const ends = family.trial_ends_at ? new Date(family.trial_ends_at) : null;
+  const msLeft = ends ? ends.getTime() - Date.now() : 0;
+  const daysLeft = Math.max(0, Math.ceil(msLeft / 86400000));
+  const expired = status === 'expired' || (status === 'trial' && msLeft <= 0);
+
+  return { status, daysLeft, expired };
+}
 
 export default function TrialBanner() {
   const { family, user, effectiveSubscription } = useAuth();
@@ -16,17 +29,13 @@ export default function TrialBanner() {
     return false;
   }, [effectiveSubscription, user]);
 
-  const info = useMemo(() => {
-    if (!family) return null;
-    const status = family.subscription_status;
-    if (!status || status === 'active') return null;
-
-    const ends = family.trial_ends_at ? new Date(family.trial_ends_at) : null;
-    const msLeft = ends ? ends.getTime() - Date.now() : 0;
-    const daysLeft = Math.max(0, Math.ceil(msLeft / 86400000));
-    const expired = status === 'expired' || (status === 'trial' && msLeft <= 0);
-
-    return { status, daysLeft, expired };
+  const [info, setInfo] = useState(() => readTrialInfo(family));
+  const previousFamily = useRef(family);
+  useLayoutEffect(() => {
+    if (previousFamily.current === family) return;
+    previousFamily.current = family;
+    // Mantém a amostragem por snapshot de família, antes da pintura e sem relógio periódico.
+    setInfo(readTrialInfo(previousFamily.current));
   }, [family]);
 
   if (!info) return null;
@@ -45,7 +54,7 @@ export default function TrialBanner() {
         <span>
           ⛔{' '}
           {canManage
-            ? 'O teste gratuito terminou. Assine para continuar a usar a Base Familiar.'
+            ? 'O teste gratuito terminou. Assine para continuar a usar o Tudo de Família.'
             : 'O acesso da família depende do gestor. Peça ao responsável pela assinatura para regularizar.'}
         </span>
         {canManage ? (

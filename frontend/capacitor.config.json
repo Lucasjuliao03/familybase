@@ -1,14 +1,15 @@
 {
   "appId": "com.basefamiliar.app",
   "appName": "Base Familiar",
-  "webDir": "dist",
+  "webDir": "dist-capacitor",
   "bundledWebRuntime": false,
   "server": {
     "androidScheme": "https"
   },
   "android": {
     "allowMixedContent": false,
-    "backgroundColor": "#F1F5F9"
+    "backgroundColor": "#F1F5F9",
+    "path": "../legacy/capacitor/android"
   },
   "plugins": {
     "SplashScreen": {

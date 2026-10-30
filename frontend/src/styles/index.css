@@ -1,0 +1,2 @@
+/* Common browser primitives. Platform-specific styling has its own entry. */
+@import './foundation/base.css';

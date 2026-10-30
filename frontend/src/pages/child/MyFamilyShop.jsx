@@ -1,76 +1,86 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
-import { useLocation } from 'react-router-dom';
+import ModuleTitle, { ModuleIcon } from '../../components/web/ModuleTitle';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useLanguage } from '../../contexts/LanguageContext';
 import { useToast } from '../../contexts/ToastContext';
 import api from '../../services/api';
 import useAutoRefresh from '../../hooks/useAutoRefresh';
+import { isRewardAvailable } from '../../lib/rewardStore';
 
-export default function MyFamilyShop() {
-  const { childProfile, fetchMe } = useAuth();
-  const location = useLocation();
+export default function MyFamilyShop({ titleKey = 'my_family_shop' }) {
+  const { childProfile } = useAuth();
+  const childId = childProfile?.id;
   const { t } = useLanguage();
   const toast = useToast();
 
   const [tab, setTab] = useState('shop');
   const [rewards, setRewards] = useState([]);
   const [redemptions, setRedemptions] = useState([]);
+  const [points, setPoints] = useState({ total: 0, reserved: 0, available: 0 });
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const mutationRef = useRef(false);
+  const loadVersion = useRef(0);
 
   const fetchData = useCallback(async () => {
-    if (!childProfile) return;
+    const version = ++loadVersion.current;
+    if (!childId) { setLoading(false); return; }
     try {
-      const [rRew, rRed] = await Promise.all([
+      setLoading(true);
+      const [rRew, rRed, balance] = await Promise.all([
         api.get('/allowance/rewards/list'),
         api.get('/allowance/redemptions/list'),
+        api.get('/allowance/store-balance', { params: { child_id: childId } }),
       ]);
-      setRewards(rRew.data || []);
-      setRedemptions(rRed.data || []);
+      if (version !== loadVersion.current) return;
+      setRewards((rRew.data || []).filter(isRewardAvailable));
+      setRedemptions((rRed.data || []).filter((row) => row.child_id === childId));
+      setPoints(balance.data);
+      setLoadError('');
     } catch (e) {
-      console.error(e);
-      toast.error(t('error_occurred'));
+      if (version === loadVersion.current) setLoadError(e.message || 'Não foi possível atualizar a loja.');
+    } finally {
+      if (version === loadVersion.current) setLoading(false);
     }
-  }, [childProfile, t, toast]);
+  }, [childId]);
 
   useEffect(() => {
-    fetchData();
-  }, [fetchData, location.pathname]);
-
-  useAutoRefresh(fetchData, 2600);
-
-  const pendingReservedPoints = useMemo(
-    () =>
-      redemptions
-        .filter((r) => r.status === 'pending')
-        .reduce((acc, r) => acc + (Number.isFinite(Number(r.point_cost)) ? Number(r.point_cost) : 0), 0),
-    [redemptions],
-  );
-
-  const spendablePoints = Math.max(0, Number(childProfile?.points ?? 0) - pendingReservedPoints);
+    let active = true;
+    void Promise.resolve().then(() => { if (active) void fetchData(); });
+    return () => { active = false; };
+  }, [fetchData]);
+  useAutoRefresh(fetchData, 2500, { includeRouteChanges: false });
 
   const handleRedeem = async (rewardId) => {
+    if (mutationRef.current || loading || loadError) return;
+    mutationRef.current = true;
+    setBusy(true);
     try {
-      await api.post(`/allowance/rewards/${rewardId}/redeem`);
+      await api.post(`/allowance/rewards/${rewardId}/redeem`, { child_id: childId });
       toast.success('Resgate solicitado! 🎉');
-      await fetchMe?.().catch(() => {});
-      fetchData();
+      await fetchData();
     } catch (err) {
       toast.error(err.response?.data?.error || err.message || t('error_occurred'));
+    } finally {
+      mutationRef.current = false;
+      setBusy(false);
     }
   };
 
   return (
     <div className="animate-fade-in">
-      <h1 className="page-title mb-8">🛍️ {t('my_family_shop')}</h1>
+      <ModuleTitle className="page-title mb-8" icon="family_shop" nativeIcon="🛍️">{t(titleKey)}</ModuleTitle>
       <p className="page-subtitle mb-24">
-        {t('your_points')}{' '}
-        <strong style={{ color: 'var(--primary)', fontSize: '1.2rem' }}>⭐ {childProfile?.points ?? 0}</strong>
-        {pendingReservedPoints > 0 ? (
+        Pontos disponíveis:{' '}
+        <strong style={{ color: 'var(--primary)', fontSize: '1.2rem' }}>⭐ {points.available}</strong>
           <span style={{ display: 'block', marginTop: 8, fontSize: '0.92rem', color: 'var(--text-light)', maxWidth: 520 }}>
-            {pendingReservedPoints} pts retidos em pedidos pendentes ·{' '}
-            <strong style={{ color: 'var(--text)' }}>{spendablePoints} pts</strong> livres para novos pedidos (até aprovação).
+            Total: {points.total} · Reservados em pedidos pendentes: {points.reserved}
           </span>
-        ) : null}
       </p>
+      {loading && <p role="status">Carregando loja...</p>}
+      {busy && <p role="status">Enviando pedido...</p>}
+      {loadError && <div role="alert" className="card mb-16">{loadError} <button type="button" className="btn btn-ghost" onClick={fetchData}>Tentar novamente</button></div>}
 
       <div className="tabs mb-24" style={{ flexWrap: 'wrap', gap: 8 }}>
         <button type="button" className={`tab ${tab === 'shop' ? 'active' : ''}`} onClick={() => setTab('shop')}>🛒 {t('reward_shop')}</button>
@@ -80,14 +90,14 @@ export default function MyFamilyShop() {
       {tab === 'shop' && (
         <div className="grid grid-3">
           {rewards.map((r) => {
-            const canAfford = spendablePoints >= Number(r.point_cost ?? 0);
+            const canAfford = points.available >= Number(r.point_cost ?? 0);
             return (
               <div key={r.id} className="card" style={{ textAlign: 'center', opacity: canAfford ? 1 : 0.6 }}>
                 <div style={{ fontSize: '3rem', marginBottom: 8 }}>{r.icon}</div>
                 <h3 style={{ fontWeight: 700 }}>{r.name}</h3>
                 <div className="mt-8"><span className="badge badge-primary" style={{ fontSize: '0.9rem' }}>⭐ {r.point_cost} {t('points')}</span></div>
-                <button type="button" className="btn btn-sm btn-secondary mt-16" disabled={!canAfford} onClick={() => handleRedeem(r.id)}>
-                  {canAfford ? `🎁 ${t('redeem')}` : `🔒 ${t('insufficient_points')}`}
+                <button type="button" className="btn btn-sm btn-secondary mt-16" disabled={!canAfford || busy || loading || !!loadError} onClick={() => handleRedeem(r.id)}>
+                  {busy ? 'Aguarde...' : canAfford ? `🎁 ${t('redeem')}` : `🔒 ${t('insufficient_points')}`}
                 </button>
               </div>
             );
@@ -97,8 +107,8 @@ export default function MyFamilyShop() {
 
       {tab === 'my' && (
         <div>
-          {redemptions.length === 0 ? (
-            <div className="card empty-state"><div className="empty-icon">📋</div><h3>Nenhum resgate ainda</h3></div>
+          {!loading && redemptions.length === 0 ? (
+            <div className="card empty-state"><div className="empty-icon"><ModuleIcon icon="clipboard" nativeIcon="📋" size={28}/></div><h3>Nenhum resgate ainda</h3></div>
           ) : (
             redemptions.map((r) => (
               <div key={r.id} className="card mb-8 flex-between">
@@ -112,8 +122,9 @@ export default function MyFamilyShop() {
                         ? ' · descontados na aprovação'
                         : r.status === 'pending'
                           ? ' · ficam retidos até o gestor aprovar'
-                          : ''}
+                          : ' · reserva liberada'}
                     </div>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-light)' }}>Pedido: {new Date(r.created_at).toLocaleString('pt-BR')}{r.reviewed_at ? ` · Resolvido: ${new Date(r.reviewed_at).toLocaleString('pt-BR')}` : ''}</div>
                   </div>
                 </div>
                 <span className={`badge badge-${r.status === 'pending' ? 'warning' : r.status === 'approved' ? 'success' : 'danger'}`}>{t(r.status)}</span>
